@@ -1,0 +1,4962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anime ELO Ranker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #58a6ff;
+    }
+
+    #progress-info {
+      font-size: 0.85rem;
+      color: #8b949e;
+    }
+
+    #main {
+      width: 100%;
+      max-width: 1000px;
+      padding: 32px 16px;
+      flex: 1;
+      overflow-x: hidden;
+    }
+
+    /* LOADING STATE */
+    #loading-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 80px 0;
+    }
+
+    .spinner {
+      width: 48px; height: 48px;
+      border: 4px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* USERNAME INPUT */
+    #username-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 48px 0 64px;
+      text-align: center;
+    }
+
+    #username-screen h2 { font-size: 1.5rem; color: #58a6ff; }
+    #username-screen p { color: #8b949e; }
+
+    .onboarding-tagline {
+      font-size: 0.97rem;
+      color: #8b949e;
+      max-width: 400px;
+      line-height: 1.5;
+      margin-top: 2px;
+    }
+    .onboarding-steps {
+      display: flex;
+      gap: 10px;
+      margin: 4px 0 8px;
+      max-width: 500px;
+      width: 100%;
+    }
+    .onboarding-step {
+      flex: 1;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .step-icon { font-size: 1.4rem; }
+    .onboarding-step strong { font-size: 0.82rem; color: #e6edf3; display: block; }
+    .onboarding-step span   { font-size: 0.73rem; color: #8b949e; line-height: 1.45; }
+    .onboarding-divider {
+      width: 100%;
+      max-width: 500px;
+      border: none;
+      border-top: 1px solid #30363d;
+      margin: 4px 0;
+    }
+    @media (max-width: 520px) {
+      .onboarding-steps { flex-direction: column; }
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    input[type="text"] {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      color: #e6edf3;
+      padding: 10px 16px;
+      font-size: 1rem;
+      width: 240px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus { border-color: #58a6ff; }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 500;
+      padding: 10px 20px;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: #238636;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #2ea043; }
+
+    .btn-secondary {
+      background: #21262d;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+    }
+    .btn-secondary:hover { background: #30363d; }
+
+    .btn-danger {
+      background: #da3633;
+      color: #fff;
+    }
+    .btn-danger:hover { background: #f85149; }
+
+    /* BATTLE SCREEN */
+    #battle-screen { display: none; }
+
+    .battle-prompt {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .battle-prompt h2 {
+      font-size: 1.4rem;
+      color: #e6edf3;
+      margin-bottom: 4px;
+    }
+    .battle-prompt p {
+      font-size: 0.9rem;
+      color: #8b949e;
+    }
+
+    .battle-arena {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .anime-card {
+      background: #161b22;
+      border: 2px solid #30363d;
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      transition: all 0.18s;
+      text-align: center;
+    }
+    .anime-card:hover {
+      border-color: #58a6ff;
+      background: #1c2128;
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(88, 166, 255, 0.15);
+    }
+    .anime-card:active { transform: translateY(0); }
+
+    .anime-card img {
+      width: 160px;
+      height: 225px;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #21262d;
+    }
+
+    .anime-card .title {
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.3;
+      color: #e6edf3;
+    }
+
+    .anime-card .elo-badge {
+      font-size: 0.78rem;
+      color: #8b949e;
+      background: #21262d;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    .vs-divider {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #30363d;
+      text-align: center;
+    }
+
+    .skip-row {
+      text-align: center;
+      margin-top: 20px;
+    }
+
+    /* PROGRESS BAR */
+    #progress-bar-wrap {
+      background: #21262d;
+      border-radius: 8px;
+      height: 6px;
+      margin-bottom: 28px;
+      overflow: hidden;
+    }
+    #progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #238636, #58a6ff);
+      transition: width 0.4s ease;
+      border-radius: 8px;
+    }
+
+    /* RESULTS SCREEN */
+    #results-screen { display: none; }
+
+    .results-header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .results-header h2 {
+      font-size: 1.8rem;
+      color: #58a6ff;
+      margin-bottom: 8px;
+    }
+    .results-header p { color: #8b949e; }
+
+    /* ── Results hero + tabs ─────────────────────────────────────────────── */
+    .results-hero {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .btn-keep-ranking {
+      display: inline-block;
+      background: #238636;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1.15rem;
+      font-weight: 700;
+      padding: 14px 44px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      letter-spacing: 0.01em;
+      margin-bottom: 10px;
+    }
+    .btn-keep-ranking:hover { background: #2ea043; transform: translateY(-1px); }
+    .results-util-bar {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .util-btn {
+      background: transparent;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .util-btn:hover { border-color: #58a6ff; color: #58a6ff; background: #1c2940; }
+    .util-btn.util-danger:hover { border-color: #f85149; color: #f85149; background: #3d0f0a; }
+    .results-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+      padding: 4px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+    }
+    .res-tab {
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: #8b949e;
+      padding: 8px 18px;
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .res-tab:hover { background: #21262d; color: #c9d1d9; }
+    .res-tab.active {
+      background: #0d1117;
+      border-color: #30363d;
+      color: #58a6ff;
+      font-weight: 600;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    }
+    @media (max-width: 600px) {
+      .res-tab { padding: 8px 10px; font-size: 0.8rem; }
+      .btn-keep-ranking { font-size: 1rem; padding: 12px 32px; }
+    }
+
+    /* ── Synopsis panel on battle cards ─────────────────────────────────── */
+    .synopsis-btn {
+      background: transparent;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      font-size: 0.7rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .synopsis-btn:hover { border-color: #58a6ff; color: #58a6ff; background: #1c2940; }
+    .synopsis-panel {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.78rem;
+      color: #8b949e;
+      line-height: 1.55;
+      text-align: left;
+      margin-top: 8px;
+      max-height: 130px;
+      overflow-y: auto;
+      width: 100%;
+    }
+
+    /* ── Keyboard shortcut first-use tip ─────────────────────────────────── */
+    #kb-first-tip {
+      position: fixed;
+      bottom: 110px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #161b22;
+      border: 1px solid #388bfd;
+      border-radius: 12px;
+      padding: 14px 20px;
+      z-index: 500;
+      text-align: center;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+      animation: fadeInUp 0.3s ease;
+    }
+    @keyframes fadeInUp {
+      from { opacity:0; transform: translateX(-50%) translateY(10px); }
+      to   { opacity:1; transform: translateX(-50%) translateY(0); }
+    }
+    #kb-first-tip h5 { font-size: 0.85rem; color: #58a6ff; margin-bottom: 8px; }
+    .kb-tip-rows {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      margin-bottom: 10px;
+      font-size: 0.8rem;
+      color: #c9d1d9;
+      flex-wrap: wrap;
+    }
+
+    /* ── Session summary modal ───────────────────────────────────────────── */
+    #session-summary-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(4px);
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .session-summary-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      max-width: 460px;
+      width: 100%;
+      padding: 24px;
+      position: relative;
+    }
+    .session-summary-box h3 { font-size: 1.05rem; color: #58a6ff; margin-bottom: 4px; }
+    .session-mover {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 0.85rem;
+    }
+    .session-mover:last-child { border-bottom: none; }
+    .session-mover img { width: 34px; height: 48px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+    .mover-up   { color: #3fb950; font-weight: 700; }
+    .mover-down { color: #f85149; font-weight: 700; }
+
+    /* ── Rivalry section ─────────────────────────────────────────────────── */
+    #rivalry-section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 20px;
+    }
+    #rivalry-section h3 { font-size: 0.95rem; color: #8b949e; margin-bottom: 6px; }
+    .rivalry-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.82rem;
+      padding: 7px 0;
+      border-bottom: 1px solid #21262d;
+    }
+    .rivalry-item:last-child { border-bottom: none; }
+    .rivalry-item-names { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rivalry-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: rgba(248,81,73,0.12);
+      border: 1px solid rgba(248,81,73,0.28);
+      color: #ff7b72;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    /* Help modal */
+    #help-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(4px);
+      padding: 40px 16px;
+      overflow-y: auto;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    .help-modal-box {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      max-width: 580px;
+      width: 100%;
+      padding: 28px 24px 24px;
+      position: relative;
+    }
+    .help-modal-box h3 { font-size: 1.1rem; color: #e6edf3; margin-bottom: 4px; }
+    .help-modal-box > p { color: #8b949e; font-size: 0.85rem; margin-bottom: 16px; }
+    .help-sections {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .help-section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .help-section h4 { font-size: 0.85rem; color: #58a6ff; margin-bottom: 6px; }
+    .help-section p  { font-size: 0.8rem; color: #8b949e; line-height: 1.55; margin: 0; }
+    .help-section strong { color: #c9d1d9; }
+    @media (max-width: 560px) { .help-sections { grid-template-columns: 1fr; } }
+
+    .ranking-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+    }
+
+    .rank-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      text-align: center;
+      position: relative;
+      content-visibility: auto;
+      contain-intrinsic-block-size: 340px;
+    }
+
+    .rank-card img {
+      width: 100%;
+      max-width: 130px;
+      height: 180px;
+      object-fit: cover;
+      border-radius: 6px;
+    }
+
+    .rank-number {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: #0d1117cc;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      color: #e6edf3;
+    }
+
+    .rank-number.gold   { background: #b8860b; color: #fff; }
+    .rank-number.silver { background: #6e7681; color: #fff; }
+    .rank-number.bronze { background: #7d4a1a; color: #fff; }
+
+    .rank-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      line-height: 1.3;
+      color: #e6edf3;
+    }
+
+    .rank-elo {
+      font-size: 0.78rem;
+      color: #8b949e;
+    }
+
+    /* BATTLE ACTIONS ROW */
+    .battle-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+
+    button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    /* CONFIDENCE DOTS */
+    .confidence {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+    .confidence.uncertain { background: #2d1b00; color: #e3a000; }
+    .confidence.settling  { background: #1f2a00; color: #9acd32; }
+    .confidence.confident { background: #0d2a1a; color: #3fb950; }
+
+    /* ERROR */
+    #error-msg {
+      color: #f85149;
+      font-size: 0.9rem;
+      text-align: center;
+      display: none;
+    }
+
+    /* Export textarea */
+    #export-area {
+      width: 100%;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      color: #e6edf3;
+      font-size: 0.8rem;
+      padding: 12px;
+      resize: vertical;
+      margin-top: 16px;
+      display: none;
+      font-family: monospace;
+    }
+
+    /* HISTORY */
+    #history-section {
+      margin-top: 32px;
+    }
+    #history-section h3 {
+      font-size: 1rem;
+      color: #8b949e;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .history-item {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 10px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.82rem;
+    }
+    .history-item .winner { color: #3fb950; font-weight: 600; }
+    .history-item .loser  { color: #8b949e; }
+    .history-item .elo-change { text-align: center; color: #58a6ff; font-size: 0.75rem; white-space: nowrap; }
+
+    /* CARD ACTIONS (fuzzy + anilist on battle cards) */
+    .card-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .fuzzy-btn {
+      background: transparent;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      font-size: 0.7rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .fuzzy-btn:hover { border-color: #e3a000; color: #e3a000; background: #2d1b00; }
+    .fuzzy-btn.active { border-color: #e3a000; color: #e3a000; background: #2d1b00; }
+    .card-anilist-link {
+      color: #8b949e;
+      font-size: 0.7rem;
+      text-decoration: none;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      transition: all 0.15s;
+    }
+    .card-anilist-link:hover { color: #58a6ff; border-color: #58a6ff; background: #1c2940; }
+
+    /* FUZZY TAG on rank cards */
+    .fuzzy-tag {
+      font-size: 0.7rem;
+      color: #e3a000;
+      background: #2d1b00;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+    .streak-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 10px;
+      line-height: 1.4;
+    }
+    .streak-hot  { background: rgba(248,81,73,0.18); color: #ff7b72; border: 1px solid rgba(248,81,73,0.3); }
+    .streak-cold { background: rgba(88,166,255,0.15); color: #79c0ff; border: 1px solid rgba(88,166,255,0.25); }
+
+    /* GENRE / ERA CHARTS */
+    .genre-chart-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+      font-size: 0.82rem;
+    }
+    .genre-chart-label {
+      width: 120px;
+      flex-shrink: 0;
+      color: #c9d1d9;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .genre-chart-track {
+      flex: 1;
+      height: 12px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .genre-chart-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #388bfd, #58a6ff);
+      transition: width 0.4s ease;
+    }
+    .genre-chart-fill.era-fill {
+      background: linear-gradient(90deg, #2ea043, #3fb950);
+    }
+    .genre-chart-value {
+      width: 100px;
+      flex-shrink: 0;
+      text-align: right;
+      color: #8b949e;
+      font-size: 0.78rem;
+    }
+    .stats-breakdown {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    @media (max-width: 700px) { .stats-breakdown { grid-template-columns: 1fr; } }
+
+    /* SEARCH */
+    #search-wrap { margin-bottom: 20px; }
+    #search-input {
+      width: 100%;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      color: #e6edf3;
+      padding: 10px 16px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #search-input:focus { border-color: #58a6ff; }
+
+    /* STATS SECTION */
+    #stats-section { margin: 24px 0; }
+    #stats-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 16px; text-align: center; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-number { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
+    .stat-label  { font-size: 0.78rem; color: #8b949e; margin-top: 4px; }
+    .stats-lists {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .stats-list-section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .stats-list-section h4 { font-size: 0.82rem; color: #8b949e; margin-bottom: 10px; }
+    .stat-anime-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      padding: 5px 0;
+      border-bottom: 1px solid #21262d;
+      gap: 8px;
+    }
+    .stat-anime-row:last-child { border-bottom: none; }
+    .stat-anime-row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stat-anime-row span:last-child  { color: #58a6ff; white-space: nowrap; }
+
+    /* DETAIL MODAL */
+    #detail-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(4px);
+      padding: 40px 16px;
+      overflow-y: auto;
+    }
+    .modal-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 24px;
+      position: relative;
+      display: flex;
+      gap: 20px;
+    }
+    .modal-close {
+      position: absolute;
+      top: 12px; right: 12px;
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      font-size: 0.9rem;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      padding: 0;
+      cursor: pointer;
+    }
+    .modal-close:hover { color: #f85149; border-color: #f85149; }
+    #modal-cover {
+      width: 110px; height: 155px;
+      object-fit: cover;
+      border-radius: 8px;
+      flex-shrink: 0;
+    }
+    .modal-content { flex: 1; min-width: 0; }
+    .modal-content h2 { font-size: 1.05rem; margin-bottom: 6px; line-height: 1.3; padding-right: 24px; }
+    .modal-rank-line { font-size: 0.82rem; color: #8b949e; margin-bottom: 12px; }
+    .modal-stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .modal-stat {
+      background: #0d1117;
+      border-radius: 8px;
+      padding: 8px 4px;
+      text-align: center;
+    }
+    .modal-stat .val { font-size: 1rem; font-weight: 700; color: #e6edf3; display: block; }
+    .modal-stat label { font-size: 0.62rem; color: #8b949e; }
+    .modal-anilist-btn {
+      display: inline-block;
+      background: #02a9ff;
+      color: #fff;
+      text-decoration: none;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      margin-bottom: 14px;
+    }
+    .modal-anilist-btn:hover { background: #0090d9; }
+    #modal-unfuzzy-btn {
+      margin-left: 8px;
+      background: #2d1b00;
+      border: 1px solid #e3a000;
+      color: #e3a000;
+      font-size: 0.8rem;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #modal-unfuzzy-btn:hover { background: #3d2800; }
+    .modal-recent h4 { font-size: 0.8rem; color: #8b949e; margin-bottom: 8px; }
+    .modal-recent-item {
+      font-size: 0.78rem;
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #21262d;
+      gap: 8px;
+    }
+    .modal-recent-item:last-child { border-bottom: none; }
+    .modal-win  { color: #3fb950; }
+    .modal-loss { color: #f85149; }
+    .modal-meta-line {
+      font-size: 0.78rem;
+      color: #6e7681;
+      margin-bottom: 10px;
+    }
+    .modal-genres {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 12px;
+    }
+    .modal-genre-tag {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 20px;
+      padding: 2px 9px;
+      font-size: 0.7rem;
+      color: #8b949e;
+    }
+
+    /* TIER BADGE on rank cards */
+    .tier-badge {
+      position: absolute; top: 10px; right: 10px; width: 22px; height: 22px;
+      border-radius: 4px; font-size: 0.68rem; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* In table cells, reset positioning so the badge is visible inline */
+    td .tier-badge {
+      position: static; display: inline-flex;
+    }
+    .tier-badge.t-s { background: #b22222; color: #fff; }
+    .tier-badge.t-a { background: #b86000; color: #fff; }
+    .tier-badge.t-b { background: #1e6e30; color: #fff; }
+    .tier-badge.t-c { background: #1355a0; color: #fff; }
+    .tier-badge.t-d { background: #444c56; color: #ccc; }
+
+    /* SPARKLINE in detail modal */
+    .sparkline-wrap { margin: 10px 0; background: #0d1117; border-radius: 8px; padding: 8px 10px; }
+    .sparkline-wrap h4 { font-size: 0.72rem; color: #8b949e; margin-bottom: 4px; }
+    .sparkline-wrap svg { display: block; width: 100%; overflow: visible; }
+
+    /* MILESTONE OVERLAY */
+    #milestone-overlay {
+      display: none; position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.88); backdrop-filter: blur(6px);
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .milestone-box {
+      background: #161b22; border: 1px solid #30363d; border-radius: 20px;
+      padding: 36px 32px; text-align: center; max-width: 500px; width: 100%;
+    }
+    .milestone-emoji { font-size: 3.2rem; margin-bottom: 6px; }
+    .milestone-box h2 { font-size: 1.7rem; color: #58a6ff; margin-bottom: 6px; }
+    .milestone-box > p { color: #8b949e; margin-bottom: 22px; }
+    .milestone-top5 { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+    .ms-card { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 70px; }
+    .ms-card img { width: 70px; height: 98px; object-fit: cover; border-radius: 6px; }
+    .ms-card-rank { font-size: 0.65rem; font-weight: 700; color: #8b949e; }
+    .ms-card-title { font-size: 0.6rem; text-align: center; color: #e6edf3; line-height: 1.2;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+    /* SHARE MODAL */
+    #share-modal {
+      display: none; position: fixed; inset: 0; z-index: 1500;
+      background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .share-box {
+      background: #161b22; border: 1px solid #30363d; border-radius: 16px;
+      padding: 28px; max-width: 520px; width: 100%; position: relative;
+    }
+    .share-box h3 { font-size: 1.1rem; color: #58a6ff; margin-bottom: 6px; }
+    .share-box p { color: #8b949e; font-size: 0.85rem; margin-bottom: 14px; }
+    #share-url {
+      width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+      color: #e6edf3; font-size: 0.75rem; padding: 10px 12px;
+      font-family: monospace; resize: none; margin-bottom: 10px; height: 72px;
+    }
+    .share-close {
+      position: absolute; top: 12px; right: 12px; background: #21262d;
+      border: 1px solid #30363d; color: #8b949e; font-size: 0.9rem;
+      width: 28px; height: 28px; border-radius: 50%; padding: 0; cursor: pointer;
+    }
+    .share-close:hover { color: #f85149; border-color: #f85149; }
+
+    /* SHARED VIEW */
+    #shared-screen { display: none; }
+    .shared-header { text-align: center; margin-bottom: 28px; }
+    .shared-header h2 { font-size: 1.6rem; color: #58a6ff; margin-bottom: 6px; }
+    .shared-header p { color: #8b949e; }
+
+    /* WARM START OPTION */
+    .warm-start-row {
+      display: flex; align-items: center; gap: 8px; margin-top: 6px;
+      font-size: 0.85rem; color: #8b949e; cursor: pointer; user-select: none;
+    }
+    .warm-start-row input[type="checkbox"] { accent-color: #58a6ff; width: 15px; height: 15px; cursor: pointer; }
+    .warm-start-info { font-size: 0.75rem; color: #6e7681; text-align: center; margin-top: 4px; }
+
+    /* GUEST MODE DIVIDER */
+    .or-divider {
+      display: flex; align-items: center; gap: 12px;
+      color: #6e7681; font-size: 0.82rem; margin: 20px 0 8px;
+      width: 320px; max-width: 100%;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ''; flex: 1; height: 1px; background: #30363d;
+    }
+
+    /* EXCLUDE BUTTON on battle cards */
+    .exclude-btn {
+      background: transparent; border: 1px solid #30363d; color: #8b949e;
+      font-size: 0.7rem; padding: 3px 8px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+    }
+    .exclude-btn:hover { border-color: #f85149; color: #f85149; background: #2a0a0a; }
+
+    /* EXCLUDED SECTION */
+    #excluded-section { margin: 24px 0; }
+    #excluded-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 14px; text-align: center; }
+    .excluded-list { display: flex; flex-direction: column; gap: 8px; }
+    .excluded-item {
+      display: flex; align-items: center; gap: 12px;
+      background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 10px 14px;
+    }
+    .excluded-item img { width: 36px; height: 50px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+    .excluded-item-title { flex: 1; font-size: 0.85rem; color: #8b949e; }
+    .excluded-item button { flex-shrink: 0; }
+
+    /* LANGUAGE TOGGLE */
+    #lang-toggle-btn {
+      font-size: 0.75rem; padding: 4px 10px; border-radius: 6px;
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+    }
+    #lang-toggle-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+
+    /* KEYBOARD HINT ROW */
+    .kb-hints {
+      text-align: center; font-size: 0.72rem; color: #6e7681; margin-top: 10px;
+    }
+    @media (hover: none) and (pointer: coarse) {
+      .kb-hints { display: none; }
+    }
+    .kb-hints kbd {
+      background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+      padding: 1px 5px; font-size: 0.7rem; color: #8b949e; font-family: inherit;
+    }
+
+    /* SORT + FILTER ROW */
+    .list-controls {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .sort-btn {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+    }
+    .sort-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    .sort-btn.active { background: #1c2940; border-color: #58a6ff; color: #58a6ff; font-weight: 600; }
+    .fuzzy-filter-btn {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+      margin-left: auto;
+    }
+    .fuzzy-filter-btn:hover { border-color: #e3a000; color: #e3a000; }
+    .fuzzy-filter-btn.active { background: #2d1b00; border-color: #e3a000; color: #e3a000; }
+
+    /* FORMAT FILTER BUTTONS */
+    .format-row {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;
+    }
+    .format-row-label { font-size: 0.72rem; color: #8b949e; margin-right: 4px; }
+    .format-btn {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+    }
+    .format-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    .format-btn.active { background: #1c2940; border-color: #58a6ff; color: #58a6ff; font-weight: 600; }
+    .format-btn.hidden-fmt { background: #21262d; border-color: #30363d; color: #484f58; text-decoration: line-through; }
+
+    /* DISAGREEMENTS SECTION */
+    #disagree-section { margin-top: 28px; overflow: hidden; }
+    #disagree-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 16px; }
+    .disagree-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 600px) { .disagree-cols { grid-template-columns: 1fr; } }
+    .disagree-col { min-width: 0; overflow: hidden; }
+    .disagree-col h4 { font-size: 0.82rem; color: #8b949e; margin-bottom: 10px; font-weight: 600; word-break: break-word; }
+    .disagree-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 6px; cursor: pointer;
+      transition: border-color 0.15s; min-width: 0; overflow: hidden;
+    }
+    .disagree-item:hover { border-color: #58a6ff; }
+    .disagree-item img { width: 36px; height: 50px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+    .disagree-item-info { flex: 1; min-width: 0; }
+    .disagree-item-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .disagree-item-meta { font-size: 0.72rem; color: #8b949e; margin-top: 2px; word-break: break-word; }
+    .disagree-delta { font-size: 0.78rem; font-weight: 700; flex-shrink: 0; }
+    .delta-up   { color: #3fb950; }
+    .delta-down { color: #f85149; }
+
+    /* ── ANILIST AUTH ───────────────────────────────────────────────────── */
+    .btn-anilist-login {
+      background: linear-gradient(135deg, #1a6ef5, #0ea5e9);
+      color: #fff;
+      font-size: 0.95rem;
+      padding: 11px 28px;
+      border-radius: 10px;
+      margin-bottom: 4px;
+      width: 240px;
+    }
+    .btn-anilist-login:hover { background: linear-gradient(135deg, #2d7cf7, #22b8ff); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(26,110,245,0.35); }
+
+    .auth-logged-in-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 10px 14px;
+      width: 240px;
+      margin-bottom: 4px;
+    }
+    .auth-logged-in-row img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+    .auth-logged-in-name { flex: 1; font-size: 0.87rem; font-weight: 600; color: #e6edf3; }
+    .auth-logout-btn { background: none; border: none; color: #8b949e; font-size: 0.72rem; padding: 2px 6px; cursor: pointer; border-radius: 4px; }
+    .auth-logout-btn:hover { color: #f85149; background: #21262d; }
+
+    /* header auth badge */
+    #auth-header-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+    }
+    #auth-header-badge img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+    #auth-header-badge .auth-hdr-name { color: #c9d1d9; font-weight: 500; }
+    #auth-header-badge .auth-hdr-logout { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 0.7rem; padding: 2px 5px; border-radius: 4px; }
+    #auth-header-badge .auth-hdr-logout:hover { color: #f85149; }
+
+    /* ── SYNC TO ANILIST MODAL ───────────────────────────────────────────── */
+    #sync-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 200;
+      align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .sync-modal-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      padding: 28px 24px;
+      max-width: 560px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      position: relative;
+    }
+    .sync-modal-box h3 { font-size: 1.1rem; margin-bottom: 4px; }
+    .sync-modal-sub { font-size: 0.83rem; color: #8b949e; margin-bottom: 18px; line-height: 1.5; }
+    .sync-preview-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-bottom: 20px; }
+    .sync-preview-table th {
+      text-align: left; font-size: 0.72rem; color: #8b949e; font-weight: 600;
+      padding: 4px 8px; border-bottom: 1px solid #30363d;
+    }
+    .sync-preview-table td { padding: 6px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+    .sync-preview-table tr:last-child td { border-bottom: none; }
+    .sync-preview-table img { width: 28px; height: 38px; object-fit: cover; border-radius: 3px; vertical-align: middle; }
+    .sync-score-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-weight: 700; font-size: 0.78rem;
+    }
+    .sync-score-10 { background: #1a3a1a; color: #3fb950; }
+    .sync-score-9  { background: #1a3a1a; color: #56d364; }
+    .sync-score-8  { background: #1f2f14; color: #a5d96a; }
+    .sync-score-7  { background: #2a2614; color: #e3c96a; }
+    .sync-score-6  { background: #2a2010; color: #e3a000; }
+    .sync-score-5  { background: #2a1a10; color: #f0883e; }
+    .sync-score-low { background: #3d0f0a; color: #f85149; }
+    .sync-progress-wrap { margin: 16px 0; }
+    .sync-progress-bar-track {
+      width: 100%; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin-bottom: 8px;
+    }
+    .sync-progress-bar-fill { height: 100%; background: #3fb950; border-radius: 4px; transition: width 0.3s; }
+    .sync-progress-text { font-size: 0.82rem; color: #8b949e; text-align: center; }
+    .sync-done-msg { font-size: 0.95rem; text-align: center; padding: 16px 0; color: #3fb950; }
+    .sync-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+    .util-btn-anilist {
+      background: linear-gradient(135deg, #1a6ef5, #0ea5e9);
+      color: #fff;
+      border: none;
+      font-size: 0.8rem;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      display: none; /* shown only when authed */
+    }
+    .util-btn-anilist:hover { background: linear-gradient(135deg, #2d7cf7, #22b8ff); }
+
+    /* SETTLE MODE BANNER */
+    #settle-banner {
+      display: none;
+      background: linear-gradient(90deg, #1a2d1a, #162416);
+      border: 1px solid #238636;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 0.82rem;
+      color: #3fb950;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+    }
+    #settle-banner.active { display: flex; }
+
+    /* TOWER OF POWER */
+    #tower-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    #tower-modal.open { display: flex; }
+    .tower-modal-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      padding: 28px;
+      width: 90%;
+      max-width: 480px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .tower-modal-box h2 { font-size: 1.3rem; color: #e3a000; margin-bottom: 6px; }
+    .tower-modal-box p  { color: #8b949e; font-size: 0.85rem; margin-bottom: 16px; }
+    #tower-search {
+      width: 100%; margin-bottom: 10px;
+      background: #0d1117; border: 1px solid #30363d;
+      border-radius: 8px; color: #e6edf3;
+      padding: 9px 14px; font-size: 0.9rem;
+    }
+    #tower-search:focus { outline: none; border-color: #e3a000; }
+    .tower-anime-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+    .tower-anime-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; background: #0d1117;
+      border: 1px solid #30363d; border-radius: 8px; cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .tower-anime-item:hover { border-color: #e3a000; }
+    .tower-anime-item img { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; }
+    .tower-anime-item span { font-size: 0.85rem; flex: 1; }
+    .tower-anime-elo { font-size: 0.75rem; color: #8b949e; }
+
+    /* TOWER PROGRESS BAR */
+    #tower-progress-wrap {
+      display: none;
+      background: #21262d; border-radius: 6px; height: 5px;
+      margin-bottom: 8px; overflow: hidden;
+    }
+    #tower-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #e3a000, #f0c040);
+      transition: width 0.3s ease;
+    }
+    #tower-status { display: none; }
+
+    /* TOWER SUMMARY */
+    #tower-summary-screen { display: none; }
+    .tower-summary-header { text-align: center; margin-bottom: 24px; }
+    .tower-summary-header h2 { font-size: 1.6rem; color: #e3a000; }
+    .tower-summary-header p  { color: #8b949e; margin-top: 6px; }
+    .tower-results-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+    .tower-result-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border-radius: 10px;
+      border: 1px solid #30363d;
+    }
+    .tower-result-row.won  { background: #0d2a0d; border-color: #238636; }
+    .tower-result-row.lost { background: #2a0d0d; border-color: #da3633; }
+    .tower-result-row img  { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+    .tower-result-info { flex: 1; }
+    .tower-result-info .name { font-size: 0.85rem; font-weight: 600; }
+    .tower-result-info .meta { font-size: 0.75rem; color: #8b949e; margin-top: 2px; }
+    .tower-result-outcome { font-size: 1.1rem; flex-shrink: 0; }
+
+    /* LIST VIEW */
+    .ranking-table {
+      width: 100%; border-collapse: collapse; font-size: 0.82rem;
+    }
+    .ranking-table th {
+      text-align: left; padding: 8px 10px;
+      color: #8b949e; border-bottom: 1px solid #30363d;
+      white-space: nowrap; cursor: pointer; user-select: none;
+    }
+    .ranking-table th:hover { color: #58a6ff; }
+    .ranking-table th.sorted { color: #58a6ff; }
+    .ranking-table td {
+      padding: 7px 10px; border-bottom: 1px solid #21262d;
+      vertical-align: middle;
+    }
+    .ranking-table tr:hover td { background: #161b22; }
+    .ranking-table tr.hidden-row { display: none; }
+    .tbl-cover { width: 28px; height: 40px; object-fit: cover; border-radius: 3px; display: block; }
+
+    /* Table virtual-scroll wrapper */
+    #ranking-table-wrap {
+      max-height: 70vh;
+      overflow-y: auto;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+    }
+    #ranking-table-wrap .ranking-table { border-radius: 0; }
+    #ranking-table-wrap thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #161b22;
+      box-shadow: 0 1px 0 #30363d;
+    }
+    .tbl-rank  { color: #8b949e; font-weight: 700; width: 36px; }
+    .tbl-title { font-weight: 600; color: #e6edf3; cursor: pointer; }
+    .tbl-title:hover { color: #58a6ff; text-decoration: underline; }
+    #view-toggle-wrap { display: flex; gap: 6px; margin-left: auto; }
+    .view-btn {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      font-size: 0.78rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+    }
+    .view-btn.active { background: #1c2940; border-color: #58a6ff; color: #58a6ff; }
+
+    /* DESCRIPTION in detail modal */
+    .modal-description {
+      font-size: 0.78rem; color: #8b949e; line-height: 1.5;
+      max-height: 80px; overflow-y: auto; margin-bottom: 12px;
+      border-left: 2px solid #30363d; padding-left: 10px;
+    }
+
+    /* MAL IMPORT */
+    .source-tabs {
+      display: flex;
+      gap: 0;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+    .source-tab {
+      flex: 1;
+      padding: 9px 20px;
+      background: #161b22;
+      color: #8b949e;
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+    .source-tab.active { background: #21262d; color: #e6edf3; }
+    .source-tab:hover:not(.active) { background: #1c2128; color: #c9d1d9; }
+
+    #mal-upload-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 340px;
+    }
+    .mal-drop-zone {
+      width: 100%;
+      border: 2px dashed #30363d;
+      border-radius: 10px;
+      padding: 24px 16px;
+      text-align: center;
+      cursor: pointer;
+      color: #8b949e;
+      font-size: 0.88rem;
+      transition: all 0.2s;
+    }
+    .mal-drop-zone:hover, .mal-drop-zone.drag-over { border-color: #58a6ff; color: #58a6ff; background: #1c2940; }
+    .mal-drop-zone input[type="file"] { display: none; }
+    .mal-instructions {
+      font-size: 0.76rem;
+      color: #6e7681;
+      text-align: center;
+      line-height: 1.5;
+    }
+    .mal-instructions a { color: #58a6ff; text-decoration: none; }
+    .mal-instructions a:hover { text-decoration: underline; }
+
+    /* RECOMMENDATIONS SECTION */
+    #recs-section { margin: 24px 0; }
+    #recs-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 6px; text-align: center; }
+    #recs-section p.recs-sub { font-size: 0.8rem; color: #6e7681; text-align: center; margin-bottom: 16px; }
+    .recs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 14px;
+    }
+    .rec-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+      text-align: center;
+      transition: all 0.18s;
+      text-decoration: none;
+      display: block;
+      color: inherit;
+    }
+    .rec-card:hover { border-color: #58a6ff; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(88,166,255,0.12); }
+    .rec-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
+    .rec-card-body { padding: 8px; }
+    .rec-card-title { font-size: 0.78rem; font-weight: 600; line-height: 1.3; color: #e6edf3; margin-bottom: 4px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .rec-card-meta { font-size: 0.7rem; color: #8b949e; }
+    .rec-score-pill {
+      display: inline-block;
+      background: #21262d;
+      border-radius: 10px;
+      padding: 2px 7px;
+      font-size: 0.68rem;
+      color: #58a6ff;
+      margin-top: 3px;
+    }
+
+    /* COMPATIBILITY SECTION */
+    #compat-section { margin: 24px 0; }
+    #compat-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 16px; text-align: center; }
+    .compat-input-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    #compat-results { }
+    .compat-score-box {
+      text-align: center;
+      padding: 24px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 14px;
+      margin-bottom: 20px;
+    }
+    .compat-pct {
+      font-size: 3rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .compat-label { font-size: 0.85rem; color: #8b949e; }
+    .compat-sub { font-size: 0.76rem; color: #6e7681; margin-top: 6px; }
+    .compat-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .compat-col {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .compat-col h4 { font-size: 0.78rem; color: #8b949e; margin-bottom: 10px; }
+    .compat-col-full { grid-column: 1 / -1; }
+    .compat-anime-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 0.78rem;
+    }
+    .compat-anime-row:last-child { border-bottom: none; }
+    .compat-anime-row img { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+    .compat-anime-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .compat-ranks { font-size: 0.7rem; color: #8b949e; white-space: nowrap; flex-shrink: 0; }
+
+    @media (max-width: 600px) {
+      .battle-arena {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+      }
+      .vs-divider { order: 2; font-size: 1rem; padding: 2px 0; }
+      .anime-card:first-child { order: 1; }
+      .anime-card:last-child  { order: 3; }
+      .compat-cols { grid-template-columns: 1fr; }
+
+      /* Tighter battle cards on mobile */
+      .anime-card { padding: 14px 12px; gap: 8px; flex-direction: row; align-items: flex-start; text-align: left; }
+      .anime-card img { width: 80px; height: 112px; flex-shrink: 0; }
+      .anime-card-body { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 6px; }
+      .anime-card .title { font-size: 0.95rem; }
+      .anime-card .elo-badge { align-self: flex-start; }
+      .card-actions { justify-content: flex-start; gap: 5px; flex-wrap: wrap; }
+      .fuzzy-btn, .synopsis-btn, .card-anilist-link, .exclude-btn { font-size: 0.65rem; padding: 4px 7px; }
+      .synopsis-panel { font-size: 0.76rem; }
+
+      /* Battle action buttons */
+      .battle-actions { gap: 6px; }
+      .battle-actions .btn-secondary { font-size: 0.78rem; padding: 7px 10px; }
+
+      /* Main padding */
+      #main { padding: 16px 12px; }
+
+      /* Header */
+      header h1 { font-size: 1rem; }
+      #lang-toggle-btn, #change-user-btn { font-size: 0.72rem; padding: 5px 8px; }
+
+      /* Results hero */
+      .results-util-bar { gap: 5px; }
+      .util-btn { font-size: 0.75rem; padding: 4px 9px; }
+
+      /* Rankings grid — 2 columns on mobile */
+      .ranking-list { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+
+      /* Modal stacks vertically on mobile */
+      .modal-box { flex-direction: column; }
+      #modal-cover { width: 100%; height: 200px; object-fit: cover; }
+      .modal-stats-row { grid-template-columns: repeat(2, 1fr); }
+
+      /* ── Rankings tab controls ── */
+      #search-wrap input { width: 100%; box-sizing: border-box; }
+      #search-wrap { width: 100%; }
+      .list-controls { gap: 6px; }
+      .sort-btn { font-size: 0.72rem; padding: 4px 8px; }
+      .fuzzy-filter-btn { font-size: 0.72rem; padding: 4px 8px; margin-left: 0; }
+      #view-toggle-wrap { margin-left: auto; }
+      .format-btn { font-size: 0.68rem; padding: 3px 7px; }
+
+      /* ── Results util bar — allow wrapping ── */
+      .results-util-bar { flex-wrap: wrap; }
+      .util-btn { font-size: 0.72rem; padding: 5px 9px; }
+
+      /* ── Tab bar — let tabs scroll naturally instead of squashing ── */
+      .results-tabs { gap: 4px; padding: 3px; }
+      .res-tab { flex: 0 0 auto; padding: 7px 10px; font-size: 0.75rem; }
+
+      /* ── Stats tab ── */
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .stats-lists,
+      .stats-breakdown,
+      .disagree-cols { grid-template-columns: 1fr !important; }
+
+      /* Shrink chart row fixed widths so they fit in a narrow card */
+      .genre-chart-label { width: 80px; font-size: 0.75rem; }
+      .genre-chart-value { width: 52px; font-size: 0.72rem; }
+      .genre-chart-row   { font-size: 0.75rem; gap: 6px; }
+
+      /* Stop any content in a stats card overflowing the card */
+      .stats-list-section { overflow: hidden; }
+
+      /* Wrap long meta text in disagreements */
+      .disagree-item-meta { white-space: normal; }
+      .disagree-item { flex-wrap: wrap; }
+
+      /* ── Social / Compat tab ── */
+      .compat-input-row { flex-direction: column; align-items: stretch; }
+      .compat-input-row input { width: 100% !important; }
+      .compat-input-row .btn-primary { width: 100%; }
+      .compat-ranks { white-space: normal; max-width: 80px; text-align: right; }
+      .compat-anime-row { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🎌 Anime ELO Ranker</h1>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <span id="progress-info"></span>
+    <div id="auth-header-badge">
+      <img id="auth-hdr-avatar" src="" alt="" />
+      <span class="auth-hdr-name" id="auth-hdr-name"></span>
+      <button class="auth-hdr-logout" onclick="clearAuth()">Logout</button>
+    </div>
+    <button id="lang-toggle-btn" onclick="toggleLanguage()" title="Switch between English and Romaji titles">🇬🇧 English</button>
+    <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄ Change User</button>
+  </div>
+</header>
+
+<div id="main">
+
+  <!-- USERNAME SCREEN -->
+  <div id="username-screen">
+    <h2>Rank Your Anime</h2>
+    <p class="onboarding-tagline">Find out exactly where every show stands — one head-to-head battle at a time.</p>
+
+    <div class="onboarding-steps">
+      <div class="onboarding-step">
+        <span class="step-icon">📋</span>
+        <strong>Load your list</strong>
+        <span>Connect your AniList or MyAnimeList account to import everything you've watched.</span>
+      </div>
+      <div class="onboarding-step">
+        <span class="step-icon">⚔️</span>
+        <strong>Battle it out</strong>
+        <span>Pick the winner of each head-to-head match-up. Skip if it&#39;s too close to call, or flag Fuzzy if you can&#39;t quite remember an anime.</span>
+      </div>
+      <div class="onboarding-step">
+        <span class="step-icon">🏆</span>
+        <strong>See your ranking</strong>
+        <span>Your personal tier list builds itself as you vote — with stats, trends, and rivalries.</span>
+      </div>
+    </div>
+
+    <hr class="onboarding-divider" />
+
+    <!-- AniList OAuth login -->
+    <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
+
+    <!-- Logged-in badge (shown when token exists) -->
+    <div class="auth-logged-in-row" id="auth-username-badge" style="display:none">
+      <img id="auth-badge-avatar" src="" alt="" />
+      <span class="auth-logged-in-name" id="auth-badge-name"></span>
+      <button class="auth-logout-btn" onclick="clearAuth()">Logout</button>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;color:#8b949e;font-size:0.8rem;margin:2px 0 4px">
+      <hr style="flex:1;border:none;border-top:1px solid #21262d;max-width:80px">
+      <span>or continue without logging in</span>
+      <hr style="flex:1;border:none;border-top:1px solid #21262d;max-width:80px">
+    </div>
+
+    <!-- Source tabs -->
+    <div class="source-tabs" style="width:280px;margin-top:4px">
+      <button class="source-tab active" id="tab-anilist" onclick="setSource('anilist')">🔵 AniList</button>
+      <button class="source-tab"        id="tab-mal"     onclick="setSource('mal')">📋 MyAnimeList</button>
+    </div>
+
+    <!-- AniList login -->
+    <div id="anilist-wrap" style="display:flex;flex-direction:column;align-items:center;gap:10px;width:100%">
+      <div class="input-row">
+        <input type="text" id="username-input" placeholder="e.g. Xinil" />
+        <button class="btn-primary" onclick="startLoading()">Load List</button>
+      </div>
+      <label class="warm-start-row">
+        <input type="checkbox" id="warm-start-chk" />
+        Warm start — seed ELO from my AniList scores
+      </label>
+      <p class="warm-start-info">Only applies when starting fresh. Scores map 10→1500 · 7→1200 · 4→900.</p>
+    </div>
+
+    <!-- MAL username input -->
+    <div id="mal-upload-wrap">
+      <div class="input-row">
+        <input type="text" id="mal-username-input" placeholder="MAL username" />
+        <button class="btn-primary" onclick="startMALLoading()">Load List</button>
+      </div>
+      <label class="warm-start-row" style="margin-top:0">
+        <input type="checkbox" id="mal-warm-start-chk" />
+        Warm start — seed ELO from my MAL scores
+      </label>
+      <p class="mal-instructions">
+        List not loading?
+        <label style="cursor:pointer;color:#58a6ff;text-decoration:underline" onclick="document.getElementById('mal-file-input').click()">Upload MAL XML export</label> as a fallback.
+        <input type="file" id="mal-file-input" accept=".xml" onchange="handleMalFile(this.files[0])" style="display:none" />
+      </p>
+    </div>
+
+    <p id="error-msg">Could not load list. Check your username and try again.</p>
+    <div class="or-divider">or</div>
+    <button class="btn-secondary" onclick="startGuestMode()" style="width:240px">
+      🎲 Guest Mode — top popular anime
+    </button>
+    <p class="warm-start-info" style="margin-top:4px">No AniList account needed · 250 popular shows</p>
+  </div>
+
+  <!-- LOADING SCREEN -->
+  <div id="loading-screen" style="display:none">
+    <div class="spinner"></div>
+    <p id="loading-msg" style="color:#8b949e">Fetching your anime list…</p>
+  </div>
+
+  <!-- BATTLE SCREEN -->
+  <!-- TOWER OF POWER CHAMPION PICKER -->
+  <div id="tower-modal">
+    <div class="tower-modal-box">
+      <h2>⚡ Tower of Power</h2>
+      <p>Choose your champion — they'll face 10 opponents in a row. ELO updates after each battle.</p>
+      <input type="text" id="tower-search" placeholder="🔍 Search your anime…" oninput="filterTowerList()" />
+      <div class="tower-anime-list" id="tower-anime-list"></div>
+      <button class="btn-secondary" style="margin-top:14px;width:100%" onclick="closeTowerModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- TOWER SUMMARY -->
+  <div id="tower-summary-screen">
+    <div class="tower-summary-header">
+      <h2 id="tower-summary-title"></h2>
+      <p  id="tower-summary-sub"></p>
+    </div>
+    <div class="tower-results-list" id="tower-results-list"></div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="btn-primary"   onclick="endTower()">▶ Back to Ranking</button>
+      <button class="btn-secondary" onclick="openTowerModal()">⚡ Run Again</button>
+    </div>
+  </div>
+
+  <div id="battle-screen">
+    <div id="progress-bar-wrap"><div id="progress-bar" style="width:0%"></div></div>
+    <div id="tower-progress-wrap"><div id="tower-progress-bar" style="width:0%"></div></div>
+    <div id="tower-status" style="text-align:center;font-size:0.82rem;color:#e3a000;margin-bottom:8px"></div>
+
+    <div id="settle-banner">
+      <span>🎯 Settle mode — targeting uncertain matchups</span>
+      <button onclick="toggleSettleMode()" style="background:none;border:1px solid #238636;color:#3fb950;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+    </div>
+
+    <div class="battle-prompt">
+      <h2 id="battle-prompt-h2">Which did you enjoy more?</h2>
+      <p   id="battle-prompt-p">Click your favourite — or skip if you can't decide.</p>
+    </div>
+
+    <div class="battle-arena">
+      <div class="anime-card" id="card-a" onclick="pickWinner(0)">
+        <img id="img-a" src="" alt="" />
+        <div class="anime-card-body">
+          <div class="title" id="title-a"></div>
+          <div class="elo-badge" id="elo-a"></div>
+          <div class="card-actions">
+            <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">🌫 Can't remember</button>
+            <button class="synopsis-btn" onclick="toggleSynopsis(event,0)" title="About this show">ℹ About</button>
+            <a class="card-anilist-link" id="anilist-a" href="#" target="_blank" onclick="event.stopPropagation()">↗ AniList</a>
+            <button class="exclude-btn" onclick="excludeAnime(event,0)" title="Remove from ranking pool permanently">✗ Not seen</button>
+          </div>
+          <div class="synopsis-panel" id="synopsis-a" style="display:none"></div>
+        </div>
+      </div>
+      <div class="vs-divider">VS</div>
+      <div class="anime-card" id="card-b" onclick="pickWinner(1)">
+        <img id="img-b" src="" alt="" />
+        <div class="anime-card-body">
+          <div class="title" id="title-b"></div>
+          <div class="elo-badge" id="elo-b"></div>
+          <div class="card-actions">
+            <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">🌫 Can't remember</button>
+            <button class="synopsis-btn" onclick="toggleSynopsis(event,1)" title="About this show">ℹ About</button>
+            <a class="card-anilist-link" id="anilist-b" href="#" target="_blank" onclick="event.stopPropagation()">↗ AniList</a>
+            <button class="exclude-btn" onclick="excludeAnime(event,1)" title="Remove from ranking pool permanently">✗ Not seen</button>
+          </div>
+          <div class="synopsis-panel" id="synopsis-b" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="battle-actions">
+      <button class="btn-secondary" id="undo-btn" onclick="undoLast()" disabled>↩ Undo</button>
+      <button class="btn-secondary" id="skip-btn" onclick="skipBattle()">⏭ Skip</button>
+      <button class="btn-secondary" onclick="showResults()">📊 Rankings</button>
+      <button class="btn-secondary" id="settle-btn" onclick="toggleSettleMode()" title="Target low-confidence matchups">🎯 Settle</button>
+      <button class="btn-secondary" onclick="openTowerModal()" title="Pick a champion to face 10 opponents">⚡ Tower</button>
+    </div>
+    <div class="kb-hints">
+      <kbd>←</kbd> left &nbsp;·&nbsp; <kbd>→</kbd> right &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>U</kbd> undo
+    </div>
+  </div>
+
+  <!-- RESULTS SCREEN -->
+  <div id="results-screen">
+
+    <!-- Hero CTA -->
+    <div class="results-hero">
+      <button class="btn-keep-ranking" onclick="resumeBattle()">▶ Keep Ranking</button>
+      <p id="results-subtitle"></p>
+      <div class="results-util-bar">
+        <button class="util-btn" onclick="shareRankings()">🔗 Share</button>
+        <button class="util-btn" onclick="showHelp()">❓ Help</button>
+        <button class="util-btn" onclick="exportRankings()">📋 Text</button>
+        <button class="util-btn" onclick="exportCSV()">⬇ CSV</button>
+        <button class="util-btn-anilist" id="sync-anilist-btn" onclick="openSyncModal()">🔵 Sync to AniList</button>
+        <button class="util-btn util-danger" onclick="resetAll()">🔄 Start Over</button>
+      </div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="results-tabs">
+      <button class="res-tab active" data-tab="rankings" onclick="switchResultsTab('rankings')">📋 Rankings</button>
+      <button class="res-tab" data-tab="stats"    onclick="switchResultsTab('stats')">📊 Stats</button>
+      <button class="res-tab" data-tab="history"  onclick="switchResultsTab('history')">⚔️ History</button>
+      <button class="res-tab" data-tab="discover" onclick="switchResultsTab('discover')">🎯 Discover</button>
+      <button class="res-tab" data-tab="social"   onclick="switchResultsTab('social')">👥 Social</button>
+    </div>
+
+    <!-- ── RANKINGS panel ──────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-rankings">
+      <textarea id="export-area" rows="10" readonly></textarea>
+      <div id="search-wrap">
+        <input type="text" id="search-input" placeholder="🔍  Search your rankings…" oninput="filterRankings()" />
+      </div>
+      <div class="format-row" id="format-row">
+        <span class="format-row-label">Formats:</span>
+        <button class="format-btn active" data-format="TV"       onclick="toggleFormat('TV')">TV</button>
+        <button class="format-btn active" data-format="MOVIE"    onclick="toggleFormat('MOVIE')">Movie</button>
+        <button class="format-btn active" data-format="OVA"      onclick="toggleFormat('OVA')">OVA</button>
+        <button class="format-btn active" data-format="ONA"      onclick="toggleFormat('ONA')">ONA</button>
+        <button class="format-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT')">Short</button>
+        <button class="format-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL')">Special</button>
+      </div>
+      <div class="list-controls">
+        <button class="sort-btn active" data-sort="elo"     onclick="setSort('elo')">ELO</button>
+        <button class="sort-btn"        data-sort="winrate" onclick="setSort('winrate')">Win Rate</button>
+        <button class="sort-btn"        data-sort="battles" onclick="setSort('battles')">Battles</button>
+        <button class="sort-btn"        data-sort="score"   onclick="setSort('score')">AniList Avg</button>
+        <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">🌫 Fuzzy only</button>
+        <div id="view-toggle-wrap">
+          <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view">⊞</button>
+          <button class="view-btn"        id="view-list-btn" onclick="setRankingView('list')" title="List view">☰</button>
+        </div>
+      </div>
+      <div class="ranking-list" id="ranking-list"></div>
+      <div id="ranking-table-wrap" style="display:none">
+        <table class="ranking-table" id="ranking-table">
+          <thead>
+            <tr>
+              <th style="width:36px">#</th>
+              <th style="width:40px"></th>
+              <th onclick="setSort('elo')"     class="sorted" id="th-elo">Title ▾</th>
+              <th onclick="setSort('elo')"     id="th-elo2">ELO</th>
+              <th onclick="setSort('winrate')" id="th-wr">Win Rate</th>
+              <th onclick="setSort('battles')" id="th-bt">Battles</th>
+              <th onclick="setSort('score')"   id="th-sc">AniList Avg</th>
+              <th>Tier</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="ranking-table-body"></tbody>
+        </table>
+      </div>
+      <div id="excluded-section" style="margin-top:32px">
+        <h3>Excluded from Pool</h3>
+        <div class="excluded-list" id="excluded-list"></div>
+      </div>
+    </div>
+
+    <!-- ── STATS panel ────────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-stats" style="display:none">
+      <div id="stats-section">
+        <h3>Your Stats</h3>
+        <div class="stats-grid">
+          <div class="stat-box"><div class="stat-number" id="stat-total-battles">0</div><div class="stat-label">Total Battles</div></div>
+          <div class="stat-box"><div class="stat-number" id="stat-stability">0%</div><div class="stat-label">Rankings Stable</div></div>
+          <div class="stat-box"><div class="stat-number" id="stat-fuzzy">0</div><div class="stat-label">Fuzzy Flagged</div></div>
+        </div>
+        <div class="stats-lists">
+          <div class="stats-list-section">
+            <h4>Most Battled</h4>
+            <div id="stat-most-battled"></div>
+          </div>
+          <div class="stats-list-section">
+            <h4>Best Win Rate <small style="font-weight:400">(5+ battles)</small></h4>
+            <div id="stat-best-winrate"></div>
+          </div>
+          <div class="stats-list-section" style="grid-column:1/-1">
+            <h4>Biggest Upsets <small style="font-weight:400">(underdog wins)</small></h4>
+            <div id="stat-upsets"></div>
+          </div>
+        </div>
+        <div class="stats-breakdown">
+          <div class="stats-list-section">
+            <h4>🎭 Taste by Genre</h4>
+            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Average ELO per genre · 3+ anime minimum</p>
+            <div id="stat-genre-chart"></div>
+          </div>
+          <div class="stats-list-section">
+            <h4>📅 Taste by Era</h4>
+            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Average ELO by decade · 2+ anime minimum</p>
+            <div id="stat-era-chart"></div>
+          </div>
+        </div>
+        <div id="disagree-section" style="margin-top:32px">
+          <h3>⚖️ Your Taste vs the Community</h3>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Compares your ELO rank to AniList's global community score — showing where your taste diverges from the crowd.</p>
+          <div class="disagree-cols">
+            <div class="disagree-col">
+              <h4>🟢 You rate higher than the community</h4>
+              <div id="disagree-elo-higher"></div>
+            </div>
+            <div class="disagree-col">
+              <h4>🔴 Community rates higher than you</h4>
+              <div id="disagree-score-higher"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DISCOVER panel ─────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-discover" style="display:none">
+      <div id="recs-section">
+        <h3>🎯 Recommendations</h3>
+        <div class="source-tabs" style="width:300px;margin:0 auto 16px">
+          <button class="source-tab active" id="recs-tab-foryou"   onclick="setRecsTab('foryou')">✨ For You</button>
+          <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')">📅 This Season</button>
+        </div>
+        <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
+        <div id="recs-grid" class="recs-grid"></div>
+      </div>
+    </div>
+
+    <!-- ── HISTORY panel ──────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-history" style="display:none">
+      <div id="rivalry-section" style="display:none">
+        <h3>⚔️ Rivalries</h3>
+        <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Matchups you've fought 3+ times with split results.</p>
+        <div id="rivalry-list"></div>
+      </div>
+      <div id="history-section">
+        <h3>Battle History <span style="color:#8b949e;font-weight:400;font-size:0.85rem">(most recent first)</span></h3>
+        <div class="history-list" id="history-list"></div>
+      </div>
+    </div>
+
+    <!-- ── SOCIAL panel ───────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-social" style="display:none">
+      <div id="compat-section">
+        <h3>👥 Taste Compatibility</h3>
+        <div class="compat-input-row">
+          <input type="text" id="compat-username-input" placeholder="Enter AniList username…" style="width:220px"
+               onkeydown="if(event.key==='Enter')runCompatibility()" />
+          <button class="btn-primary" onclick="runCompatibility()">Compare</button>
+        </div>
+        <div id="compat-results"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- KEYBOARD SHORTCUT FIRST-USE TIP -->
+  <div id="kb-first-tip" style="display:none">
+    <h5>⌨️ Keyboard Shortcuts</h5>
+    <div class="kb-tip-rows">
+      <div><kbd>←</kbd> Left wins</div>
+      <div><kbd>→</kbd> Right wins</div>
+      <div><kbd>S</kbd> Skip</div>
+      <div><kbd>U</kbd> Undo</div>
+    </div>
+    <button class="btn-secondary" style="font-size:0.78rem;padding:5px 16px" onclick="dismissKbTip()">Got it ✓</button>
+  </div>
+
+  <!-- SESSION SUMMARY MODAL -->
+  <div id="session-summary-modal" onclick="closeSessionSummary(event)">
+    <div class="session-summary-box">
+      <button class="modal-close" onclick="document.getElementById('session-summary-modal').style.display='none'">✕</button>
+      <h3>⚡ Session Recap</h3>
+      <p id="session-summary-subtitle" style="color:#8b949e;font-size:0.85rem;margin:4px 0 16px"></p>
+      <div id="session-summary-list"></div>
+      <div style="text-align:center;margin-top:16px;display:flex;gap:8px;justify-content:center">
+        <button class="btn-primary" onclick="resumeBattle();document.getElementById('session-summary-modal').style.display='none'">▶ Keep Ranking</button>
+        <button class="btn-secondary" onclick="showResults();document.getElementById('session-summary-modal').style.display='none'">📋 See Rankings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HELP MODAL -->
+  <div id="help-modal" onclick="closeHelpOnOverlay(event)">
+    <div class="help-modal-box">
+      <button class="modal-close" onclick="closeHelp()">✕</button>
+      <h3>How It Works</h3>
+      <p>A quick guide to what everything means.</p>
+      <div class="help-sections">
+        <div class="help-section">
+          <h4>⚡ ELO Rating</h4>
+          <p>Rankings use the ELO system (used in chess). Each battle adjusts both scores — beating a higher-ranked anime gains more points; losing to a lower-ranked one costs more. More battles = more reliable ranking.</p>
+        </div>
+        <div class="help-section">
+          <h4>🏷 Tiers</h4>
+          <p>Calculated from your ELO rankings: <strong>S</strong> top 10% · <strong>A</strong> 10–25% · <strong>B</strong> 25–55% · <strong>C</strong> 55–80% · <strong>D</strong> bottom 20%.</p>
+        </div>
+        <div class="help-section">
+          <h4>● Confidence</h4>
+          <p><strong>Uncertain</strong> — fewer than 5 battles, don't trust this rank yet.<br>
+          <strong>Settling</strong> — 5–14 battles, getting more reliable.<br>
+          <strong>Confident</strong> — 15+ battles, stable.</p>
+        </div>
+        <div class="help-section">
+          <h4>🌫 Fuzzy</h4>
+          <p>When you can't remember an anime well enough to judge it, select "Can't Remember". It gets flagged Fuzzy and appears less often in battles until you've refreshed your memory.</p>
+        </div>
+        <div class="help-section">
+          <h4>🎯 Settle Mode</h4>
+          <p>Prioritises battles between low-confidence anime. Use this when you want to lock in shaky rankings quickly rather than cycling through everything randomly.</p>
+        </div>
+        <div class="help-section">
+          <h4>⚡ Tower of Power</h4>
+          <p>Pick a champion anime and pit it against 10 random challengers in a row. A fun way to stress-test how highly you really rate a particular show.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SHARED VIEW (when opening a share link) -->
+  <div id="shared-screen">
+    <div class="shared-header">
+      <h2 id="shared-title">Shared Rankings</h2>
+      <p id="shared-subtitle"></p>
+    </div>
+    <div class="ranking-list" id="shared-list"></div>
+  </div>
+
+  <!-- DETAIL MODAL -->
+  <div id="detail-modal" onclick="closeDetailOnOverlay(event)">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeDetail()">✕</button>
+      <img id="modal-cover" src="" alt="" />
+      <div class="modal-content">
+        <h2 id="modal-title"></h2>
+        <div class="modal-rank-line" id="modal-rank-line"></div>
+        <div class="modal-meta-line" id="modal-meta-line"></div>
+        <div class="modal-genres" id="modal-genres"></div>
+        <div class="modal-stats-row">
+          <div class="modal-stat"><span class="val" id="modal-wins">0</span><label>Wins</label></div>
+          <div class="modal-stat"><span class="val" id="modal-losses">0</span><label>Losses</label></div>
+          <div class="modal-stat"><span class="val" id="modal-elo-val">–</span><label>ELO</label></div>
+          <div class="modal-stat"><span class="val" id="modal-winrate-val">–</span><label>Win Rate</label></div>
+        </div>
+        <div id="modal-confidence-wrap" style="margin-bottom:12px"></div>
+        <div id="modal-description" class="modal-description" style="display:none"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+          <a id="modal-anilist-btn" class="modal-anilist-btn" href="#" target="_blank" style="margin-bottom:0">View on AniList ↗</a>
+          <button id="modal-unfuzzy-btn" style="display:none" onclick="unflagFuzzy()">🌫 Remove Fuzzy Flag</button>
+        </div>
+        <div id="modal-sparkline-wrap" class="sparkline-wrap" style="display:none">
+          <h4>ELO History</h4>
+          <div id="modal-sparkline"></div>
+        </div>
+        <div id="modal-recent" class="modal-recent"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- MILESTONE OVERLAY -->
+<div id="milestone-overlay">
+  <div class="milestone-box">
+    <div class="milestone-emoji" id="ms-emoji">🎉</div>
+    <h2 id="ms-title"></h2>
+    <p id="ms-msg"></p>
+    <div class="milestone-top5" id="ms-top5"></div>
+    <button class="btn-primary" onclick="closeMilestone()">Keep Ranking! ▶</button>
+  </div>
+</div>
+
+<!-- SHARE MODAL -->
+<div id="share-modal" onclick="closeShareOnOverlay(event)">
+  <div class="share-box">
+    <button class="share-close" onclick="closeShare()">✕</button>
+    <h3>🔗 Share Your Rankings</h3>
+    <p>This link encodes your current top 20. Anyone with it can view your ranking snapshot.</p>
+    <textarea id="share-url" readonly></textarea>
+    <div style="display:flex;gap:8px">
+      <button class="btn-primary" onclick="copyShareLink()" id="copy-btn">📋 Copy Link</button>
+      <button class="btn-secondary" onclick="closeShare()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- SYNC TO ANILIST MODAL -->
+<div id="sync-modal" onclick="closeSyncOnOverlay(event)" style="display:none">
+  <div class="sync-modal-box" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeSyncModal()" style="position:absolute;top:14px;right:14px">✕</button>
+    <h3>🔵 Sync Scores to AniList</h3>
+    <p class="sync-modal-sub" id="sync-modal-sub">Your ELO rankings will be mapped to a 1–10 score using percentile bands and saved to your AniList account.</p>
+    <div id="sync-preview-wrap"></div>
+    <div id="sync-progress-wrap" style="display:none">
+      <div class="sync-progress-bar-track"><div class="sync-progress-bar-fill" id="sync-bar-fill" style="width:0%"></div></div>
+      <p class="sync-progress-text" id="sync-progress-text">Syncing…</p>
+    </div>
+    <p id="sync-done-msg" class="sync-done-msg" style="display:none"></p>
+    <div class="sync-actions" id="sync-action-btns">
+      <button class="btn-secondary" onclick="closeSyncModal()">Cancel</button>
+      <button class="btn-primary" id="sync-confirm-btn" onclick="executeSyncToAniList()">Sync <span id="sync-count-label"></span> anime →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+// OWNER SETUP (one-time): Register your app at https://anilist.co/settings/developer
+// Set the Redirect URL to your site's URL, then paste the Client ID below.
+const ANILIST_CLIENT_ID = '37947';
+
+const K = 32;           // ELO K-factor
+const TARGET_BATTLES = 600; // soft target; user can always stop early
+
+// ─── STATE ─────────────────────────────────────────────────────────────────
+let animeList    = [];
+let battleCount  = 0;
+let currentA     = null;
+let currentB     = null;
+let saveKey      = '';
+let prevState       = null;  // single-level undo snapshot
+let nextPairOverride = null; // [idxA, idxB] — used once after an undo to restore the original "next" pair
+let battleHistory   = [];    // [{winnerTitle, loserTitle, winnerEloAfter, loserEloAfter, eloSwing}]
+const MAX_HISTORY   = 200;
+let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
+let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.g. 'OVA', 'ONA')
+let preferRomaji    = false;     // title language preference
+let currentSort     = 'elo';     // active sort in rankings view
+let _renderGen      = 0;         // cancel in-flight chunked grid renders
+let _vsTableData    = [];        // pre-computed rows for table virtual scroll
+let _vsScrollRaf    = null;      // rAF handle for table scroll throttling
+const VS_ROW_H      = 54;        // estimated table row height in px
+const VS_BUFFER     = 8;         // extra rows to render above/below viewport
+let rankingView     = 'grid';    // 'grid' or 'list'
+let showFuzzyOnly   = false;     // fuzzy filter toggle
+let settleMode      = false;     // targeted low-confidence matchmaking
+
+// ─── TOWER OF POWER ──────────────────────────────────────────────────────────
+let towerMode       = false;
+let towerChampIdx   = null;      // index in animeList of the chosen champion
+let towerRound      = 0;         // 0-9
+let towerOpponents  = [];        // pre-selected array of 10 opponent indices
+let towerResults    = [];        // [{opponentIdx, championWon}]
+const TOWER_ROUNDS  = 10;
+
+// ─── ANILIST AUTH ────────────────────────────────────────────────────────────
+let authToken = null;
+let authUser  = null; // { id, name, avatar }
+
+function anilistHeaders() {
+  const h = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+  if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+  return h;
+}
+
+function saveAuth() {
+  localStorage.setItem('anime_elo_auth', JSON.stringify({
+    token: authToken, user: authUser,
+    saved: Date.now()
+  }));
+}
+
+function loadAuthFromStorage() {
+  try {
+    const raw = localStorage.getItem('anime_elo_auth');
+    if (!raw) return false;
+    const { token, user } = JSON.parse(raw);
+    if (!token || !user) return false;
+    authToken = token;
+    authUser  = user;
+    return true;
+  } catch { return false; }
+}
+
+function clearAuth() {
+  authToken = null;
+  authUser  = null;
+  localStorage.removeItem('anime_elo_auth');
+  _updateAuthUI();
+}
+
+function _updateAuthUI() {
+  const loggedIn = !!(authToken && authUser);
+
+  // Header badge
+  const hdrBadge = document.getElementById('auth-header-badge');
+  if (hdrBadge) {
+    hdrBadge.style.display = loggedIn ? 'flex' : 'none';
+    if (loggedIn) {
+      const hdrAvatar = document.getElementById('auth-hdr-avatar');
+      const hdrName   = document.getElementById('auth-hdr-name');
+      if (hdrAvatar) hdrAvatar.src = authUser.avatar || '';
+      if (hdrName)   hdrName.textContent = authUser.name;
+    }
+  }
+
+  // Username screen badge
+  const loginBtn  = document.getElementById('auth-login-btn');
+  const loggedBadge = document.getElementById('auth-username-badge');
+  if (loginBtn)    loginBtn.style.display    = loggedIn ? 'none' : '';
+  if (loggedBadge) loggedBadge.style.display = loggedIn ? 'flex'  : 'none';
+  if (loggedIn && loggedBadge) {
+    const av = document.getElementById('auth-badge-avatar');
+    const nm = document.getElementById('auth-badge-name');
+    if (av) av.src = authUser.avatar || '';
+    if (nm) nm.textContent = authUser.name;
+  }
+
+  // Auto-fill username input when logged in
+  if (loggedIn) {
+    const inp = document.getElementById('username-input');
+    if (inp && !inp.value) inp.value = authUser.name;
+  }
+
+  // Show/hide the sync button
+  const syncBtn = document.getElementById('sync-anilist-btn');
+  if (syncBtn) syncBtn.style.display = loggedIn ? '' : 'none';
+}
+
+function startOAuthFlow() {
+  if (!ANILIST_CLIENT_ID) {
+    alert('AniList login is not configured yet.');
+    return;
+  }
+  const redirectUri = window.location.href.split('#')[0].split('?')[0];
+  const authUrl = 'https://anilist.co/api/v2/oauth/authorize'
+    + '?client_id='    + encodeURIComponent(ANILIST_CLIENT_ID)
+    + '&redirect_uri=' + encodeURIComponent(redirectUri)
+    + '&response_type=code';
+  window.location.href = authUrl;
+}
+
+async function _exchangeCodeForToken(code) {
+  const res = await fetch('/.netlify/functions/anilist-auth?code=' + encodeURIComponent(code));
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error || data.message || 'Token exchange failed');
+  return data.access_token;
+}
+
+async function _fetchViewer() {
+  const query = `query {
+    Viewer {
+      id name
+      avatar { medium }
+      mediaListOptions { scoreFormat }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST',
+    headers: anilistHeaders(),
+    body: JSON.stringify({ query })
+  });
+  const data = await res.json();
+  return data?.data?.Viewer ?? null;
+}
+
+// On page load: check for OAuth callback code in URL query params
+(function _checkOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  if (!code) return;
+  history.replaceState(null, '', window.location.pathname);
+  const btn = document.getElementById('auth-login-btn');
+  if (btn) { btn.textContent = '⏳ Logging in…'; btn.disabled = true; }
+  _exchangeCodeForToken(code).then(token => {
+    authToken = token;
+    return _fetchViewer();
+  }).then(viewer => {
+    if (viewer?.name) {
+      authUser = {
+        id: viewer.id, name: viewer.name,
+        avatar: viewer.avatar?.medium || '',
+        scoreFormat: viewer.mediaListOptions?.scoreFormat || 'POINT_10'
+      };
+      saveAuth();
+      _updateAuthUI();
+    }
+  }).catch(err => {
+    console.error('AniList login failed:', err);
+    authToken = null;
+    if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
+  });
+})();
+
+// On page load: restore token from localStorage
+if (loadAuthFromStorage()) {
+  // Defer UI update until DOM is ready
+  document.addEventListener('DOMContentLoaded', _updateAuthUI);
+  // Also update immediately in case DOMContentLoaded already fired
+  if (document.readyState !== 'loading') _updateAuthUI();
+}
+
+// ─── ANILIST FETCH ──────────────────────────────────────────────────────────
+function stripHtml(str) {
+  return (str || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function scoreToElo(score) {
+  // Maps AniList 1-10 score to starting ELO: 10→1500, 7→1200, 4→900
+  if (!score || score === 0) return 1200;
+  return Math.max(800, Math.min(1600, 1200 + (score - 7) * 100));
+}
+
+async function fetchAllAnime(username, seedFromScores = false) {
+  const query = `
+    query ($username: String) {
+      MediaListCollection(userName: $username, type: ANIME) {
+        lists {
+          name
+          entries {
+            score
+            status
+            media {
+              id
+              title { romaji english }
+              coverImage { medium large }
+              description(asHtml: false)
+              format
+              averageScore
+              genres
+              seasonYear
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST',
+    headers: anilistHeaders(),
+    body: JSON.stringify({ query, variables: { username } })
+  });
+
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (data.errors) throw new Error(data.errors[0].message);
+
+  const lists = data.data.MediaListCollection.lists;
+  // Use status field so custom-named lists are handled correctly.
+  // Include Completed, Currently Watching, and Rewatching only — skip Dropped, Paused, Planning.
+  const WATCHED_STATUSES = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
+  const entries = lists
+    .flatMap(l => l.entries)
+    .filter(e => WATCHED_STATUSES.has(e.status));
+
+  return entries.map(e => {
+    const startElo = seedFromScores ? scoreToElo(e.score) : 1200;
+    const titleEn  = e.media.title.english || e.media.title.romaji;
+    const titleRo  = e.media.title.romaji  || e.media.title.english;
+    return {
+      id: e.media.id,
+      title: titleEn,
+      titleEn, titleRo,
+      cover: e.media.coverImage.large || e.media.coverImage.medium,
+      description: stripHtml(e.media.description).slice(0, 500),
+      format: e.media.format || 'TV',
+      globalScore: e.media.averageScore || 0,
+      genres: e.media.genres || [],
+      seasonYear: e.media.seasonYear || null,
+      elo: startElo,
+      wins: 0, losses: 0, comparisons: 0,
+      fuzzy: false,
+      eloHistory: [startElo],
+      anilistScore: e.score || 0,
+    };
+  });
+}
+
+// ─── STORAGE ────────────────────────────────────────────────────────────────
+function saveState() {
+  if (!saveKey) return;
+  localStorage.setItem(saveKey, JSON.stringify({
+    animeList, battleCount, currentA, currentB, battleHistory,
+    excludedIds: [...excludedIds],
+    hiddenFormats: [...hiddenFormats],
+    rankingView,
+  }));
+}
+
+// ─── METADATA REFRESH ────────────────────────────────────────────────────────
+// Background-fetches title + description from AniList for existing animeList
+// objects, patching them in place without touching any battle data.
+async function refreshAnimeMetadata() {
+  if (!animeList.length) return;
+  const btn = document.getElementById('lang-toggle-btn');
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⏳ Loading…'; btn.disabled = true; }
+
+  const ids = animeList.map(a => a.id);
+  const PAGE_SIZE = 50;
+  const metaMap = {};
+
+  try {
+    for (let i = 0; i < ids.length; i += PAGE_SIZE) {
+      const chunk = ids.slice(i, i + PAGE_SIZE);
+      const query = `
+        query ($ids: [Int]) {
+          Page(perPage: 50) {
+            media(id_in: $ids, type: ANIME) {
+              id
+              title { romaji english }
+              description(asHtml: false)
+              format
+              averageScore
+            }
+          }
+        }`;
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { ids: chunk } })
+      });
+      const json = await res.json();
+      const mediaList = json?.data?.Page?.media ?? [];
+      mediaList.forEach(m => { metaMap[m.id] = m; });
+      if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 350));
+    }
+
+    // Patch each anime in place
+    animeList.forEach(a => {
+      const m = metaMap[a.id];
+      if (!m) return;
+      a.titleEn = m.title.english || m.title.romaji || a.title;
+      a.titleRo = m.title.romaji  || m.title.english || a.title;
+      a.description = stripHtml(m.description).slice(0, 500);
+      if (m.format) a.format = m.format;
+      if (m.averageScore) a.globalScore = m.averageScore;
+    });
+
+    saveState();
+
+    // Re-render wherever we currently are
+    if (currentA !== null && currentB !== null &&
+        document.getElementById('battle-screen').style.display !== 'none') {
+      renderPair(currentA, currentB);
+    }
+    if (document.getElementById('results-screen').style.display !== 'none') {
+      renderRankingList();
+    }
+  } catch (err) {
+    console.warn('refreshAnimeMetadata failed:', err);
+  } finally {
+    if (btn) {
+      btn.textContent = preferRomaji ? '🇯🇵 Romaji' : '🇬🇧 English';
+      btn.disabled = false;
+    }
+  }
+}
+
+function loadState(username, source = 'anilist') {
+  saveKey = (source === 'mal' ? 'anime_elo_mal_' : 'anime_elo_') + username.toLowerCase();
+  const raw = localStorage.getItem(saveKey);
+  if (!raw) return false;
+  try {
+    const s = JSON.parse(raw);
+    animeList     = s.animeList;
+    battleCount   = s.battleCount;
+    currentA      = s.currentA      ?? null;
+    currentB      = s.currentB      ?? null;
+    battleHistory = s.battleHistory ?? [];
+    excludedIds   = new Set(s.excludedIds ?? []);
+    hiddenFormats = new Set(s.hiddenFormats ?? []);
+    rankingView   = s.rankingView ?? 'grid';
+    // Migrate old saves that predate titleEn/titleRo/description/format fields
+    animeList.forEach(a => {
+      if (!a.titleEn) a.titleEn = a.title || '';
+      if (!a.titleRo) a.titleRo = a.title || '';
+      if (a.description === undefined) a.description = '';
+      if (!a.format) a.format = 'TV';
+      if (a.globalScore === undefined) a.globalScore = 0;
+    });
+    return true;
+  } catch { return false; }
+}
+
+// ─── UI HELPERS ─────────────────────────────────────────────────────────────
+function show(id)  { document.getElementById(id).style.display = 'block'; }
+function hide(id)  { document.getElementById(id).style.display = 'none'; }
+function showFlex(id) { document.getElementById(id).style.display = 'flex'; }
+
+function updateProgress() {
+  const pct = Math.min(100, (battleCount / TARGET_BATTLES) * 100);
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-info').textContent =
+    `${battleCount} battles · ${animeList.length} anime`;
+}
+
+// ─── ELO ────────────────────────────────────────────────────────────────────
+function expectedScore(ra, rb) {
+  return 1 / (1 + Math.pow(10, (rb - ra) / 400));
+}
+
+function updateElo(winner, loser) {
+  const ea = expectedScore(winner.elo, loser.elo);
+  const eb = expectedScore(loser.elo, winner.elo);
+  winner.elo = Math.round(winner.elo + K * (1 - ea));
+  loser.elo  = Math.round(loser.elo  + K * (0 - eb));
+  winner.wins++;
+  loser.losses++;
+  winner.comparisons++;
+  loser.comparisons++;
+  // ELO history for sparklines (cap at 30 data points each)
+  if (!winner.eloHistory) winner.eloHistory = [1200];
+  winner.eloHistory.push(winner.elo);
+  if (winner.eloHistory.length > 30) winner.eloHistory.shift();
+  if (!loser.eloHistory) loser.eloHistory = [1200];
+  loser.eloHistory.push(loser.elo);
+  if (loser.eloHistory.length > 30) loser.eloHistory.shift();
+}
+
+// ─── MATCHMAKING ────────────────────────────────────────────────────────────
+// Prefer pairing anime with similar ELO and few comparisons; skip excluded
+function pickOpponents() {
+  const n = animeList.length;
+
+  // weight: 0 for excluded, lower for fuzzy, higher for fewer comparisons
+  const weights = animeList.map(a => {
+    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return 0;
+    const base = 1 / (a.comparisons + 1);
+    return a.fuzzy ? base * 0.1 : base;
+  });
+  const totalW = weights.reduce((s, w) => s + w, 0);
+
+  // Fallback: if almost everything is excluded, use first two available
+  const activeCount = weights.filter(w => w > 0).length;
+  if (activeCount < 2) {
+    const fallback = animeList.map((_, i) => i).filter(i => weights[i] > 0);
+    return [fallback[0] ?? 0, fallback[1] ?? 1];
+  }
+
+  function weightedPick(exclude) {
+    let r = Math.random() * totalW;
+    for (let i = 0; i < n; i++) {
+      if (i === exclude) continue;
+      r -= weights[i];
+      if (r <= 0) return i;
+    }
+    // fallback: find first eligible index
+    for (let i = 0; i < n; i++) {
+      if (i !== exclude && weights[i] > 0) return i;
+    }
+    return exclude === 0 ? 1 : 0;
+  }
+
+  const idxA = weightedPick(-1);
+
+  // For B: pick from anime with similar ELO to A (within 300 pts), not excluded
+  const eloA = animeList[idxA].elo;
+  const candidates = animeList
+    .map((a, i) => ({ i, a }))
+    .filter(({ i }) => i !== idxA && weights[i] > 0 && Math.abs(animeList[i].elo - eloA) < 300)
+    .sort((x, y) => x.a.comparisons - y.a.comparisons);
+
+  let idxB;
+  if (candidates.length > 0) {
+    const pool = candidates.slice(0, Math.min(20, candidates.length));
+    idxB = pool[Math.floor(Math.random() * pool.length)].i;
+  } else {
+    idxB = weightedPick(idxA);
+  }
+
+  return [idxA, idxB];
+}
+
+// ─── BATTLE RENDERING ────────────────────────────────────────────────────────
+
+// Single shared render — always sets globals AND updates DOM together
+function renderPair(ia, ib) {
+  currentA = ia;
+  currentB = ib;
+  const a = animeList[ia];
+  const b = animeList[ib];
+  document.getElementById('img-a').src   = a.cover;
+  document.getElementById('img-a').alt   = displayTitle(a);
+  document.getElementById('title-a').textContent = displayTitle(a);
+  document.getElementById('elo-a').textContent   = `ELO ${a.elo}`;
+  document.getElementById('img-b').src   = b.cover;
+  document.getElementById('img-b').alt   = displayTitle(b);
+  document.getElementById('title-b').textContent = displayTitle(b);
+  document.getElementById('elo-b').textContent   = `ELO ${b.elo}`;
+
+  // AniList links
+  document.getElementById('anilist-a').href = `https://anilist.co/anime/${a.id}`;
+  document.getElementById('anilist-b').href = `https://anilist.co/anime/${b.id}`;
+
+  // Fuzzy button states
+  const fuzzyBtnA = document.getElementById('fuzzy-a');
+  fuzzyBtnA.classList.toggle('active', !!a.fuzzy);
+  fuzzyBtnA.textContent = a.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+
+  const fuzzyBtnB = document.getElementById('fuzzy-b');
+  fuzzyBtnB.classList.toggle('active', !!b.fuzzy);
+  fuzzyBtnB.textContent = b.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+
+  // Synopsis panels — reset, scroll back to top, and pre-fill content
+  const synA = document.getElementById('synopsis-a');
+  const synB = document.getElementById('synopsis-b');
+  synA.style.display = 'none';
+  synB.style.display = 'none';
+  synA.textContent = a.description || 'No description available.';
+  synB.textContent = b.description || 'No description available.';
+
+  updateProgress();
+}
+
+function renderCurrentPair() {
+  renderPair(currentA, currentB);
+}
+
+function renderBattle() {
+  let ia, ib;
+  if (nextPairOverride) {
+    [ia, ib] = nextPairOverride;
+    nextPairOverride = null;
+  } else if (settleMode) {
+    const pair = pickSettlePair();
+    [ia, ib] = pair ?? pickOpponents();
+  } else {
+    [ia, ib] = pickOpponents();
+  }
+  renderPair(ia, ib);
+  saveState();
+}
+
+function pickWinner(side) {
+  if (towerMode) { pickWinnerTower(side); return; }
+  const winnerIdx = side === 0 ? currentA : currentB;
+  const loserIdx  = side === 0 ? currentB : currentA;
+
+  // Capture everything needed to undo BEFORE any mutations
+  const snap = {
+    winnerIdx, loserIdx,
+    winnerSnap:   { ...animeList[winnerIdx] },
+    loserSnap:    { ...animeList[loserIdx] },
+    battleCount,
+    pairA: currentA,
+    pairB: currentB,
+  };
+
+  // Apply ELO changes and record history
+  const eloBefore     = animeList[winnerIdx].elo;
+  const loserEloBefore = animeList[loserIdx].elo;
+  const eloDiffBefore = loserEloBefore - eloBefore; // positive = winner was underdog
+  updateElo(animeList[winnerIdx], animeList[loserIdx]);
+  battleHistory.unshift({
+    winnerId:       animeList[winnerIdx].id,
+    loserId:        animeList[loserIdx].id,
+    winnerTitle:    animeList[winnerIdx].title,
+    loserTitle:     animeList[loserIdx].title,
+    winnerEloAfter: animeList[winnerIdx].elo,
+    loserEloAfter:  animeList[loserIdx].elo,
+    eloSwing:       animeList[winnerIdx].elo - eloBefore,
+    eloDiffBefore,
+  });
+  if (battleHistory.length > MAX_HISTORY) battleHistory.pop();
+
+  const prevCount = battleCount;
+  battleCount++;
+  checkMilestone(prevCount, battleCount);
+  checkSessionSummary();
+  saveState();
+
+  // Pick and show the next pair FIRST — then record it in the undo snapshot
+  renderBattle();
+
+  // Now currentA/currentB are the next pair — save them so undo can restore them
+  prevState = { ...snap, nextA: currentA, nextB: currentB };
+  document.getElementById('undo-btn').disabled = false;
+}
+
+function undoLast() {
+  if (!prevState) return;
+
+  const { winnerIdx, loserIdx, winnerSnap, loserSnap, battleCount: savedCount, pairA, pairB, nextA, nextB } = prevState;
+
+  // Restore anime ELO/stats
+  animeList[winnerIdx] = { ...winnerSnap };
+  animeList[loserIdx]  = { ...loserSnap };
+
+  // Restore battle count and remove last history entry
+  battleCount = savedCount;
+  if (battleHistory.length > 0) battleHistory.shift();
+
+  // After undo, if the user re-picks from pairA/pairB, restore the same next pair
+  nextPairOverride = [nextA, nextB];
+
+  // Clear undo state
+  prevState = null;
+  document.getElementById('undo-btn').disabled = true;
+
+  // Show the original pair
+  renderPair(pairA, pairB);
+  saveState();
+}
+
+function skipBattle() {
+  const snap = {
+    winnerIdx:  currentA,  // reuse winnerIdx/loserIdx fields for the two anime
+    loserIdx:   currentB,
+    winnerSnap: { ...animeList[currentA] },
+    loserSnap:  { ...animeList[currentB] },
+    battleCount,
+    pairA: currentA,
+    pairB: currentB,
+  };
+
+  animeList[currentA].comparisons++;
+  animeList[currentB].comparisons++;
+
+  renderBattle(); // sets currentA/currentB to next pair
+
+  prevState = { ...snap, nextA: currentA, nextB: currentB };
+  document.getElementById('undo-btn').disabled = false;
+}
+
+// ─── RESULTS ────────────────────────────────────────────────────────────────
+function getSortedList() {
+  switch (currentSort) {
+    case 'winrate':
+      return [...animeList].sort((a, b) => {
+        const ra = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
+        const rb = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
+        return rb - ra;
+      });
+    case 'battles':  return [...animeList].sort((a, b) => b.comparisons - a.comparisons);
+    case 'score':    return [...animeList].sort((a, b) => (b.globalScore || 0) - (a.globalScore || 0));
+    default:         return [...animeList].sort((a, b) => b.elo - a.elo);
+  }
+}
+
+function _buildRankCard(anime, i, eloRankMap, totalLen) {
+  const displayRank = i + 1;
+  const eloRank = eloRankMap.get(anime.id) ?? i;
+  const card = document.createElement('div');
+  card.className = 'rank-card';
+  card.dataset.format = anime.format || 'TV';
+  card.style.cursor = 'pointer';
+  card.title = 'Click for details';
+  card.addEventListener('click', () => showAnimeDetail(anime.id));
+
+  const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
+  const conf = confidenceLabel(anime.comparisons);
+  const tier = getTier(eloRank, totalLen);
+  const sortExtra = currentSort === 'winrate'
+    ? `<div class="rank-elo">${(a => (a.wins+a.losses)>0 ? Math.round(a.wins/(a.wins+a.losses)*100)+'% WR' : '–')(anime)}</div>`
+    : currentSort === 'battles' ? `<div class="rank-elo">${anime.comparisons} battles</div>`
+    : currentSort === 'score'   ? `<div class="rank-elo">${anime.globalScore ? anime.globalScore+'%' : 'Unscored'}</div>`
+    : `<div class="rank-elo">ELO ${anime.elo}</div>`;
+  card.innerHTML = `
+    <span class="rank-number ${numClass}">#${displayRank}</span>
+    <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
+    <img src="${anime.cover}" alt="${displayTitle(anime)}" loading="lazy" />
+    <div class="rank-title">${displayTitle(anime)}</div>
+    ${sortExtra}
+    <span class="confidence ${conf.cls}" title="${conf.title}">${conf.dot} ${conf.label}</span>
+    ${anime.fuzzy ? '<span class="fuzzy-tag" title="Can&#39;t Remember \u2014 you selected this option during a battle. This anime appears less often until you&#39;ve refreshed your memory of it.">&#x1F32B; Fuzzy</span>' : ''}
+    ${streakBadge(anime)}
+  `;
+  if (showFuzzyOnly && !anime.fuzzy) card.style.display = 'none';
+  if (hiddenFormats.has(anime.format))  card.style.display = 'none';
+  return card;
+}
+
+function renderRankingList() {
+  const gen = ++_renderGen;
+  const sorted = getSortedList();
+  const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i]));
+
+  const list = document.getElementById('ranking-list');
+  list.innerHTML = '';
+
+  const CHUNK = 60;
+  function renderChunk(start) {
+    if (_renderGen !== gen) return; // newer render started — abort
+    const frag = document.createDocumentFragment();
+    const end = Math.min(start + CHUNK, sorted.length);
+    for (let i = start; i < end; i++) {
+      frag.appendChild(_buildRankCard(sorted[i], i, eloRankMap, sorted.length));
+    }
+    list.appendChild(frag);
+    if (end < sorted.length) {
+      const schedule = window.requestIdleCallback || (fn => setTimeout(fn, 0));
+      schedule(() => renderChunk(end));
+    }
+  }
+  renderChunk(0);
+
+  if (rankingView === 'list') renderRankingTable();
+}
+
+function showResults() {
+  hide('battle-screen');
+  hide('username-screen');
+  hide('tower-summary-screen');
+
+  // Reset search, sort, fuzzy filter — but preserve the chosen view
+  document.getElementById('search-input').value = '';
+  currentSort   = 'elo';
+  showFuzzyOnly = false;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('active', b.dataset.sort === 'elo'));
+  const ffBtn = document.getElementById('fuzzy-filter-btn');
+  if (ffBtn) ffBtn.classList.remove('active');
+  // Sync view buttons and panels to current rankingView
+  document.getElementById('ranking-list').style.display       = rankingView === 'grid' ? '' : 'none';
+  document.getElementById('ranking-table-wrap').style.display = rankingView === 'list' ? '' : 'none';
+  document.getElementById('view-grid-btn')?.classList.toggle('active', rankingView === 'grid');
+  document.getElementById('view-list-btn')?.classList.toggle('active', rankingView === 'list');
+
+  document.getElementById('results-subtitle').textContent =
+    `After ${battleCount} battles · Rankings update as you keep going`;
+
+  syncFormatButtons();
+  renderRankingList();
+  show('results-screen');
+  switchResultsTab('rankings');
+}
+
+// ─── CONFIDENCE ──────────────────────────────────────────────────────────────
+function confidenceLabel(comparisons) {
+  if (comparisons < 5)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${comparisons} battles — fewer than 5, ranking not reliable yet` };
+  if (comparisons < 15) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${comparisons} battles — ranking is stabilising` };
+  return                       { cls: 'confident', dot: '●', label: 'Confident', title: `${comparisons} battles — ranking is well established` };
+}
+
+// ─── STREAKS ─────────────────────────────────────────────────────────────────
+function _titleMatches(stored, anime) {
+  // Match against all title variants to handle legacy history entries robustly
+  return stored && (stored === anime.title || stored === anime.titleEn || stored === anime.titleRo);
+}
+
+function getStreak(anime) {
+  let streak = 0, streakType = null;
+  for (const h of battleHistory) {
+    // New entries use ID; legacy entries (no winnerId) fall back to title matching
+    const isWin  = h.winnerId != null ? h.winnerId === anime.id : _titleMatches(h.winnerTitle, anime);
+    const isLoss = h.loserId  != null ? h.loserId  === anime.id : _titleMatches(h.loserTitle,  anime);
+    if (!isWin && !isLoss) continue;
+    if (streakType === null) streakType = isWin ? 'win' : 'loss';
+    if ((streakType === 'win' && isWin) || (streakType === 'loss' && isLoss)) streak++;
+    else break;
+  }
+  return { type: streakType, count: streak };
+}
+
+function streakBadge(anime) {
+  const { type, count } = getStreak(anime);
+  if (type === 'win'  && count >= 3) return `<span class="streak-badge streak-hot" title="${count} wins in a row">🔥${count}</span>`;
+  if (type === 'loss' && count >= 3) return `<span class="streak-badge streak-cold" title="${count} losses in a row">📉${count}</span>`;
+  return '';
+}
+
+// ─── HISTORY ─────────────────────────────────────────────────────────────────
+function toggleHistory() { switchResultsTab('history'); }
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  list.innerHTML = '';
+  if (battleHistory.length === 0) {
+    list.innerHTML = '<p style="text-align:center;color:#8b949e;padding:16px">No battles recorded yet.</p>';
+  } else {
+    battleHistory.forEach(h => {
+      const row = document.createElement('div');
+      row.className = 'history-item';
+      row.innerHTML = `
+        <span class="winner">🏆 ${h.winnerTitle}</span>
+        <span class="elo-change">+${h.eloSwing} ELO</span>
+        <span class="loser" style="text-align:right">${h.loserTitle}</span>
+      `;
+      list.appendChild(row);
+    });
+  }
+}
+
+function resumeBattle() {
+  hide('results-screen');
+  show('battle-screen');
+  maybeShowKbTip();
+}
+
+function exportRankings() {
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const text = sorted.map((a, i) =>
+    `${(i+1).toString().padStart(3, ' ')}. ${a.title} (ELO: ${a.elo})`
+  ).join('\n');
+
+  const area = document.getElementById('export-area');
+  area.value = text;
+  area.style.display = area.style.display === 'none' ? 'block' : 'none';
+}
+
+function exportCSV() {
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const headers = ['Rank','Title','ELO','Tier','Win Rate','Wins','Losses','Battles','AniList Avg','Format','Season Year'];
+  const rows = sorted.map((a, i) => {
+    const tier = getTier(i, sorted.length);
+    const battles = (a.wins || 0) + (a.losses || 0);
+    const winRate = battles > 0 ? Math.round((a.wins || 0) / battles * 100) + '%' : 'N/A';
+    const avgScore = a.globalScore != null ? a.globalScore + '%' : '';
+    const fmt = a.format || '';
+    const year = a.seasonYear || '';
+    // Escape any commas or quotes in title
+    const safeTitle = '"' + (a.title || '').replace(/"/g, '""') + '"';
+    return [i + 1, safeTitle, a.elo, tier, winRate, a.wins || 0, a.losses || 0, battles, avgScore, fmt, year].join(',');
+  });
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const nameFromKey = saveKey ? saveKey.replace(/^anime_elo_(mal_)?/, '') : '';
+  link.download = (nameFromKey ? nameFromKey + '_' : '') + 'anime_rankings.csv';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function resetAll() {
+  if (!confirm('Reset all progress? This cannot be undone.')) return;
+  if (saveKey) localStorage.removeItem(saveKey);
+  location.reload();
+}
+
+function changeUser() {
+  if (battleCount > 0 && !confirm('Switch user? Your progress for the current user is saved and will resume next time you enter their username.')) return;
+  hide('battle-screen');
+  hide('results-screen');
+  document.getElementById('change-user-btn').style.display = 'none';
+  document.getElementById('progress-info').textContent = '';
+  document.getElementById('username-input').value = '';
+  showFlex('username-screen');
+}
+
+// ─── SOURCE TOGGLE (AniList / MAL) ──────────────────────────────────────────
+let importSource = 'anilist'; // 'anilist' | 'mal'
+
+function setSource(src) {
+  importSource = src;
+  document.getElementById('tab-anilist').classList.toggle('active', src === 'anilist');
+  document.getElementById('tab-mal').classList.toggle('active', src === 'mal');
+  document.getElementById('anilist-wrap').style.display = src === 'anilist' ? 'flex' : 'none';
+  document.getElementById('mal-upload-wrap').style.display = src === 'mal' ? 'flex' : 'none';
+  document.getElementById('error-msg').style.display = 'none';
+}
+
+// ─── MAL IMPORT (Jikan API + XML fallback) ───────────────────────────────────
+async function startMALLoading() {
+  const username = document.getElementById('mal-username-input').value.trim();
+  if (!username) return;
+  const seedFromScores = document.getElementById('mal-warm-start-chk').checked;
+  const errEl = document.getElementById('error-msg');
+  errEl.style.display = 'none';
+
+  const existingSaveKey = 'anime_elo_mal_' + username.toLowerCase();
+
+  if (seedFromScores && localStorage.getItem(existingSaveKey)) {
+    const ok = confirm(
+      'You have a saved session for ' + username + '.\n\n' +
+      '"Warm start" will re-seed all ELO from your MAL scores and reset battle progress.\n\n' +
+      'Continue? (Cancel to restore saved session instead)'
+    );
+    if (!ok) {
+      hide('username-screen');
+      errEl.style.display = 'none';
+      showFlex('loading-screen');
+      loadState(username, 'mal');
+      document.getElementById('loading-msg').textContent = 'Restoring your saved session…';
+      await new Promise(r => setTimeout(r, 600));
+      hide('loading-screen');
+      show('battle-screen');
+      document.getElementById('change-user-btn').style.display = 'block';
+      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      return;
+    }
+    localStorage.removeItem(existingSaveKey);
+  }
+
+  if (!seedFromScores && loadState(username, 'mal')) {
+    hide('username-screen');
+    errEl.style.display = 'none';
+    showFlex('loading-screen');
+    document.getElementById('loading-msg').textContent = 'Restoring your saved MAL session…';
+    await new Promise(r => setTimeout(r, 600));
+    hide('loading-screen');
+    show('battle-screen');
+    document.getElementById('change-user-btn').style.display = 'block';
+    snapshotSessionStart();
+    maybeShowKbTip();
+    if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+    return;
+  }
+
+  hide('username-screen');
+  errEl.style.display = 'none';
+  showFlex('loading-screen');
+
+  try {
+    // Fetch all pages from Jikan v4
+    const WATCHED = new Set(['Completed', 'Watching', 'Rewatching']);
+    const entries = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      document.getElementById('loading-msg').textContent =
+        `Fetching MAL list for ${username}… (page ${page})`;
+      const url = `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=completed&page=${page}`;
+      const res = await fetch(url);
+      if (res.status === 404) throw new Error('MAL user "' + username + '" not found.');
+      if (!res.ok) throw new Error('Jikan API error (HTTP ' + res.status + '). Try the XML export fallback.');
+      const json = await res.json();
+      (json.data || []).forEach(e => {
+        if (!WATCHED.has(e.watching_status === 2 ? 'Completed' : e.status || 'Completed')) return;
+        if (e.mal_id) entries.push({ malId: e.mal_id, score: e.score || 0, title: e.title || '' });
+      });
+      hasMore = json.pagination?.has_next_page ?? false;
+      page++;
+      if (hasMore) await new Promise(r => setTimeout(r, 1000)); // Jikan rate limit
+    }
+
+    // Also fetch watching/rewatching lists
+    for (const status of ['watching', 'rewatching']) {
+      const url2 = `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&page=1`;
+      try {
+        await new Promise(r => setTimeout(r, 600));
+        const r2 = await fetch(url2);
+        if (r2.ok) {
+          const j2 = await r2.json();
+          (j2.data || []).forEach(e => {
+            if (e.mal_id && !entries.some(x => x.malId === e.mal_id))
+              entries.push({ malId: e.mal_id, score: e.score || 0, title: e.title || '' });
+          });
+        }
+      } catch { /* skip */ }
+    }
+
+    if (entries.length === 0) throw new Error('No completed anime found for this user.');
+    await _buildAnimeListFromMalEntries(entries, username, seedFromScores, existingSaveKey);
+
+  } catch (err) {
+    hide('loading-screen');
+    showFlex('username-screen');
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function handleMalFile(file) {
+  if (!file) return;
+  const errEl = document.getElementById('error-msg');
+  errEl.style.display = 'none';
+  try {
+    const text = await file.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'application/xml');
+    if (doc.querySelector('parsererror')) throw new Error('Invalid XML file.');
+
+    const userEl = doc.querySelector('myinfo user_name');
+    const malUsername = userEl ? userEl.textContent.trim() : 'mal_user';
+    const seedFromScores = document.getElementById('mal-warm-start-chk').checked;
+
+    const WATCHED = new Set(['Completed', 'Watching', 'Rewatching']);
+    const entries = [];
+    doc.querySelectorAll('anime').forEach(node => {
+      const status = node.querySelector('my_status')?.textContent?.trim();
+      if (!WATCHED.has(status)) return;
+      const malId = parseInt(node.querySelector('series_animedb_id')?.textContent || '0');
+      const score = parseInt(node.querySelector('my_score')?.textContent || '0');
+      const title = node.querySelector('series_title')?.textContent?.trim() || '';
+      if (malId) entries.push({ malId, score, title });
+    });
+    if (entries.length === 0) throw new Error('No completed anime found in export.');
+
+    const existingSaveKey = 'anime_elo_mal_' + malUsername.toLowerCase();
+    hide('username-screen');
+    errEl.style.display = 'none';
+    showFlex('loading-screen');
+    await _buildAnimeListFromMalEntries(entries, malUsername, seedFromScores, existingSaveKey);
+  } catch (err) {
+    errEl.textContent = 'MAL import failed: ' + err.message;
+    errEl.style.display = 'block';
+  }
+}
+
+// Shared: fetch AniList metadata for MAL entries and launch the session
+async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScores, existingSaveKey) {
+  const malIds  = entries.map(e => e.malId);
+  const scoreMap = new Map(entries.map(e => [e.malId, e.score]));
+  const PAGE_SIZE = 50;
+  const mediaMap = {};
+
+  document.getElementById('loading-msg').textContent =
+    `Found ${entries.length} anime. Fetching metadata from AniList…`;
+
+  for (let i = 0; i < malIds.length; i += PAGE_SIZE) {
+    const chunk = malIds.slice(i, i + PAGE_SIZE);
+    const query = `
+      query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(idMal_in: $ids, type: ANIME) {
+            id idMal
+            title { romaji english }
+            coverImage { medium large }
+            description(asHtml: false)
+            format
+            averageScore
+            genres
+            seasonYear
+          }
+        }
+      }`;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { ids: chunk } })
+    });
+    const json = await res.json();
+    (json?.data?.Page?.media ?? []).forEach(m => { mediaMap[m.idMal] = m; });
+    document.getElementById('loading-msg').textContent =
+      `Matching to AniList… ${Math.min(i + PAGE_SIZE, malIds.length)}/${malIds.length}`;
+    if (i + PAGE_SIZE < malIds.length) await new Promise(r => setTimeout(r, 350));
+  }
+
+  animeList = entries
+    .filter(e => mediaMap[e.malId])
+    .map(e => {
+      const m = mediaMap[e.malId];
+      const userScore = scoreMap.get(e.malId) || 0;
+      const startElo  = seedFromScores ? scoreToElo(userScore) : 1200;
+      const titleEn   = m.title.english || m.title.romaji;
+      const titleRo   = m.title.romaji  || m.title.english;
+      return {
+        id: m.id, title: titleEn, titleEn, titleRo,
+        cover: m.coverImage.large || m.coverImage.medium,
+        description: stripHtml(m.description || '').slice(0, 500),
+        format: m.format || 'TV',
+        globalScore: m.averageScore || 0,
+        genres: m.genres || [],
+        seasonYear: m.seasonYear || null,
+        elo: startElo, wins: 0, losses: 0, comparisons: 0,
+        fuzzy: false, eloHistory: [startElo],
+        anilistScore: 0, malScore: userScore,
+      };
+    });
+
+  if (animeList.length === 0) throw new Error('Could not match any entries to AniList data.');
+
+  const seedMsg = seedFromScores ? ' · ELO seeded from MAL scores' : '';
+  document.getElementById('loading-msg').textContent =
+    `Loaded ${animeList.length} anime from MAL${seedMsg}. Preparing first battle…`;
+  await new Promise(r => setTimeout(r, 800));
+
+  saveKey = existingSaveKey;
+  battleCount = 0;
+  excludedIds = new Set();
+  saveState();
+  hide('loading-screen');
+  show('battle-screen');
+  document.getElementById('change-user-btn').style.display = 'block';
+  renderBattle();
+}
+
+// ─── RECOMMENDATIONS ─────────────────────────────────────────────────────────
+let recsTab = 'foryou'; // 'foryou' | 'seasonal'
+
+function setRecsTab(tab) {
+  recsTab = tab;
+  document.getElementById('recs-tab-foryou').classList.toggle('active', tab === 'foryou');
+  document.getElementById('recs-tab-seasonal').classList.toggle('active', tab === 'seasonal');
+  const sub = document.getElementById('recs-sub-text');
+  if (tab === 'foryou') {
+    sub.textContent = 'Based on your top-ranked anime — titles you haven\'t seen yet that AniList thinks you\'ll love.';
+  } else {
+    const { season, year } = getCurrentSeason();
+    const nextS = getNextSeason(season, year);
+    sub.textContent = `Airing this season (${season} ${year}) and next (${nextS.season} ${nextS.year}) — filtered to titles you haven't watched.`;
+  }
+  _loadRecsGrid();
+}
+
+function getCurrentSeason() {
+  const now = new Date();
+  const m = now.getMonth(); // 0-11
+  const y = now.getFullYear();
+  const season = m < 3 ? 'WINTER' : m < 6 ? 'SPRING' : m < 9 ? 'SUMMER' : 'FALL';
+  return { season, year: y };
+}
+
+function getNextSeason(season, year) {
+  const order = ['WINTER', 'SPRING', 'SUMMER', 'FALL'];
+  const idx = order.indexOf(season);
+  const nextIdx = (idx + 1) % 4;
+  return { season: order[nextIdx], year: nextIdx === 0 ? year + 1 : year };
+}
+
+async function fetchRecommendationsForYou() {
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const seeds  = sorted.slice(0, 5); // 5 seeds at 700ms gaps = well under rate limit
+  const ownIds = new Set(animeList.map(a => a.id));
+  const scoreMap = {};
+  const grid = document.getElementById('recs-grid');
+
+  for (let rank = 0; rank < seeds.length; rank++) {
+    const anime = seeds[rank];
+    const weight = seeds.length - rank;
+    grid.innerHTML = `<p style="color:#8b949e;text-align:center">⏳ Checking recommendations… (${rank + 1}/${seeds.length})</p>`;
+    const query = `
+      query ($id: Int) {
+        Media(id: $id) {
+          recommendations(perPage: 20, sort: RATING_DESC) {
+            nodes {
+              rating
+              mediaRecommendation {
+                id title { romaji english } coverImage { large medium }
+                averageScore format status
+              }
+            }
+          }
+        }
+      }`;
+    try {
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { id: anime.id } })
+      });
+      const json = await res.json();
+      const nodes = json?.data?.Media?.recommendations?.nodes ?? [];
+      nodes.forEach(n => {
+        const rec = n.mediaRecommendation;
+        if (!rec || ownIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') return;
+        const pts = (n.rating || 1) * weight;
+        if (!scoreMap[rec.id]) scoreMap[rec.id] = { media: rec, score: 0 };
+        scoreMap[rec.id].score += pts;
+      });
+    } catch { /* individual seed failure — keep going */ }
+    if (rank < seeds.length - 1) await new Promise(r => setTimeout(r, 700));
+  }
+
+  let results = Object.values(scoreMap).sort((a, b) => b.score - a.score);
+
+  // Fallback: if AniList recommendations are sparse, pad with highly-rated unseen titles
+  if (results.length < 8) {
+    grid.innerHTML = `<p style="color:#8b949e;text-align:center">⏳ Expanding recommendations…</p>`;
+    const fallback = await _fetchHighlyRatedUnseen(ownIds);
+    const seen = new Set(results.map(r => r.media.id));
+    fallback.forEach(f => { if (!seen.has(f.media.id)) results.push(f); });
+  }
+
+  return results.slice(0, 10);
+}
+
+// Fallback: top-rated anime on AniList that the user hasn't seen
+async function _fetchHighlyRatedUnseen(ownIds) {
+  const excludeIds = [...ownIds];
+  const query = `
+    query ($excludeIds: [Int]) {
+      Page(perPage: 10) {
+        media(type: ANIME, id_not_in: $excludeIds, sort: SCORE_DESC,
+              status: FINISHED, averageScore_greater: 78, popularity_greater: 30000) {
+          id title { romaji english } coverImage { large medium } averageScore format
+        }
+      }
+    }`;
+  try {
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { excludeIds } })
+    });
+    const json = await res.json();
+    return (json?.data?.Page?.media ?? [])
+      .filter(m => !ownIds.has(m.id))
+      .map(m => ({ media: m, score: 0 }));
+  } catch { return []; }
+}
+
+async function fetchSeasonalRecommendations() {
+  const ownIds = new Set(animeList.map(a => a.id));
+  const { season, year } = getCurrentSeason();
+  const next = getNextSeason(season, year);
+  const grid = document.getElementById('recs-grid');
+  const results = [];
+
+  for (const { s, y, label } of [
+    { s: season, y: year, label: `${season} ${year}` },
+    { s: next.season, y: next.year, label: `${next.season} ${next.year}` }
+  ]) {
+    grid.innerHTML = `<p style="color:#8b949e;text-align:center">⏳ Fetching ${label} anime…</p>`;
+    const query = `
+      query ($season: MediaSeason, $year: Int) {
+        Page(perPage: 50) {
+          media(season: $season, seasonYear: $year, type: ANIME,
+                sort: POPULARITY_DESC, status_not: CANCELLED) {
+            id title { romaji english } coverImage { large medium }
+            averageScore format status
+          }
+        }
+      }`;
+    try {
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { season: s, year: y } })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      if (json.errors) throw new Error(json.errors[0].message);
+      (json?.data?.Page?.media ?? []).forEach(m => {
+        results.push({ media: m, seasonLabel: label, watched: ownIds.has(m.id) });
+      });
+    } catch (e) {
+      results.push({ _error: `Failed to load ${label}: ${e.message}` });
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  // Sort: unwatched first, then by popularity within each group
+  return results
+    .filter(r => !r._error)
+    .sort((a, b) => {
+      if (a.watched !== b.watched) return a.watched ? 1 : -1;
+      return (b.media.averageScore || 0) - (a.media.averageScore || 0);
+    })
+    .slice(0, 10);
+}
+
+async function _loadRecsGrid() {
+  const grid = document.getElementById('recs-grid');
+  grid.innerHTML = '<p style="color:#8b949e;text-align:center">⏳ Fetching…</p>';
+
+  let items;
+  try {
+    items = recsTab === 'foryou'
+      ? await fetchRecommendationsForYou()
+      : await fetchSeasonalRecommendations();
+  } catch (e) {
+    grid.innerHTML = `<p style="color:#f85149;text-align:center">Error: ${e.message}</p>`;
+    return;
+  }
+
+  if (items.length === 0) {
+    grid.innerHTML = '<p style="color:#8b949e;text-align:center">No results — you may have already seen everything AniList recommends! Try switching to "This Season".</p>';
+    return;
+  }
+
+  grid.innerHTML = items.map(({ media, score, seasonLabel, watched }) => {
+    const title = media.title.english || media.title.romaji;
+    const cover = media.coverImage.large || media.coverImage.medium;
+    const avg   = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
+    const badge = seasonLabel || '';
+    const watchedTag = watched ? '<span style="font-size:0.65rem;background:#21262d;color:#8b949e;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Watched</span>' : '';
+    return `
+      <a class="rec-card" href="https://anilist.co/anime/${media.id}" target="_blank"
+         style="${watched ? 'opacity:0.45' : ''}">
+        <img src="${cover}" alt="${title}" loading="lazy" />
+        <div class="rec-card-body">
+          <div class="rec-card-title">${title}</div>
+          <div class="rec-card-meta">${media.format || ''}${badge ? ' · ' + badge : ''}</div>
+          <span class="rec-score-pill">⭐ ${avg}</span>
+          ${watchedTag}
+        </div>
+      </a>`;
+  }).join('');
+}
+
+async function toggleRecommendations() { switchResultsTab('discover'); }
+
+// ─── COMPATIBILITY ────────────────────────────────────────────────────────────
+async function runCompatibility() {
+  const username2 = document.getElementById('compat-username-input').value.trim();
+  if (!username2) return;
+
+  const resultsEl = document.getElementById('compat-results');
+  resultsEl.innerHTML = '<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ' + username2 + '\'s list…</p>';
+
+  try {
+    // Fetch other user's completed list
+    const query = `
+      query ($username: String) {
+        MediaListCollection(userName: $username, type: ANIME) {
+          lists {
+            entries {
+              score status
+              media { id title { romaji english } coverImage { medium } }
+            }
+          }
+        }
+      }`;
+    // Retry up to 2 times — the computer:// origin occasionally drops the first request
+    let data;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch('https://graphql.anilist.co', {
+          method: 'POST',
+          headers: anilistHeaders(),
+          body: JSON.stringify({ query, variables: { username: username2 } })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        data = await res.json();
+        break; // success
+      } catch (fetchErr) {
+        if (attempt === 2) throw fetchErr;
+        resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Retrying…</p>`;
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
+    if (data.errors) throw new Error(data.errors[0].message);
+
+    const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
+    const otherEntries = data.data.MediaListCollection.lists
+      .flatMap(l => l.entries)
+      .filter(e => WATCHED.has(e.status));
+
+    // Build rank maps
+    // User 1: ELO rank
+    const myRanked = [...animeList].sort((a, b) => b.elo - a.elo);
+    const myRankMap = new Map(myRanked.map((a, i) => [a.id, i + 1]));
+
+    // User 2: all watched anime ranked by score (unscored ranked after scored ones)
+    const otherById = new Map(otherEntries.map(e => [e.media.id, e]));
+    const otherRanked = [...otherEntries].sort((a, b) => {
+      if (a.score > 0 && b.score === 0) return -1;   // scored before unscored
+      if (a.score === 0 && b.score > 0) return 1;
+      return b.score - a.score;
+    });
+    const otherRankMap = new Map(otherRanked.map((e, i) => [e.media.id, i + 1]));
+
+    // Overlap = any anime both users have watched (no score requirement)
+    const overlap = animeList.filter(a => otherById.has(a.id));
+
+    if (overlap.length < 5) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
+        Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
+      return;
+    }
+
+    // Spearman's rank correlation on the overlapping set
+    // Re-rank within overlap only for fairness
+    const myOverlapRanked   = [...overlap].sort((a, b) => b.elo - a.elo);
+    const myOverlapRankMap  = new Map(myOverlapRanked.map((a, i) => [a.id, i + 1]));
+    const othOverlapRanked  = [...overlap].sort((a, b) => {
+      const sa = otherById.get(a.id)?.score ?? 0;
+      const sb = otherById.get(b.id)?.score ?? 0;
+      return sb - sa;
+    });
+    const othOverlapRankMap = new Map(othOverlapRanked.map((a, i) => [a.id, i + 1]));
+
+    const n  = overlap.length;
+    const dSqSum = overlap.reduce((sum, a) => {
+      const d = myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id);
+      return sum + d * d;
+    }, 0);
+    const rho = 1 - (6 * dSqSum) / (n * (n * n - 1));
+    const pct = Math.round(((rho + 1) / 2) * 100); // scale -1..1 → 0..100
+
+    // Agreement/disagreement lists
+    const diffs = overlap.map(a => ({
+      anime: a,
+      cover: otherById.get(a.id)?.media?.coverImage?.medium || a.cover,
+      title: a.title,
+      myRank:  myOverlapRankMap.get(a.id),
+      othRank: othOverlapRankMap.get(a.id),
+      diff: Math.abs(myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id)),
+      agreement: (myOverlapRankMap.get(a.id) + othOverlapRankMap.get(a.id)) / 2,
+    }));
+
+    const topAgreements = [...diffs].sort((a, b) => a.agreement - b.agreement).slice(0, 5);
+    const topBothLow    = [...diffs].sort((a, b) => b.agreement - a.agreement).slice(0, 5);
+    const topDisagree   = [...diffs].sort((a, b) => b.diff - a.diff).slice(0, 5);
+
+    const emojiFor = pct => pct >= 80 ? '💜' : pct >= 65 ? '🟢' : pct >= 50 ? '🟡' : pct >= 35 ? '🟠' : '🔴';
+    const labelFor = pct => pct >= 80 ? 'Soulmates' : pct >= 65 ? 'Great Match' : pct >= 50 ? 'Good Compatibility' : pct >= 35 ? 'Some Common Ground' : 'Very Different Tastes';
+
+    const animeRowHtml = (item, desc) => `
+      <div class="compat-anime-row">
+        <img src="${item.cover}" alt="" />
+        <span class="compat-anime-title">${item.title}</span>
+        <span class="compat-ranks">${desc}</span>
+      </div>`;
+
+    resultsEl.innerHTML = `
+      <div class="compat-score-box">
+        <div class="compat-pct" style="color:${pct >= 65 ? '#3fb950' : pct >= 40 ? '#e3a000' : '#f85149'}">${emojiFor(pct)} ${pct}%</div>
+        <div class="compat-label">${labelFor(pct)}</div>
+        <div class="compat-sub">${n} shared anime · Spearman ρ = ${rho.toFixed(2)}</div>
+        <div class="compat-sub" style="margin-top:4px">Your ELO rank vs ${username2}'s AniList scores</div>
+      </div>
+      <div class="compat-cols">
+        <div class="compat-col">
+          <h4>✅ You both rate highly</h4>
+          ${topAgreements.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+        </div>
+        <div class="compat-col">
+          <h4>📉 You both rate lowly</h4>
+          ${topBothLow.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+        </div>
+        <div class="compat-col compat-col-full">
+          <h4>⚡ Biggest disagreements</h4>
+          ${topDisagree.map(i => {
+            const youHigher = i.myRank < i.othRank;
+            return animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank} ${youHigher ? '(you love it)' : '(they love it)'}`);
+          }).join('')}
+        </div>
+      </div>`;
+
+  } catch (err) {
+    resultsEl.innerHTML = `<p style="color:#f85149;text-align:center;padding:16px 0">Error: ${err.message}</p>`;
+  }
+}
+
+function toggleCompatibility() { switchResultsTab('social'); }
+
+// ─── ENTRY POINT ─────────────────────────────────────────────────────────────
+async function startLoading() {
+  const username = document.getElementById('username-input').value.trim();
+  if (!username) return;
+
+  const seedFromScores = document.getElementById('warm-start-chk').checked;
+
+  // If warm start is requested and a save exists, ask whether to re-seed
+  const existingSaveKey = 'anime_elo_' + username.toLowerCase();
+  if (seedFromScores && localStorage.getItem(existingSaveKey)) {
+    const ok = confirm(
+      'You have a saved session for this user.\n\n' +
+      '"Warm start" will re-seed all ELO scores from your AniList ratings and reset battle progress.\n\n' +
+      'Continue? (Cancel to restore your saved session instead)'
+    );
+    if (!ok) {
+      // User declined — load saved session normally
+      hide('username-screen');
+      document.getElementById('error-msg').style.display = 'none';
+      showFlex('loading-screen');
+      loadState(username);
+      document.getElementById('loading-msg').textContent = 'Restoring your saved session…';
+      await new Promise(r => setTimeout(r, 600));
+      hide('loading-screen');
+      show('battle-screen');
+      document.getElementById('change-user-btn').style.display = 'block';
+      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      return;
+    }
+    // User confirmed re-seed — wipe the old save
+    localStorage.removeItem(existingSaveKey);
+  }
+
+  hide('username-screen');
+  document.getElementById('error-msg').style.display = 'none';
+  showFlex('loading-screen');
+
+  // Check for saved state (only if warm start not requested / confirmed above)
+  if (!seedFromScores && loadState(username)) {
+    document.getElementById('loading-msg').textContent = 'Restoring your saved session…';
+    await new Promise(r => setTimeout(r, 600));
+    hide('loading-screen');
+    show('battle-screen');
+    document.getElementById('change-user-btn').style.display = 'block';
+    snapshotSessionStart();
+    maybeShowKbTip();
+    if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+    // Silently refresh titles + descriptions in background for old saves
+    const needsMeta = animeList.some(a => a.titleRo === a.titleEn && a.titleRo === a.title);
+    if (needsMeta) refreshAnimeMetadata();
+    return;
+  }
+
+  try {
+    document.getElementById('loading-msg').textContent = 'Fetching your anime list from AniList…';
+    animeList = await fetchAllAnime(username, seedFromScores);
+
+    if (animeList.length === 0) throw new Error('No completed anime found.');
+
+    // Warn if warm start was requested but user has no AniList scores
+    const scoredCount = animeList.filter(a => a.anilistScore > 0).length;
+    if (seedFromScores && scoredCount === 0) {
+      document.getElementById('loading-msg').textContent =
+        `⚠️ No AniList scores found — everyone starts at ELO 1200. Score your anime on AniList to use warm start.`;
+      await new Promise(r => setTimeout(r, 2800));
+    } else {
+      const seedMsg = seedFromScores ? ` · ELO seeded from ${scoredCount} scores` : '';
+      document.getElementById('loading-msg').textContent =
+        `Loaded ${animeList.length} anime${seedMsg}. Preparing your first battle…`;
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    saveKey = existingSaveKey;
+    battleCount = 0;
+    excludedIds = new Set();
+    saveState();
+
+    hide('loading-screen');
+    show('battle-screen');
+    document.getElementById('change-user-btn').style.display = 'block';
+    snapshotSessionStart();
+    maybeShowKbTip();
+    renderBattle();
+  } catch (err) {
+    hide('loading-screen');
+    showFlex('username-screen');
+    const errEl = document.getElementById('error-msg');
+    errEl.textContent = 'Could not load list: ' + err.message;
+    errEl.style.display = 'block';
+  }
+}
+
+// ─── GUEST MODE ──────────────────────────────────────────────────────────────
+async function fetchGuestPool() {
+  const PAGES = 5;
+  const allMedia = [];
+  for (let p = 1; p <= PAGES; p++) {
+    document.getElementById('loading-msg').textContent =
+      `Fetching popular anime… (${p}/${PAGES})`;
+    const query = `
+      query ($page: Int) {
+        Page(page: $page, perPage: 50) {
+          media(type: ANIME, sort: POPULARITY_DESC,
+                status_in: [FINISHED, RELEASING],
+                format_in: [TV, MOVIE]) {
+            id
+            title { romaji english }
+            coverImage { large medium }
+            description(asHtml: false)
+            format
+            averageScore
+            genres
+            seasonYear
+          }
+        }
+      }
+    `;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { page: p } })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.errors) throw new Error(data.errors[0].message);
+    allMedia.push(...data.data.Page.media);
+    if (p < PAGES) await new Promise(r => setTimeout(r, 350)); // gentle rate limiting
+  }
+  return allMedia.map(m => {
+    const titleEn = m.title.english || m.title.romaji;
+    const titleRo = m.title.romaji  || m.title.english;
+    return {
+      id: m.id,
+      title: titleEn, titleEn, titleRo,
+      cover: m.coverImage.large || m.coverImage.medium,
+      description: stripHtml(m.description).slice(0, 500),
+      format: m.format || 'TV',
+      globalScore: m.averageScore || 0,
+      genres: m.genres || [],
+      seasonYear: m.seasonYear || null,
+      elo: 1200, wins: 0, losses: 0, comparisons: 0,
+      fuzzy: false, eloHistory: [1200], anilistScore: 0,
+    };
+  });
+}
+
+async function startGuestMode() {
+  hide('username-screen');
+  document.getElementById('error-msg').style.display = 'none';
+  showFlex('loading-screen');
+  try {
+    saveKey = 'anime_elo_guest';
+    if (loadState('guest')) {
+      document.getElementById('loading-msg').textContent = 'Restoring your guest session…';
+      await new Promise(r => setTimeout(r, 600));
+      hide('loading-screen');
+      show('battle-screen');
+      document.getElementById('change-user-btn').style.display = 'block';
+      if (currentA !== null && currentB !== null) renderCurrentPair();
+      else renderBattle();
+      return;
+    }
+    animeList = await fetchGuestPool();
+    battleCount = 0;
+    excludedIds = new Set();
+    document.getElementById('loading-msg').textContent =
+      `Loaded ${animeList.length} popular anime. Let's go!`;
+    await new Promise(r => setTimeout(r, 600));
+    hide('loading-screen');
+    show('battle-screen');
+    document.getElementById('change-user-btn').style.display = 'block';
+    renderBattle();
+  } catch (err) {
+    hide('loading-screen');
+    showFlex('username-screen');
+    const errEl = document.getElementById('error-msg');
+    errEl.textContent = 'Could not load guest pool: ' + err.message;
+    errEl.style.display = 'block';
+  }
+}
+
+// ─── EXCLUDE FROM POOL ───────────────────────────────────────────────────────
+
+// Pick a single new opponent to face keepIdx, using the same ELO-proximity + weight logic
+function pickOneOpponent(keepIdx) {
+  const n = animeList.length;
+  const weights = animeList.map(a => {
+    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return 0;
+    const base = 1 / (a.comparisons + 1);
+    return a.fuzzy ? base * 0.1 : base;
+  });
+  const totalW = weights.reduce((s, w) => s + w, 0);
+
+  const eloKeep = animeList[keepIdx].elo;
+  const candidates = animeList
+    .map((a, i) => ({ i, a }))
+    .filter(({ i }) => i !== keepIdx && weights[i] > 0 && Math.abs(animeList[i].elo - eloKeep) < 300)
+    .sort((x, y) => x.a.comparisons - y.a.comparisons);
+
+  if (candidates.length > 0) {
+    const pool = candidates.slice(0, Math.min(20, candidates.length));
+    return pool[Math.floor(Math.random() * pool.length)].i;
+  }
+
+  // Fallback: weighted pick from anyone except keepIdx
+  let r = Math.random() * totalW;
+  for (let i = 0; i < n; i++) {
+    if (i === keepIdx) continue;
+    r -= weights[i];
+    if (r <= 0) return i;
+  }
+  for (let i = 0; i < n; i++) {
+    if (i !== keepIdx && weights[i] > 0) return i;
+  }
+  return keepIdx === 0 ? 1 : 0;
+}
+
+function excludeAnime(event, side) {
+  event.stopPropagation();
+  const excludedIdx = side === 0 ? currentA : currentB;
+  const keepIdx     = side === 0 ? currentB : currentA;
+
+  excludedIds.add(animeList[excludedIdx].id);
+  prevState = null;
+  document.getElementById('undo-btn').disabled = true;
+
+  // Keep the surviving anime in its position; replace only the excluded slot
+  const newIdx = pickOneOpponent(keepIdx);
+  if (side === 0) {
+    renderPair(newIdx, keepIdx);
+  } else {
+    renderPair(keepIdx, newIdx);
+  }
+  saveState();
+}
+
+function toggleExcluded() { switchResultsTab('rankings'); }
+
+function renderExcluded() {
+  const excluded = animeList.filter(a => excludedIds.has(a.id));
+  const listEl = document.getElementById('excluded-list');
+  if (excluded.length === 0) {
+    listEl.innerHTML = '<p style="text-align:center;color:#8b949e;padding:16px">No anime excluded yet.</p>';
+  } else {
+    listEl.innerHTML = '';
+    excluded.forEach(anime => {
+      const item = document.createElement('div');
+      item.className = 'excluded-item';
+      item.id = `excl-${anime.id}`;
+      item.innerHTML = `
+        <img src="${anime.cover}" alt="${anime.title}" />
+        <span class="excluded-item-title">${anime.title}</span>
+        <button class="btn-secondary" style="font-size:0.8rem;padding:5px 12px"
+          onclick="reAddAnime(${anime.id})">↩ Re-add</button>
+      `;
+      listEl.appendChild(item);
+    });
+  }
+}
+
+function reAddAnime(id) {
+  excludedIds.delete(id);
+  saveState();
+  const el = document.getElementById(`excl-${id}`);
+  if (el) el.remove();
+  const listEl = document.getElementById('excluded-list');
+  if (listEl.children.length === 0) {
+    listEl.innerHTML = '<p style="text-align:center;color:#8b949e;padding:16px">No anime excluded yet.</p>';
+  }
+}
+
+// ─── TIER HELPERS ────────────────────────────────────────────────────────────
+// Percentile bands: S top 10%, A 10-25%, B 25-55%, C 55-80%, D 80-100%
+function getTier(zeroIndex, total) {
+  const pct = zeroIndex / total;
+  if (pct < 0.10) return 'S';
+  if (pct < 0.25) return 'A';
+  if (pct < 0.55) return 'B';
+  if (pct < 0.80) return 'C';
+  return 'D';
+}
+
+// ─── SPARKLINE ────────────────────────────────────────────────────────────────
+function buildSparkline(history) {
+  const W = 220, H = 54, pad = 6;
+  const minE = Math.min(...history) - 5;
+  const maxE = Math.max(...history) + 5;
+  const range = maxE - minE || 1;
+  const n = history.length;
+  const pts = history.map((e, i) => {
+    const x = (pad + (i / (n - 1)) * (W - pad * 2)).toFixed(1);
+    const y = (H - pad - ((e - minE) / range) * (H - pad * 2)).toFixed(1);
+    return `${x},${y}`;
+  });
+  const last = pts[pts.length - 1].split(',');
+  const startElo = history[0], endElo = history[n - 1];
+  const colour = endElo >= startElo ? '#3fb950' : '#f85149';
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="height:54px">
+    <polyline points="${pts.join(' ')}" fill="none" stroke="${colour}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${last[0]}" cy="${last[1]}" r="3.5" fill="${colour}"/>
+    <text x="4" y="${H - 2}" font-size="9" fill="#8b949e">${startElo}</text>
+    <text x="${W - 4}" y="${H - 2}" font-size="9" fill="${colour}" text-anchor="end">${endElo}</text>
+  </svg>`;
+}
+
+// ─── MILESTONES ───────────────────────────────────────────────────────────────
+const MILESTONES = [
+  { count: 100,  emoji: '🎉', title: '100 Battles!',   msg: 'The rankings are starting to take shape.' },
+  { count: 250,  emoji: '⚔️',  title: '250 Battles!',   msg: "You're on a serious ranking mission." },
+  { count: 500,  emoji: '🏆', title: '500 Battles!',   msg: 'Half a thousand matchups — a true connoisseur.' },
+  { count: 1000, emoji: '🌟', title: '1000 Battles!',  msg: 'Legendary. Your rankings are rock-solid.' },
+];
+
+function checkMilestone(before, after) {
+  const hit = MILESTONES.find(m => before < m.count && after >= m.count);
+  if (!hit) return;
+  document.getElementById('ms-emoji').textContent = hit.emoji;
+  document.getElementById('ms-title').textContent = hit.title;
+  document.getElementById('ms-msg').textContent   = hit.msg;
+  const top5 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 5);
+  document.getElementById('ms-top5').innerHTML = top5.map((a, i) => `
+    <div class="ms-card">
+      <img src="${a.cover}" alt="${a.title}" />
+      <div class="ms-card-rank">#${i + 1}</div>
+      <div class="ms-card-title">${a.title}</div>
+    </div>`).join('');
+  document.getElementById('milestone-overlay').style.display = 'flex';
+}
+
+function closeMilestone() {
+  document.getElementById('milestone-overlay').style.display = 'none';
+}
+
+// ─── SHARE LINK ───────────────────────────────────────────────────────────────
+function shareRankings() {
+  const top20 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 20);
+  const user  = saveKey.replace('anime_elo_', '');
+  const payload = {
+    u: user,
+    b: battleCount,
+    top: top20.map((a, i) => ({ r: i + 1, t: a.title, e: a.elo, c: a.cover }))
+  };
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const url = location.href.split('#')[0] + '#r=' + encoded;
+  document.getElementById('share-url').value = url;
+  document.getElementById('copy-btn').textContent = '📋 Copy Link';
+  document.getElementById('share-modal').style.display = 'flex';
+}
+
+function copyShareLink() {
+  const url = document.getElementById('share-url').value;
+  navigator.clipboard.writeText(url).then(() => {
+    document.getElementById('copy-btn').textContent = '✓ Copied!';
+    setTimeout(() => { document.getElementById('copy-btn').textContent = '📋 Copy Link'; }, 2000);
+  }).catch(() => {
+    document.getElementById('share-url').select();
+    document.execCommand('copy');
+  });
+}
+
+function closeShare() { document.getElementById('share-modal').style.display = 'none'; }
+function closeShareOnOverlay(e) { if (e.target === document.getElementById('share-modal')) closeShare(); }
+
+// ─── HELP MODAL ───────────────────────────────────────────────────────────────
+function showHelp()  { document.getElementById('help-modal').style.display = 'flex'; }
+function closeHelp() { document.getElementById('help-modal').style.display = 'none'; }
+function closeHelpOnOverlay(e) { if (e.target === document.getElementById('help-modal')) closeHelp(); }
+
+// ─── RESULTS TABS ─────────────────────────────────────────────────────────────
+let activeResultsTab = 'rankings';
+
+function switchResultsTab(tab) {
+  activeResultsTab = tab;
+  document.querySelectorAll('.res-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.style.display = p.id === 'tab-panel-' + tab ? '' : 'none';
+  });
+  if (tab === 'rankings') renderExcluded();
+  if (tab === 'stats')    renderStatsTab();
+  if (tab === 'history')  renderHistoryTab();
+  if (tab === 'discover') renderDiscoverTab();
+  if (tab === 'social')   renderSocialTab();
+}
+
+async function renderDiscoverTab() {
+  const recsGrid = document.getElementById('recs-grid');
+  if (!recsGrid.innerHTML.trim()) await _loadRecsGrid();
+}
+
+function renderHistoryTab() {
+  renderHistory();
+  renderRivalries();
+}
+
+function renderSocialTab() {
+  // Taste Compatibility is self-contained (user triggers via button); nothing to pre-render
+}
+
+// ─── RIVALRY TRACKER ──────────────────────────────────────────────────────────
+function renderRivalries() {
+  const matchupMap = new Map();
+  battleHistory.forEach(h => {
+    const idW = h.winnerId ?? null;
+    const idL = h.loserId  ?? null;
+    if (!idW || !idL) return;
+    const key = [Math.min(idW, idL), Math.max(idW, idL)].join('-');
+    if (!matchupMap.has(key)) {
+      matchupMap.set(key, {
+        idA: Math.min(idW, idL), idB: Math.max(idW, idL),
+        titleA: idW < idL ? h.winnerTitle : h.loserTitle,
+        titleB: idW < idL ? h.loserTitle  : h.winnerTitle,
+        wins: {}, total: 0
+      });
+    }
+    const m = matchupMap.get(key);
+    m.wins[idW] = (m.wins[idW] || 0) + 1;
+    m.total++;
+  });
+
+  const rivalries = [];
+  matchupMap.forEach(m => {
+    if (m.total < 3) return;
+    const winCounts = Object.values(m.wins);
+    if (winCounts.length < 2 || !winCounts.every(w => w >= 1)) return; // must be split
+    rivalries.push(m);
+  });
+
+  const section = document.getElementById('rivalry-section');
+  const list    = document.getElementById('rivalry-list');
+  if (rivalries.length === 0) { section.style.display = 'none'; return; }
+
+  section.style.display = 'block';
+  list.innerHTML = rivalries.sort((a, b) => b.total - a.total).map(m => {
+    const anime1 = animeList.find(a => a.id === m.idA);
+    const anime2 = animeList.find(a => a.id === m.idB);
+    const n1 = anime1?.title ?? m.titleA;
+    const n2 = anime2?.title ?? m.titleB;
+    const w1 = m.wins[m.idA] || 0;
+    const w2 = m.wins[m.idB] || 0;
+    return `<div class="rivalry-item">
+      <span class="rivalry-item-names">${n1} <span style="color:#8b949e">vs</span> ${n2}</span>
+      <span class="rivalry-badge">⚔️ ${w1}–${w2} (${m.total} battles)</span>
+    </div>`;
+  }).join('');
+}
+
+// ─── SYNOPSIS TOGGLE ──────────────────────────────────────────────────────────
+function toggleSynopsis(event, side) {
+  event.stopPropagation();
+  const panelId = side === 0 ? 'synopsis-a' : 'synopsis-b';
+  const panel = document.getElementById(panelId);
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    panel.scrollTop = 0;
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+// ─── KEYBOARD SHORTCUT FIRST-USE TIP ──────────────────────────────────────────
+function maybeShowKbTip() {
+  if (navigator.maxTouchPoints > 0) return; // no physical keyboard on touch devices
+  if (!localStorage.getItem('anime_elo_kb_seen')) {
+    document.getElementById('kb-first-tip').style.display = 'block';
+  }
+}
+function dismissKbTip() {
+  localStorage.setItem('anime_elo_kb_seen', '1');
+  document.getElementById('kb-first-tip').style.display = 'none';
+}
+
+// ─── SESSION SUMMARY ──────────────────────────────────────────────────────────
+let sessionStartElo    = {};
+let sessionBattleCount = 0;
+const SESSION_SUMMARY_INTERVAL = 15;
+
+function snapshotSessionStart() {
+  sessionStartElo    = {};
+  sessionBattleCount = 0;
+  animeList.forEach(a => { sessionStartElo[a.id] = a.elo; });
+}
+
+function checkSessionSummary() {
+  sessionBattleCount++;
+  if (sessionBattleCount > 0 && sessionBattleCount % SESSION_SUMMARY_INTERVAL === 0) {
+    showSessionSummary();
+  }
+}
+
+function showSessionSummary() {
+  const movers = animeList
+    .filter(a => sessionStartElo[a.id] !== undefined)
+    .map(a => ({ ...a, delta: a.elo - (sessionStartElo[a.id] || a.elo) }))
+    .filter(a => Math.abs(a.delta) >= 8)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 8);
+
+  if (movers.length === 0) return; // nothing notable, skip
+
+  document.getElementById('session-summary-subtitle').textContent =
+    `${sessionBattleCount} battles this session — here\u2019s what moved`;
+
+  document.getElementById('session-summary-list').innerHTML = movers.map(a => `
+    <div class="session-mover">
+      <img src="${a.cover}" alt="${a.title}" />
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.title}</div>
+        <div style="font-size:0.78rem;color:#8b949e">${sessionStartElo[a.id]} \u2192 ${a.elo} ELO</div>
+      </div>
+      <span class="${a.delta > 0 ? 'mover-up' : 'mover-down'}">${a.delta > 0 ? '\u25b2' : '\u25bc'} ${Math.abs(a.delta)}</span>
+    </div>`).join('');
+
+  document.getElementById('session-summary-modal').style.display = 'flex';
+}
+
+function closeSessionSummary(e) {
+  if (!e || e.target === document.getElementById('session-summary-modal')) {
+    document.getElementById('session-summary-modal').style.display = 'none';
+  }
+}
+
+// ─── MORE MENU (kept for backwards compat) ────────────────────────────────────
+function toggleMoreMenu(e) { if (e) e.stopPropagation(); }
+function closeMoreMenu() {}
+
+// Show a shared rankings view when URL has #r= hash
+function tryLoadSharedView() {
+  const hash = location.hash;
+  if (!hash.startsWith('#r=')) return false;
+  try {
+    const payload = JSON.parse(decodeURIComponent(escape(atob(hash.slice(3)))));
+    document.getElementById('shared-title').textContent =
+      `${payload.u}'s Top ${payload.top.length} Anime`;
+    document.getElementById('shared-subtitle').textContent =
+      `After ${payload.b} battles`;
+    const list = document.getElementById('shared-list');
+    list.innerHTML = '';
+    payload.top.forEach(a => {
+      const numClass = a.r === 1 ? 'gold' : a.r === 2 ? 'silver' : a.r === 3 ? 'bronze' : '';
+      const card = document.createElement('div');
+      card.className = 'rank-card';
+      card.innerHTML = `
+        <span class="rank-number ${numClass}">#${a.r}</span>
+        <img src="${a.c}" alt="${a.t}" loading="lazy" />
+        <div class="rank-title">${a.t}</div>
+        <div class="rank-elo">ELO ${a.e}</div>
+      `;
+      list.appendChild(card);
+    });
+    show('shared-screen');
+    return true;
+  } catch { return false; }
+}
+
+// ─── FUZZY FLAG ───────────────────────────────────────────────────────────────
+function flagFuzzy(event, side) {
+  event.stopPropagation();
+  const idx = side === 0 ? currentA : currentB;
+  animeList[idx].fuzzy = !animeList[idx].fuzzy;
+  saveState();
+  const btnId = side === 0 ? 'fuzzy-a' : 'fuzzy-b';
+  const btn = document.getElementById(btnId);
+  const isFuzzy = animeList[idx].fuzzy;
+  btn.classList.toggle('active', isFuzzy);
+  btn.textContent = isFuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+}
+
+// ─── SEARCH / FILTER ──────────────────────────────────────────────────────────
+function filterRankings() {
+  const q = document.getElementById('search-input').value.toLowerCase().trim();
+  document.querySelectorAll('#ranking-list .rank-card').forEach(card => {
+    const title      = card.querySelector('.rank-title').textContent.toLowerCase();
+    const isFuzzy    = card.querySelector('.fuzzy-tag') !== null;
+    const fmt        = card.dataset.format || '';
+    const matchSearch  = !q || title.includes(q);
+    const matchFuzzy   = !showFuzzyOnly || isFuzzy;
+    const matchFormat  = !hiddenFormats.has(fmt);
+    card.style.display = (matchSearch && matchFuzzy && matchFormat) ? '' : 'none';
+  });
+  // Also re-render table with updated filters when in list view
+  if (rankingView === 'list') renderRankingTable();
+}
+
+// ─── STATS ────────────────────────────────────────────────────────────────────
+function toggleStats() { switchResultsTab('stats'); }
+
+function renderStatsTab() {
+  // Numbers
+  document.getElementById('stat-total-battles').textContent = battleCount;
+  const stable = Math.round(
+    (animeList.filter(a => a.comparisons >= 15).length / animeList.length) * 100
+  );
+  document.getElementById('stat-stability').textContent = stable + '%';
+  document.getElementById('stat-fuzzy').textContent = animeList.filter(a => a.fuzzy).length;
+
+  // Most battled
+  const mostBattled = [...animeList].sort((a, b) => b.comparisons - a.comparisons).slice(0, 5);
+  document.getElementById('stat-most-battled').innerHTML = mostBattled.map(a =>
+    `<div class="stat-anime-row"><span>${a.title}</span><span>${a.comparisons}</span></div>`
+  ).join('');
+
+  // Best win rate (5+ battles minimum)
+  const eligible = [...animeList]
+    .filter(a => (a.wins + a.losses) >= 5)
+    .map(a => ({ ...a, rate: a.wins / (a.wins + a.losses) }))
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 5);
+  document.getElementById('stat-best-winrate').innerHTML = eligible.length
+    ? eligible.map(a =>
+        `<div class="stat-anime-row"><span>${a.title}</span><span>${Math.round(a.rate * 100)}%</span></div>`
+      ).join('')
+    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Not enough battles yet.</div>';
+
+  // Biggest upsets (winner was underdog — eloDiffBefore > 0, largest first)
+  const upsets = [...battleHistory]
+    .filter(h => h.eloDiffBefore > 0)
+    .sort((a, b) => b.eloDiffBefore - a.eloDiffBefore)
+    .slice(0, 5);
+  document.getElementById('stat-upsets').innerHTML = upsets.length
+    ? upsets.map(h =>
+        `<div class="stat-anime-row">
+          <span><span style="color:#3fb950">${h.winnerTitle}</span> beat ${h.loserTitle}</span>
+          <span>+${h.eloDiffBefore} ELO gap</span>
+        </div>`
+      ).join('')
+    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No upsets recorded yet.</div>';
+
+  renderGenreStats();
+  renderDisagreements();
+}
+
+async function renderGenreStats() {
+  const chartEl = document.getElementById('stat-genre-chart');
+  const eraEl   = document.getElementById('stat-era-chart');
+  if (!chartEl || !eraEl) return;
+
+  // If existing save predates genre data, silently fetch and patch it now
+  const needsEnrichment = animeList.some(a => !Array.isArray(a.genres));
+  if (needsEnrichment) {
+    chartEl.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">⏳ Fetching genre data…</div>';
+    eraEl.innerHTML   = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">⏳ Fetching era data…</div>';
+    try {
+      await _enrichGenresAndEras();
+    } catch (e) {
+      chartEl.innerHTML = `<div style="color:#f85149;font-size:0.8rem;padding:8px 0">Could not fetch genre data: ${e.message}</div>`;
+      eraEl.innerHTML   = '';
+      return;
+    }
+  }
+
+  // ── Genre chart ──────────────────────────────────────────────────────────
+  const genreMap = {};
+  animeList.forEach(a => {
+    (a.genres || []).forEach(g => {
+      if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
+      genreMap[g].sum   += a.elo;
+      genreMap[g].count += 1;
+    });
+  });
+  const genres = Object.entries(genreMap)
+    .filter(([, v]) => v.count >= 3)
+    .map(([name, v]) => ({ name, avg: Math.round(v.sum / v.count), count: v.count }))
+    .sort((a, b) => b.avg - a.avg);
+
+  if (genres.length === 0) {
+    chartEl.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Not enough genre data yet (need 3+ anime per genre).</div>';
+  } else {
+    const maxA = genres[0].avg, minA = genres[genres.length - 1].avg, range = maxA - minA || 1;
+    chartEl.innerHTML = genres.map(g => {
+      const pct = Math.round(((g.avg - minA) / range) * 80 + 20);
+      return `<div class="genre-chart-row">
+        <div class="genre-chart-label" title="${g.name}">${g.name}</div>
+        <div class="genre-chart-track"><div class="genre-chart-fill" style="width:${pct}%"></div></div>
+        <div class="genre-chart-value">${g.avg} <span style="color:#6e7681">(${g.count})</span></div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Era chart ─────────────────────────────────────────────────────────────
+  const eraMap = {};
+  animeList.forEach(a => {
+    if (!a.seasonYear) return;
+    const decade = Math.floor(a.seasonYear / 10) * 10;
+    const label  = decade + 's';
+    if (!eraMap[label]) eraMap[label] = { sum: 0, count: 0, decade };
+    eraMap[label].sum   += a.elo;
+    eraMap[label].count += 1;
+  });
+  const eras = Object.entries(eraMap)
+    .filter(([, v]) => v.count >= 2)
+    .map(([label, v]) => ({ label, avg: Math.round(v.sum / v.count), count: v.count, decade: v.decade }))
+    .sort((a, b) => a.decade - b.decade);
+
+  if (eras.length === 0) {
+    eraEl.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Not enough era data yet (need 2+ anime per decade).</div>';
+  } else {
+    const maxA = Math.max(...eras.map(e => e.avg));
+    const minA = Math.min(...eras.map(e => e.avg));
+    const range = maxA - minA || 1;
+    eraEl.innerHTML = eras.map(e => {
+      const pct = Math.round(((e.avg - minA) / range) * 80 + 20);
+      return `<div class="genre-chart-row">
+        <div class="genre-chart-label">${e.label}</div>
+        <div class="genre-chart-track"><div class="genre-chart-fill era-fill" style="width:${pct}%"></div></div>
+        <div class="genre-chart-value">${e.avg} <span style="color:#6e7681">(${e.count})</span></div>
+      </div>`;
+    }).join('');
+  }
+}
+
+// Silently fetch genres + seasonYear for existing anime that predate those fields
+async function _enrichGenresAndEras() {
+  const ids = animeList.map(a => a.id);
+  const PAGE_SIZE = 50;
+  for (let i = 0; i < ids.length; i += PAGE_SIZE) {
+    const chunk = ids.slice(i, i + PAGE_SIZE);
+    const query = `
+      query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(id_in: $ids, type: ANIME) {
+            id
+            genres
+            seasonYear
+          }
+        }
+      }`;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { ids: chunk } })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.errors) throw new Error(data.errors[0].message);
+    const enrichMap = new Map((data?.data?.Page?.media ?? []).map(m => [m.id, m]));
+    animeList.forEach(a => {
+      const m = enrichMap.get(a.id);
+      if (m) {
+        if (!Array.isArray(a.genres)) a.genres = m.genres || [];
+        if (!a.seasonYear)            a.seasonYear = m.seasonYear || null;
+      }
+    });
+    if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 350));
+  }
+  saveState();
+}
+
+// ─── ANIME DETAIL MODAL ───────────────────────────────────────────────────────
+function showAnimeDetail(id) {
+  const anime = animeList.find(a => a.id === id);
+  if (!anime) return;
+
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const rank = sorted.findIndex(a => a.id === id) + 1;
+  const tier = getTier(rank - 1, sorted.length);
+
+  document.getElementById('modal-cover').src = anime.cover;
+  document.getElementById('modal-cover').alt = displayTitle(anime);
+  document.getElementById('modal-title').textContent = displayTitle(anime);
+  const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
+  const scoreStr = anime.globalScore ? `· Community ${anime.globalScore}%` : '';
+  document.getElementById('modal-rank-line').innerHTML = `${tierHtml}Rank #${rank} of ${animeList.length} ${scoreStr}`;
+
+  // Meta line: format + season/year
+  const fmtLabel = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' }[anime.format] || anime.format || '';
+  const yearStr  = anime.seasonYear ? String(anime.seasonYear) : '';
+  document.getElementById('modal-meta-line').textContent = [fmtLabel, yearStr].filter(Boolean).join(' · ');
+
+  // Genre tags
+  const genresEl = document.getElementById('modal-genres');
+  const genres = Array.isArray(anime.genres) ? anime.genres.slice(0, 6) : [];
+  genresEl.innerHTML = genres.map(g => `<span class="modal-genre-tag">${g}</span>`).join('');
+  genresEl.style.display = genres.length ? 'flex' : 'none';
+  document.getElementById('modal-wins').textContent    = anime.wins;
+  document.getElementById('modal-losses').textContent  = anime.losses;
+  document.getElementById('modal-elo-val').textContent = anime.elo;
+
+  const total = anime.wins + anime.losses;
+  document.getElementById('modal-winrate-val').textContent =
+    total > 0 ? Math.round((anime.wins / total) * 100) + '%' : '–';
+
+  const conf = confidenceLabel(anime.comparisons);
+  document.getElementById('modal-confidence-wrap').innerHTML =
+    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${anime.comparisons} battles</span>`;
+
+  document.getElementById('modal-anilist-btn').href = `https://anilist.co/anime/${anime.id}`;
+  const descEl = document.getElementById('modal-description');
+  const cleanDesc = stripHtml(anime.description);
+  if (cleanDesc) {
+    descEl.textContent = cleanDesc;
+    descEl.style.display = 'block';
+    descEl.style.opacity = '1';
+  } else {
+    // No description yet — show a faint placeholder; will fill after metadata refresh
+    descEl.textContent = 'No description available.';
+    descEl.style.display = 'block';
+    descEl.style.opacity = '0.4';
+  }
+
+  const unfuzzyBtn = document.getElementById('modal-unfuzzy-btn');
+  unfuzzyBtn.style.display = anime.fuzzy ? 'inline-block' : 'none';
+  unfuzzyBtn.dataset.animeId = id;
+
+  // Recent battles from history involving this anime
+  const related = battleHistory
+    .filter(h => h.winnerTitle === anime.title || h.loserTitle === anime.title)
+    .slice(0, 8);
+
+  const recentEl = document.getElementById('modal-recent');
+  if (related.length > 0) {
+    recentEl.innerHTML = '<h4>Recent Battles</h4>' + related.map(h => {
+      const won = h.winnerTitle === anime.title;
+      const opponent = won ? h.loserTitle : h.winnerTitle;
+      return `<div class="modal-recent-item">
+        <span class="${won ? 'modal-win' : 'modal-loss'}">${won ? '✓ W' : '✗ L'} vs ${opponent}</span>
+        <span style="color:#8b949e">${won ? '+' : '−'}${h.eloSwing} ELO</span>
+      </div>`;
+    }).join('');
+  } else {
+    recentEl.innerHTML = '<p style="color:#8b949e;font-size:0.78rem;margin-top:8px">No battles recorded yet.</p>';
+  }
+
+  // Sparkline
+  const sparkWrap = document.getElementById('modal-sparkline-wrap');
+  if (anime.eloHistory && anime.eloHistory.length >= 2) {
+    document.getElementById('modal-sparkline').innerHTML = buildSparkline(anime.eloHistory);
+    sparkWrap.style.display = 'block';
+  } else {
+    sparkWrap.style.display = 'none';
+  }
+
+  document.getElementById('detail-modal').style.display = 'block';
+  document.getElementById('detail-modal').scrollTop = 0;
+  document.getElementById('modal-description').scrollTop = 0;
+}
+
+function closeDetail() {
+  document.getElementById('detail-modal').style.display = 'none';
+}
+
+function closeDetailOnOverlay(event) {
+  if (event.target === document.getElementById('detail-modal')) closeDetail();
+}
+
+function unflagFuzzy() {
+  const id = parseInt(document.getElementById('modal-unfuzzy-btn').dataset.animeId);
+  const anime = animeList.find(a => a.id === id);
+  if (anime) { anime.fuzzy = false; saveState(); }
+  document.getElementById('modal-unfuzzy-btn').style.display = 'none';
+}
+
+// ─── TITLE LANGUAGE ──────────────────────────────────────────────────────────
+function displayTitle(anime) {
+  if (!anime) return '';
+  if (preferRomaji) return anime.titleRo || anime.titleEn || anime.title;
+  return anime.titleEn || anime.titleRo || anime.title;
+}
+
+function toggleLanguage() {
+  preferRomaji = !preferRomaji;
+  const btn = document.getElementById('lang-toggle-btn');
+  btn.textContent = preferRomaji ? '🇯🇵 Romaji' : '🇬🇧 English';
+
+  // Old saves have titleRo === titleEn (both set to anime.title by migration).
+  // Detect this and trigger a background metadata refresh to get real titles.
+  const needsRefresh = animeList.length > 0 &&
+    animeList.some(a => a.titleRo === a.titleEn && a.titleRo === a.title);
+  if (needsRefresh) {
+    refreshAnimeMetadata(); // async; will re-render when done
+    return;
+  }
+
+  // Live-update battle cards if in battle
+  if (currentA !== null && currentB !== null &&
+      document.getElementById('battle-screen').style.display !== 'none') {
+    renderPair(currentA, currentB);
+  }
+  // Live-update rankings if open
+  if (document.getElementById('results-screen').style.display !== 'none') {
+    renderRankingList();
+  }
+}
+
+// ─── SORT & FUZZY FILTER ─────────────────────────────────────────────────────
+function setSort(type) {
+  currentSort = type;
+  document.querySelectorAll('.sort-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.sort === type));
+  renderRankingList();
+  filterRankings(); // reapply search + fuzzy filter
+}
+
+function toggleFuzzyFilter() {
+  showFuzzyOnly = !showFuzzyOnly;
+  const btn = document.getElementById('fuzzy-filter-btn');
+  btn.classList.toggle('active', showFuzzyOnly);
+  filterRankings();
+}
+
+function toggleFormat(fmt) {
+  if (hiddenFormats.has(fmt)) {
+    hiddenFormats.delete(fmt);
+  } else {
+    hiddenFormats.add(fmt);
+  }
+  // Sync button appearance
+  document.querySelectorAll('.format-btn').forEach(b => {
+    const isHidden = hiddenFormats.has(b.dataset.format);
+    b.classList.toggle('active',      !isHidden);
+    b.classList.toggle('hidden-fmt',   isHidden);
+  });
+  saveState();
+  renderRankingList();
+  filterRankings();
+}
+
+function syncFormatButtons() {
+  document.querySelectorAll('.format-btn').forEach(b => {
+    const isHidden = hiddenFormats.has(b.dataset.format);
+    b.classList.toggle('active',     !isHidden);
+    b.classList.toggle('hidden-fmt',  isHidden);
+  });
+}
+
+// ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
+function toggleDisagreements() { switchResultsTab('stats'); }
+
+function renderDisagreements() {
+  // Need globalScore to compare against community rating
+  const withGlobal = animeList.filter(a => a.globalScore > 0);
+  if (withGlobal.length < 3) {
+    const msg = `<p style="color:#8b949e;font-size:0.82rem">
+      Community scores haven't loaded yet.
+      <a href="#" style="color:#58a6ff" onclick="event.preventDefault();refreshAnimeMetadata().then(renderStatsTab)">Click here to fetch them now →</a>
+    </p>`;
+    document.getElementById('disagree-elo-higher').innerHTML = msg;
+    document.getElementById('disagree-score-higher').innerHTML = '';
+    return;
+  }
+
+  // Build rank maps within the shared pool (only anime that have a global score)
+  const byElo    = [...withGlobal].sort((a, b) => b.elo - a.elo);
+  const byGlobal = [...withGlobal].sort((a, b) => b.globalScore - a.globalScore);
+  const eloRankMap    = new Map(byElo.map((a, i)    => [a.id, i + 1]));
+  const globalRankMap = new Map(byGlobal.map((a, i) => [a.id, i + 1]));
+
+  // delta = globalRank - eloRank
+  // Positive  → your ELO rank is better (lower number) than the community rating implies: you like it more
+  // Negative  → community rates it higher than your ELO does: you like it less than the crowd
+  const divergences = withGlobal.map(a => ({
+    anime: a,
+    eloRank:    eloRankMap.get(a.id),
+    globalRank: globalRankMap.get(a.id),
+    delta: globalRankMap.get(a.id) - eloRankMap.get(a.id),
+  })).sort((a, b) => b.delta - a.delta);
+
+  const youHigher  = divergences.filter(d => d.delta > 0).slice(0, 8);
+  const commHigher = divergences.filter(d => d.delta < 0)
+                                .sort((a, b) => a.delta - b.delta).slice(0, 8);
+
+  function makeItem(d) {
+    const el = document.createElement('div');
+    el.className = 'disagree-item';
+    el.addEventListener('click', () => showAnimeDetail(d.anime.id));
+    const sign = d.delta > 0 ? '+' : '';
+    const cls  = d.delta > 0 ? 'delta-up' : 'delta-down';
+    const globalPct = (d.anime.globalScore / 10).toFixed(1); // 85 → 8.5
+    el.innerHTML = `
+      <img src="${d.anime.cover}" alt="${displayTitle(d.anime)}" />
+      <div class="disagree-item-info">
+        <div class="disagree-item-title">${displayTitle(d.anime)}</div>
+        <div class="disagree-item-meta">Your ELO #${d.eloRank} · Community ${globalPct}/10 (#${d.globalRank})</div>
+      </div>
+      <div class="disagree-delta ${cls}">${sign}${d.delta}</div>
+    `;
+    return el;
+  }
+
+  const eloEl   = document.getElementById('disagree-elo-higher');
+  const scoreEl = document.getElementById('disagree-score-higher');
+  eloEl.innerHTML = '';
+  scoreEl.innerHTML = '';
+
+  if (youHigher.length)  youHigher.forEach(d  => eloEl.appendChild(makeItem(d)));
+  else eloEl.innerHTML = '<p style="color:#8b949e;font-size:0.82rem">No significant divergence found.</p>';
+
+  if (commHigher.length) commHigher.forEach(d => scoreEl.appendChild(makeItem(d)));
+  else scoreEl.innerHTML = '<p style="color:#8b949e;font-size:0.82rem">No significant divergence found.</p>';
+}
+
+// ─── SETTLE MODE ─────────────────────────────────────────────────────────────
+function toggleSettleMode() {
+  settleMode = !settleMode;
+  const btn = document.getElementById('settle-btn');
+  const banner = document.getElementById('settle-banner');
+  if (btn) btn.classList.toggle('active', settleMode);
+  if (banner) banner.classList.toggle('active', settleMode);
+  if (settleMode) renderBattle(); // re-pick with settle logic immediately
+}
+
+// In settle mode, pickOpponents uses a tighter window and prefers uncertain anime.
+// Called from the modified pickOpponents below.
+function pickSettlePair() {
+  const n = animeList.length;
+  // Candidates: not excluded, not hidden format, fewer than 15 comparisons
+  const uncertain = animeList
+    .map((a, i) => ({ i, a }))
+    .filter(({ i, a }) =>
+      !excludedIds.has(a.id) &&
+      !hiddenFormats.has(a.format) &&
+      a.comparisons < 15
+    );
+
+  if (uncertain.length < 2) {
+    // Fallback to normal if everyone is confident
+    settleMode = false;
+    document.getElementById('settle-btn')?.classList.remove('active');
+    document.getElementById('settle-banner')?.classList.remove('active');
+    return null; // signal to use normal pick
+  }
+
+  // Pick A randomly from uncertain pool, weighted by fewest comparisons
+  const weights = uncertain.map(({ a }) => 1 / (a.comparisons + 1));
+  const total = weights.reduce((s, w) => s + w, 0);
+  let r = Math.random() * total, idxA;
+  for (let k = 0; k < uncertain.length; k++) {
+    r -= weights[k];
+    if (r <= 0) { idxA = uncertain[k].i; break; }
+  }
+  if (idxA === undefined) idxA = uncertain[0].i;
+
+  // Pick B: nearest ELO among uncertain pool (excluding A)
+  const eloA = animeList[idxA].elo;
+  const candidates = uncertain
+    .filter(({ i }) => i !== idxA)
+    .sort((x, y) => Math.abs(x.a.elo - eloA) - Math.abs(y.a.elo - eloA));
+  const idxB = candidates[0]?.i ?? (idxA === 0 ? 1 : 0);
+  return [idxA, idxB];
+}
+
+// ─── TOWER OF POWER ──────────────────────────────────────────────────────────
+function openTowerModal() {
+  populateTowerList('');
+  document.getElementById('tower-search').value = '';
+  document.getElementById('tower-modal').classList.add('open');
+}
+
+function closeTowerModal() {
+  document.getElementById('tower-modal').classList.remove('open');
+}
+
+function filterTowerList() {
+  const q = document.getElementById('tower-search').value.toLowerCase();
+  populateTowerList(q);
+}
+
+function populateTowerList(q) {
+  const sorted = [...animeList]
+    .map((a, i) => ({ i, a }))
+    .filter(({ a }) =>
+      !excludedIds.has(a.id) &&
+      !hiddenFormats.has(a.format) &&
+      (!q || displayTitle(a).toLowerCase().includes(q))
+    )
+    .sort((x, y) => y.a.elo - x.a.elo);
+
+  const container = document.getElementById('tower-anime-list');
+  container.innerHTML = '';
+  sorted.slice(0, 60).forEach(({ i, a }) => {
+    const el = document.createElement('div');
+    el.className = 'tower-anime-item';
+    el.innerHTML = `
+      <img src="${a.cover}" alt="${displayTitle(a)}" />
+      <span>${displayTitle(a)}</span>
+      <span class="tower-anime-elo">ELO ${a.elo}</span>
+    `;
+    el.addEventListener('click', () => startTower(i));
+    container.appendChild(el);
+  });
+}
+
+function startTower(championIdx) {
+  closeTowerModal();
+  towerChampIdx  = championIdx;
+  towerRound     = 0;
+  towerResults   = [];
+  towerMode      = true;
+
+  // Pre-select 10 opponents: spread across ELO range for variety
+  const pool = animeList
+    .map((a, i) => ({ i, a }))
+    .filter(({ i, a }) =>
+      i !== championIdx &&
+      !excludedIds.has(a.id) &&
+      !hiddenFormats.has(a.format)
+    )
+    .sort((x, y) => y.a.elo - x.a.elo);
+
+  // Pick opponents at 10 evenly-spaced percentile positions
+  towerOpponents = [];
+  for (let k = 0; k < TOWER_ROUNDS; k++) {
+    const targetPct = (k + 0.5) / TOWER_ROUNDS;
+    const targetIdx = Math.floor(targetPct * pool.length);
+    // Add slight jitter so it's not perfectly predictable
+    const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(pool.length * 0.08)));
+    const pick = pool[Math.min(targetIdx + jitter, pool.length - 1)];
+    towerOpponents.push(pick.i);
+  }
+  // Shuffle opponents so the order isn't predictable
+  for (let k = towerOpponents.length - 1; k > 0; k--) {
+    const j = Math.floor(Math.random() * (k + 1));
+    [towerOpponents[k], towerOpponents[j]] = [towerOpponents[j], towerOpponents[k]];
+  }
+
+  // Update UI for tower mode
+  show('battle-screen');
+  hide('results-screen');
+  hide('tower-summary-screen');
+  document.getElementById('tower-progress-wrap').style.display = 'block';
+  document.getElementById('tower-status').style.display = 'block';
+  document.getElementById('undo-btn').disabled  = true;
+  document.getElementById('skip-btn').disabled  = true;
+  document.getElementById('battle-prompt-h2').textContent = '⚡ Tower of Power';
+  document.getElementById('battle-prompt-p').textContent  = `Round ${towerRound + 1} of ${TOWER_ROUNDS}`;
+
+  renderTowerRound();
+}
+
+function renderTowerRound() {
+  const pct = (towerRound / TOWER_ROUNDS) * 100;
+  document.getElementById('tower-progress-bar').style.width = pct + '%';
+  document.getElementById('tower-status').textContent =
+    `⚡ ${displayTitle(animeList[towerChampIdx])} — Round ${towerRound + 1} / ${TOWER_ROUNDS}`;
+  document.getElementById('battle-prompt-p').textContent =
+    `Round ${towerRound + 1} of ${TOWER_ROUNDS}`;
+
+  // Champion always on left (index A)
+  renderPair(towerChampIdx, towerOpponents[towerRound]);
+}
+
+function pickWinnerTower(side) {
+  const championWon = side === 0; // champion is always left (side 0)
+  const oppIdx = towerOpponents[towerRound];
+
+  // Apply ELO
+  const winner = championWon ? animeList[towerChampIdx] : animeList[oppIdx];
+  const loser  = championWon ? animeList[oppIdx] : animeList[towerChampIdx];
+  updateElo(winner, loser);
+
+  towerResults.push({ opponentIdx: oppIdx, championWon });
+  towerRound++;
+
+  if (towerRound >= TOWER_ROUNDS) {
+    finishTower();
+  } else {
+    renderTowerRound();
+  }
+  saveState();
+}
+
+function finishTower() {
+  towerMode = false;
+  document.getElementById('tower-progress-wrap').style.display = 'none';
+  document.getElementById('tower-status').style.display = 'none';
+  document.getElementById('battle-prompt-h2').textContent = 'Which did you enjoy more?';
+  document.getElementById('battle-prompt-p').textContent  = 'Click your favourite — or skip if you can\'t decide.';
+  document.getElementById('undo-btn').disabled = true;
+  document.getElementById('skip-btn').disabled = false;
+
+  const wins   = towerResults.filter(r => r.championWon).length;
+  const champ  = animeList[towerChampIdx];
+  const screen = document.getElementById('tower-summary-screen');
+
+  document.getElementById('tower-summary-title').textContent =
+    `${wins === TOWER_ROUNDS ? '👑' : wins >= 7 ? '⚡' : wins >= 5 ? '🎖' : '💔'} ${displayTitle(champ)}: ${wins}/${TOWER_ROUNDS}`;
+  document.getElementById('tower-summary-sub').textContent =
+    wins === TOWER_ROUNDS ? 'Undefeated! A true champion.' :
+    wins >= 7 ? 'Dominant performance.' :
+    wins >= 5 ? 'Holds their own.' :
+    wins >= 3 ? 'Struggled against the competition.' : 'A tough day at the tower.';
+
+  const list = document.getElementById('tower-results-list');
+  list.innerHTML = '';
+  towerResults.forEach(r => {
+    const opp = animeList[r.opponentIdx];
+    const row = document.createElement('div');
+    row.className = `tower-result-row ${r.championWon ? 'won' : 'lost'}`;
+    row.innerHTML = `
+      <img src="${opp.cover}" alt="${displayTitle(opp)}" />
+      <div class="tower-result-info">
+        <div class="name">${displayTitle(opp)}</div>
+        <div class="meta">ELO ${opp.elo} · ${opp.comparisons} battles</div>
+      </div>
+      <div class="tower-result-outcome">${r.championWon ? '✅ Win' : '❌ Loss'}</div>
+    `;
+    list.appendChild(row);
+  });
+
+  hide('battle-screen');
+  show('tower-summary-screen');
+}
+
+function endTower() {
+  hide('tower-summary-screen');
+  show('battle-screen');
+  renderBattle();
+}
+
+// ─── LIST VIEW ────────────────────────────────────────────────────────────────
+function setRankingView(view) {
+  rankingView = view;
+  document.getElementById('view-grid-btn').classList.toggle('active', view === 'grid');
+  document.getElementById('view-list-btn').classList.toggle('active', view === 'list');
+  document.getElementById('ranking-list').style.display       = view === 'grid' ? '' : 'none';
+  document.getElementById('ranking-table-wrap').style.display = view === 'list' ? '' : 'none';
+  if (view === 'list') renderRankingTable();
+}
+
+function renderRankingTable() {
+  const sorted    = getSortedList();
+  const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i]));
+  const q = (document.getElementById('search-input').value || '').toLowerCase().trim();
+
+  // Build pre-computed data array (filtered)
+  _vsTableData = [];
+  sorted.forEach((anime, i) => {
+    const title   = displayTitle(anime);
+    const hidden  = (q && !title.toLowerCase().includes(q)) ||
+                    (showFuzzyOnly && !anime.fuzzy) ||
+                    hiddenFormats.has(anime.format || 'TV');
+    if (hidden) return;
+    const eloRank = eloRankMap.get(anime.id) ?? i;
+    const tier    = getTier(eloRank, sorted.length);
+    const conf    = confidenceLabel(anime.comparisons);
+    const wr      = (anime.wins + anime.losses) > 0
+      ? Math.round(anime.wins / (anime.wins + anime.losses) * 100) + '%' : '–';
+    const sb      = streakBadge(anime);
+    _vsTableData.push({ anime, displayIdx: i + 1, title, tier, conf, wr, sb });
+  });
+
+  // Attach scroll listener (idempotent — overwrites previous)
+  const wrap = document.getElementById('ranking-table-wrap');
+  wrap.onscroll = () => {
+    if (_vsScrollRaf) return;
+    _vsScrollRaf = requestAnimationFrame(() => { _vsScrollRaf = null; _vsRenderTableSlice(); });
+  };
+
+  // Reset scroll position and render first window
+  wrap.scrollTop = 0;
+  _vsRenderTableSlice();
+}
+
+function _vsRenderTableSlice() {
+  const wrap = document.getElementById('ranking-table-wrap');
+  if (!wrap || wrap.style.display === 'none') return;
+  const total = _vsTableData.length;
+  if (total === 0) {
+    document.getElementById('ranking-table-body').innerHTML =
+      '<tr><td colspan="9" style="text-align:center;color:#8b949e;padding:24px">No anime match the current filters.</td></tr>';
+    return;
+  }
+
+  const scrollTop  = wrap.scrollTop;
+  const viewH      = wrap.clientHeight || 500;
+  const firstIdx   = Math.max(0, Math.floor(scrollTop / VS_ROW_H) - VS_BUFFER);
+  const lastIdx    = Math.min(total, Math.ceil((scrollTop + viewH) / VS_ROW_H) + VS_BUFFER);
+
+  const topPx  = firstIdx * VS_ROW_H;
+  const botPx  = (total - lastIdx) * VS_ROW_H;
+
+  let html = topPx > 0
+    ? `<tr><td colspan="9" style="height:${topPx}px;padding:0;border:none"></td></tr>` : '';
+
+  for (let i = firstIdx; i < lastIdx; i++) {
+    const { anime, displayIdx, title, tier, conf, wr, sb } = _vsTableData[i];
+    html += `<tr>
+      <td class="tbl-rank">${displayIdx}</td>
+      <td><img class="tbl-cover" src="${anime.cover}" alt="" loading="lazy" /></td>
+      <td class="tbl-title" onclick="showAnimeDetail(${anime.id})">${title}${sb ? ' ' + sb : ''}</td>
+      <td>${anime.elo}</td>
+      <td>${wr}</td>
+      <td>${anime.comparisons}</td>
+      <td>${anime.globalScore ? anime.globalScore + '%' : '–'}</td>
+      <td><span class="tier-badge t-${tier.toLowerCase()}">${tier}</span></td>
+      <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
+    </tr>`;
+  }
+
+  if (botPx > 0)
+    html += `<tr><td colspan="9" style="height:${botPx}px;padding:0;border:none"></td></tr>`;
+
+  document.getElementById('ranking-table-body').innerHTML = html;
+}
+
+// ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (navigator.maxTouchPoints > 0) return; // no keyboard shortcuts on touch devices
+  // Only fire when the battle screen is visible
+  if (document.getElementById('battle-screen').style.display === 'none') return;
+  // Don't hijack text inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  switch (e.key) {
+    case 'ArrowLeft':  e.preventDefault(); pickWinner(0); break;
+    case 'ArrowRight': e.preventDefault(); pickWinner(1); break;
+    case 's': case 'S': skipBattle(); break;
+    case 'u': case 'U': undoLast(); break;
+  }
+});
+
+
+// ─── SYNC TO ANILIST ──────────────────────────────────────────────────────────
+
+function _eloToScore10(rank0, total) {
+  // rank0: 0-indexed rank from top (0 = best anime)
+  const pct = 1 - (rank0 / Math.max(total - 1, 1)); // 1.0 = best, 0.0 = worst
+  if (pct >= 0.95) return 10;
+  if (pct >= 0.85) return 9;
+  if (pct >= 0.70) return 8;
+  if (pct >= 0.50) return 7;
+  if (pct >= 0.30) return 6;
+  if (pct >= 0.15) return 5;
+  if (pct >= 0.05) return 4;
+  return 3;
+}
+
+function _formatScoreForAniList(score10, format) {
+  switch (format) {
+    case 'POINT_100':       return score10 * 10;
+    case 'POINT_10_DECIMAL':return score10;
+    case 'POINT_10':        return score10;
+    case 'POINT_5':         return Math.max(1, Math.round(score10 / 2));
+    case 'POINT_3':         return score10 >= 8 ? 3 : score10 >= 5 ? 2 : 1;
+    default:                return score10;
+  }
+}
+
+function _scoreClass(s) {
+  if (s >= 10) return 'sync-score-10';
+  if (s >= 9)  return 'sync-score-9';
+  if (s >= 8)  return 'sync-score-8';
+  if (s >= 7)  return 'sync-score-7';
+  if (s >= 6)  return 'sync-score-6';
+  if (s >= 5)  return 'sync-score-5';
+  return 'sync-score-low';
+}
+
+let _syncQueue = []; // [{mediaId, title, cover, apiScore, score10}]
+
+function openSyncModal() {
+  if (!authToken) return;
+  const format = authUser?.scoreFormat || 'POINT_10';
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const total = sorted.length;
+
+  // Build sync queue — skip excluded anime (they're in the pool but excluded)
+  _syncQueue = sorted
+    .filter(a => !excludedIds.has(a.id))
+    .map((a, i) => {
+      const score10 = _eloToScore10(i, total);
+      return { mediaId: a.id, title: a.title, cover: a.cover, score10, apiScore: _formatScoreForAniList(score10, format) };
+    });
+
+  // Format labels
+  const fmtLabel = { POINT_100: '100-pt', POINT_10_DECIMAL: '10-pt', POINT_10: '10-pt', POINT_5: '5-star', POINT_3: '3-smiley' };
+  const label = fmtLabel[format] || '10-pt';
+
+  // Build preview table
+  const rows = _syncQueue.map(item => `
+    <tr>
+      <td><img src="${item.cover}" alt="" /></td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.title}</td>
+      <td style="text-align:center"><span class="sync-score-pill ${_scoreClass(item.score10)}">${item.apiScore}</span></td>
+    </tr>`).join('');
+
+  document.getElementById('sync-preview-wrap').innerHTML = `
+    <p style="font-size:0.78rem;color:#8b949e;margin-bottom:8px">Score format: <strong style="color:#c9d1d9">${label}</strong> · Percentile-based mapping</p>
+    <div style="max-height:320px;overflow-y:auto;border:1px solid #30363d;border-radius:8px">
+      <table class="sync-preview-table">
+        <thead><tr><th></th><th>Title</th><th style="text-align:center">Score</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  document.getElementById('sync-count-label').textContent = _syncQueue.length;
+  document.getElementById('sync-progress-wrap').style.display = 'none';
+  document.getElementById('sync-done-msg').style.display = 'none';
+  document.getElementById('sync-action-btns').style.display = 'flex';
+  document.getElementById('sync-modal').style.display = 'flex';
+}
+
+function closeSyncModal() {
+  document.getElementById('sync-modal').style.display = 'none';
+}
+
+function closeSyncOnOverlay(e) {
+  if (e.target === document.getElementById('sync-modal')) closeSyncModal();
+}
+
+async function executeSyncToAniList() {
+  if (!authToken || !_syncQueue.length) return;
+
+  const actionBtns = document.getElementById('sync-action-btns');
+  const progressWrap = document.getElementById('sync-progress-wrap');
+  const progressText = document.getElementById('sync-progress-text');
+  const barFill = document.getElementById('sync-bar-fill');
+  const doneMsg = document.getElementById('sync-done-msg');
+
+  actionBtns.style.display = 'none';
+  progressWrap.style.display = '';
+  doneMsg.style.display = 'none';
+
+  const total = _syncQueue.length;
+  let done = 0, errors = 0;
+
+  const mutation = `
+    mutation ($mediaId: Int!, $score: Float!) {
+      SaveMediaListEntry(mediaId: $mediaId, score: $score) {
+        id score
+      }
+    }`;
+
+  for (const item of _syncQueue) {
+    progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
+    barFill.style.width = Math.round((done / total) * 100) + '%';
+    try {
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
+      });
+      const json = await res.json();
+      if (json.errors) errors++;
+    } catch { errors++; }
+    done++;
+    // Respect AniList rate limit — 90 req/min → ~700ms spacing
+    await new Promise(r => setTimeout(r, 700));
+  }
+
+  barFill.style.width = '100%';
+  progressWrap.style.display = 'none';
+  doneMsg.style.display = '';
+  doneMsg.textContent = errors === 0
+    ? `✅ Done! Synced ${done} scores to AniList.`
+    : `⚠️ Synced ${done - errors}/${done} scores. ${errors} failed — try again.`;
+
+  // Replace Cancel with a Close button
+  actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
+  actionBtns.style.display = 'flex';
+}
+
+// Show/hide the sync button based on auth state
+function _refreshSyncButton() {
+  const btn = document.getElementById('sync-anilist-btn');
+  if (btn) btn.style.display = (authToken && authUser) ? '' : 'none';
+}
+
+// Auto-load if username is pre-filled, or show shared view if URL has a share hash
+window.addEventListener('load', () => {
+  if (tryLoadSharedView()) {
+    hide('username-screen');
+    return;
+  }
+  const input = document.getElementById('username-input');
+  if (input.value.trim()) startLoading();
+});
+</script>
+</body>
+</html>
