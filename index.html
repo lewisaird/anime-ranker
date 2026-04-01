@@ -2412,15 +2412,13 @@ async function fetchAllAnime(username, seedFromScores = false) {
 
 // ─── NEW ANIME DETECTION ─────────────────────────────────────────────────────
 // Quietly fetches the user's current AniList and surfaces a banner if there are
-// entries not present in the local ranking (and not previously dismissed).
+// entries not present in the local ranking.
 async function checkForNewAnime(username) {
   if (!authUser?.name) return;
   try {
     const fresh = await fetchAllAnime(username, true); // seed=true so new entries get score-based ELO
     const existingIds = new Set(animeList.map(a => a.id));
-    const dismissKey  = 'anime_elo_dismissed_new_' + username.toLowerCase();
-    const dismissed   = new Set(JSON.parse(localStorage.getItem(dismissKey) || '[]'));
-    _pendingNewAnime  = fresh.filter(a => !existingIds.has(a.id) && !dismissed.has(a.id));
+    _pendingNewAnime  = fresh.filter(a => !existingIds.has(a.id));
     if (_pendingNewAnime.length > 0) {
       const count = _pendingNewAnime.length;
       document.getElementById('new-anime-msg').textContent =
@@ -2432,26 +2430,29 @@ async function checkForNewAnime(username) {
 
 function addNewAnime() {
   if (!_pendingNewAnime.length) return;
-  animeList.push(..._pendingNewAnime);
+  const toAdd = _pendingNewAnime.slice(); // snapshot before clearing
+  animeList.push(...toAdd);
   saveState();
-  const count = _pendingNewAnime.length;
-  const msg   = document.getElementById('new-anime-msg');
+  const count = toAdd.length;
+  const banner = document.getElementById('new-anime-banner');
+  const msg    = document.getElementById('new-anime-msg');
+  // Swap buttons for a clear confirmation state
+  banner.querySelectorAll('button').forEach(b => b.style.display = 'none');
   msg.textContent = `✅ Added ${count} anime to your ranking!`;
-  setTimeout(() => { document.getElementById('new-anime-banner').style.display = 'none'; }, 2500);
+  setTimeout(() => { banner.style.display = 'none'; banner.querySelectorAll('button').forEach(b => b.style.display = ''); }, 3000);
   _pendingNewAnime = [];
-  // Refresh rankings if they're currently visible
-  if (document.getElementById('results-screen').style.display !== 'none') renderResults();
+  // Refresh whichever screen is currently visible
+  if (document.getElementById('results-screen').style.display !== 'none') {
+    renderResults();
+  } else if (document.getElementById('battle-screen').style.display !== 'none') {
+    renderBattle(); // bring new anime into the battle pool
+  }
 }
 
 function dismissNewAnimeBanner() {
+  // Session-only dismiss — don't persist to localStorage so the same entries
+  // can surface again on next page load if the user still hasn't added them.
   document.getElementById('new-anime-banner').style.display = 'none';
-  // Persist dismissed IDs so the same entries don't prompt again
-  if (authUser?.name && _pendingNewAnime.length) {
-    const dismissKey = 'anime_elo_dismissed_new_' + authUser.name.toLowerCase();
-    const dismissed  = new Set(JSON.parse(localStorage.getItem(dismissKey) || '[]'));
-    _pendingNewAnime.forEach(a => dismissed.add(a.id));
-    localStorage.setItem(dismissKey, JSON.stringify([...dismissed]));
-  }
   _pendingNewAnime = [];
 }
 
