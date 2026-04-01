@@ -1825,6 +1825,7 @@
         <button class="util-btn" onclick="showHelp()">❓ Help</button>
         <button class="util-btn" onclick="exportRankings()">📋 Text</button>
         <button class="util-btn" onclick="exportCSV()">⬇ CSV</button>
+        <button class="util-btn-anilist" id="reseed-anilist-btn" onclick="reseedFromAniList()">🌡 Re-seed scores</button>
         <button class="util-btn-anilist" id="sync-anilist-btn" onclick="openSyncModal()">🔵 Sync to AniList</button>
         <button class="util-btn util-danger" onclick="resetAll()">🔄 Start Over</button>
       </div>
@@ -2242,9 +2243,11 @@ function _updateAuthUI() {
     if (inp && !inp.value) inp.value = authUser.name;
   }
 
-  // Show/hide the sync button
-  const syncBtn = document.getElementById('sync-anilist-btn');
-  if (syncBtn) syncBtn.style.display = loggedIn ? '' : 'none';
+  // Show/hide the AniList-only buttons
+  ['sync-anilist-btn', 'reseed-anilist-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = loggedIn ? 'inline-block' : 'none';
+  });
 }
 
 function startOAuthFlow() {
@@ -4976,6 +4979,61 @@ function _scoreClass(s) {
 
 let _syncQueue = []; // [{mediaId, title, cover, apiScore, score10}]
 
+async function reseedFromAniList() {
+  if (!authToken || !authUser?.name) return;
+  const ok = confirm(
+    'Re-seed ELO from your AniList scores?\n\n' +
+    'Each anime\'s ELO will be reset to match your AniList score (10→1500, 7→1200, 4→900). ' +
+    'Unscored anime stay at 1200. Battle history will be cleared.\n\n' +
+    'Continue?'
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('reseed-anilist-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching…'; }
+
+  try {
+    const fresh = await fetchAllAnime(authUser.name, true);
+    const freshMap = new Map(fresh.map(a => [a.id, a]));
+
+    animeList.forEach(a => {
+      const f = freshMap.get(a.id);
+      if (f) {
+        a.anilistScore = f.anilistScore;
+        a.elo          = f.elo; // already seeded via scoreToElo in fetchAllAnime
+        a.eloHistory   = [f.elo];
+        a.wins         = 0;
+        a.losses       = 0;
+        a.comparisons  = 0;
+      }
+    });
+
+    battleCount   = 0;
+    battleHistory = [];
+    currentA      = null;
+    currentB      = null;
+    saveState();
+    renderResults();
+
+    if (btn) { btn.disabled = false; btn.textContent = '🌡 Re-seed scores'; }
+    // Brief confirmation via the new-anime banner slot
+    const banner = document.getElementById('new-anime-banner');
+    const msg    = document.getElementById('new-anime-msg');
+    if (banner && msg) {
+      banner.querySelectorAll('button').forEach(b => b.style.display = 'none');
+      msg.textContent = '✅ ELO re-seeded from your AniList scores!';
+      banner.style.display = 'flex';
+      setTimeout(() => {
+        banner.style.display = 'none';
+        banner.querySelectorAll('button').forEach(b => b.style.display = '');
+      }, 3000);
+    }
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '🌡 Re-seed scores'; }
+    alert('Could not fetch scores: ' + err.message);
+  }
+}
+
 function openSyncModal() {
   if (!authToken) return;
   const format = authUser?.scoreFormat || 'POINT_10';
@@ -5080,8 +5138,11 @@ async function executeSyncToAniList() {
 
 // Show/hide the sync button based on auth state
 function _refreshSyncButton() {
-  const btn = document.getElementById('sync-anilist-btn');
-  if (btn) btn.style.display = (authToken && authUser) ? '' : 'none';
+  const loggedIn = !!(authToken && authUser);
+  ['sync-anilist-btn', 'reseed-anilist-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = loggedIn ? 'inline-block' : 'none';
+  });
 }
 
 // Auto-load if username is pre-filled, or show shared view if URL has a share hash
