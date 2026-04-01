@@ -2446,7 +2446,7 @@ function addNewAnime() {
   _pendingNewAnime = [];
   // Refresh whichever screen is currently visible
   if (document.getElementById('results-screen').style.display !== 'none') {
-    renderResults();
+    renderRankingList();
   } else if (document.getElementById('battle-screen').style.display !== 'none') {
     renderBattle(); // bring new anime into the battle pool
   }
@@ -5013,7 +5013,7 @@ async function reseedFromAniList() {
     currentA      = null;
     currentB      = null;
     saveState();
-    renderResults();
+    renderRankingList();
 
     if (btn) { btn.disabled = false; btn.textContent = '🌡 Re-seed scores'; }
     // Brief confirmation via the new-anime banner slot
