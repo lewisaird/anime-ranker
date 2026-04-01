@@ -2456,6 +2456,20 @@ function dismissNewAnimeBanner() {
   _pendingNewAnime = [];
 }
 
+let _newAnimePollingStarted = false;
+function _startNewAnimePolling(username) {
+  if (_newAnimePollingStarted) return;
+  _newAnimePollingStarted = true;
+  // Re-check when the user comes back to the tab (e.g. after adding on AniList)
+  window.addEventListener('focus', () => {
+    if (authUser?.name && saveKey) checkForNewAnime(authUser.name);
+  });
+  // Also poll every 5 minutes as a fallback
+  setInterval(() => {
+    if (authUser?.name && saveKey) checkForNewAnime(authUser.name);
+  }, 5 * 60 * 1000);
+}
+
 // ─── STORAGE ────────────────────────────────────────────────────────────────
 function saveState() {
   if (!saveKey) return;
@@ -3654,8 +3668,13 @@ async function startLoading(overrideUsername, overrideSeed) {
     // Silently refresh titles + descriptions in background for old saves
     const needsMeta = animeList.some(a => a.titleRo === a.titleEn && a.titleRo === a.title);
     if (needsMeta) refreshAnimeMetadata();
-    // Background check for new anime added to AniList since last session
-    if (authUser?.name) setTimeout(() => checkForNewAnime(username), 1500);
+    // Background check for new anime added to AniList since last session.
+    // Also re-checks on window focus and every 5 min so anime added while the
+    // page is open (e.g. user switches to AniList, adds something, comes back) is caught.
+    if (authUser?.name) {
+      setTimeout(() => checkForNewAnime(username), 1500);
+      _startNewAnimePolling(username);
+    }
     return;
   }
 
