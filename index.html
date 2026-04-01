@@ -1218,6 +1218,49 @@
     }
     #settle-banner.active { display: flex; }
 
+    /* NEW ANIME TOAST BANNER */
+    #new-anime-banner {
+      display: none;
+      position: fixed;
+      top: 68px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 150;
+      background: #161d2b;
+      border: 1px solid #58a6ff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      color: #e6edf3;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.55);
+      max-width: 520px;
+      width: calc(100% - 32px);
+    }
+    #new-anime-msg { flex: 1; }
+    #new-anime-banner .nb-add {
+      background: none;
+      border: 1px solid #58a6ff;
+      color: #58a6ff;
+      padding: 4px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+    #new-anime-banner .nb-add:hover { background: #1a3050; }
+    #new-anime-banner .nb-dismiss {
+      background: none;
+      border: 1px solid #484f58;
+      color: #8b949e;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.78rem;
+    }
+    #new-anime-banner .nb-dismiss:hover { border-color: #f85149; color: #f85149; }
+
     /* TOWER OF POWER */
     #tower-modal {
       display: none;
@@ -1585,6 +1628,13 @@
     <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄ Change User</button>
   </div>
 </header>
+
+<!-- NEW ANIME TOAST -->
+<div id="new-anime-banner">
+  <span id="new-anime-msg"></span>
+  <button class="nb-add" onclick="addNewAnime()">Add to ranking</button>
+  <button class="nb-dismiss" onclick="dismissNewAnimeBanner()" title="Dismiss">✕</button>
+</div>
 
 <div id="main">
 
@@ -2125,6 +2175,7 @@ const TOWER_ROUNDS  = 10;
 // ─── ANILIST AUTH ────────────────────────────────────────────────────────────
 let authToken = null;
 let authUser  = null; // { id, name, avatar }
+let _pendingNewAnime = []; // entries from AniList not yet in local ranking
 
 function anilistHeaders() {
   const h = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
@@ -2357,6 +2408,51 @@ async function fetchAllAnime(username, seedFromScores = false) {
       anilistScore: e.score || 0,
     };
   });
+}
+
+// ─── NEW ANIME DETECTION ─────────────────────────────────────────────────────
+// Quietly fetches the user's current AniList and surfaces a banner if there are
+// entries not present in the local ranking (and not previously dismissed).
+async function checkForNewAnime(username) {
+  if (!authUser?.name) return;
+  try {
+    const fresh = await fetchAllAnime(username, true); // seed=true so new entries get score-based ELO
+    const existingIds = new Set(animeList.map(a => a.id));
+    const dismissKey  = 'anime_elo_dismissed_new_' + username.toLowerCase();
+    const dismissed   = new Set(JSON.parse(localStorage.getItem(dismissKey) || '[]'));
+    _pendingNewAnime  = fresh.filter(a => !existingIds.has(a.id) && !dismissed.has(a.id));
+    if (_pendingNewAnime.length > 0) {
+      const count = _pendingNewAnime.length;
+      document.getElementById('new-anime-msg').textContent =
+        `🆕 ${count} new anime on your AniList — add to ranking?`;
+      document.getElementById('new-anime-banner').style.display = 'flex';
+    }
+  } catch (e) { /* silent background failure */ }
+}
+
+function addNewAnime() {
+  if (!_pendingNewAnime.length) return;
+  animeList.push(..._pendingNewAnime);
+  saveState();
+  const count = _pendingNewAnime.length;
+  const msg   = document.getElementById('new-anime-msg');
+  msg.textContent = `✅ Added ${count} anime to your ranking!`;
+  setTimeout(() => { document.getElementById('new-anime-banner').style.display = 'none'; }, 2500);
+  _pendingNewAnime = [];
+  // Refresh rankings if they're currently visible
+  if (document.getElementById('results-screen').style.display !== 'none') renderResults();
+}
+
+function dismissNewAnimeBanner() {
+  document.getElementById('new-anime-banner').style.display = 'none';
+  // Persist dismissed IDs so the same entries don't prompt again
+  if (authUser?.name && _pendingNewAnime.length) {
+    const dismissKey = 'anime_elo_dismissed_new_' + authUser.name.toLowerCase();
+    const dismissed  = new Set(JSON.parse(localStorage.getItem(dismissKey) || '[]'));
+    _pendingNewAnime.forEach(a => dismissed.add(a.id));
+    localStorage.setItem(dismissKey, JSON.stringify([...dismissed]));
+  }
+  _pendingNewAnime = [];
 }
 
 // ─── STORAGE ────────────────────────────────────────────────────────────────
@@ -3557,6 +3653,8 @@ async function startLoading(overrideUsername, overrideSeed) {
     // Silently refresh titles + descriptions in background for old saves
     const needsMeta = animeList.some(a => a.titleRo === a.titleEn && a.titleRo === a.title);
     if (needsMeta) refreshAnimeMetadata();
+    // Background check for new anime added to AniList since last session
+    if (authUser?.name) setTimeout(() => checkForNewAnime(username), 1500);
     return;
   }
 
