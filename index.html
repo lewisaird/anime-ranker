@@ -1891,8 +1891,6 @@
         <button class="format-btn active" data-format="ONA"      onclick="toggleFormat('ONA')">ONA</button>
         <button class="format-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT')">Short</button>
         <button class="format-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL')">Special</button>
-        <span class="format-row-label" style="margin-left:8px">Status:</span>
-        <button class="format-btn active" id="watching-toggle-btn" onclick="toggleWatching()">👁 Watching</button>
       </div>
       <div class="format-row" id="ep-filter-row">
         <span class="format-row-label">Length:</span>
@@ -1903,10 +1901,11 @@
         <button class="format-btn active" data-ep="?"    onclick="toggleEpRange('?')">Unknown</button>
       </div>
       <div class="list-controls">
-        <button class="sort-btn active" data-sort="elo"     onclick="setSort('elo')">ELO</button>
-        <button class="sort-btn"        data-sort="winrate" onclick="setSort('winrate')">Win Rate</button>
-        <button class="sort-btn"        data-sort="battles" onclick="setSort('battles')">Battles</button>
-        <button class="sort-btn"        data-sort="score"   onclick="setSort('score')">AniList Avg</button>
+        <button class="sort-btn active" data-sort="elo"        data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
+        <button class="sort-btn"        data-sort="winrate"   data-label="Win Rate"   onclick="setSort('winrate')">Win Rate</button>
+        <button class="sort-btn"        data-sort="battles"   data-label="Battles"    onclick="setSort('battles')">Battles</button>
+        <button class="sort-btn"        data-sort="score"     data-label="AniList Avg" onclick="setSort('score')">AniList Avg</button>
+        <button class="sort-btn"        data-sort="confidence" data-label="Confidence" onclick="setSort('confidence')">Confidence</button>
         <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">🌫 Fuzzy only</button>
         <div id="view-toggle-wrap">
           <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view">⊞</button>
@@ -2202,9 +2201,9 @@ const MAX_HISTORY   = 200;
 let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
 let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.g. 'OVA', 'ONA')
 let hiddenEpRanges  = new Set(); // episode-length buckets hidden from battles AND rankings
-let hideWatching    = false;     // when true, CURRENT/REPEATING anime are hidden from battles + rankings
 let preferRomaji    = false;     // title language preference
 let currentSort     = 'elo';     // active sort in rankings view
+let sortAsc         = false;     // false = descending (default), true = ascending
 let _renderGen      = 0;         // cancel in-flight chunked grid renders
 let _vsTableData    = [];        // pre-computed rows for table virtual scroll
 let _vsScrollRaf    = null;      // rAF handle for table scroll throttling
@@ -2257,6 +2256,25 @@ function clearAuth() {
   authUser  = null;
   localStorage.removeItem('anime_elo_auth');
   _updateAuthUI();
+
+  // Reset in-memory session state (saved rankings in localStorage are preserved)
+  animeList     = [];
+  battleCount   = 0;
+  currentA      = null;
+  currentB      = null;
+  battleHistory = [];
+  excludedIds   = new Set();
+  saveKey       = '';
+  _pendingNewAnime = [];
+
+  // Dismiss any open banners/modals and return to the username screen
+  document.getElementById('new-anime-banner').style.display = 'none';
+  hide('battle-screen');
+  hide('results-screen');
+  document.getElementById('change-user-btn').style.display = 'none';
+  document.getElementById('progress-info').textContent = '';
+  document.getElementById('username-input').value = '';
+  showFlex('username-screen');
 }
 
 function _updateAuthUI() {
@@ -2474,8 +2492,29 @@ async function checkForNewAnime(username) {
   if (!authUser?.name) return;
   try {
     const fresh = await fetchAllAnime(username, true); // seed=true so new entries get score-based ELO
+    const freshMap    = new Map(fresh.map(a => [a.id, a]));
     const existingIds = new Set(animeList.map(a => a.id));
-    _pendingNewAnime  = fresh.filter(a => !existingIds.has(a.id));
+
+    // Patch status / progress / episodes onto existing entries (user-list fields
+    // that aren't available from the general metadata refresh query)
+    let patched = false;
+    animeList.forEach(a => {
+      const f = freshMap.get(a.id);
+      if (!f) return;
+      if (a.status   !== f.status)   { a.status   = f.status;   patched = true; }
+      if (a.progress !== f.progress) { a.progress = f.progress; patched = true; }
+      if (!a.episodes && f.episodes) { a.episodes = f.episodes; patched = true; }
+    });
+    if (patched) {
+      saveState();
+      // Re-render the current battle pair so badges appear immediately
+      if (currentA !== null && currentB !== null &&
+          document.getElementById('battle-screen').style.display !== 'none') {
+        renderPair(currentA, currentB);
+      }
+    }
+
+    _pendingNewAnime = fresh.filter(a => !existingIds.has(a.id));
     if (_pendingNewAnime.length > 0) {
       const count = _pendingNewAnime.length;
       document.getElementById('new-anime-msg').textContent =
@@ -2535,8 +2574,8 @@ function saveState() {
     excludedIds: [...excludedIds],
     hiddenFormats: [...hiddenFormats],
     hiddenEpRanges: [...hiddenEpRanges],
-    hideWatching,
     rankingView,
+    currentSort, sortAsc,
   }));
 }
 
@@ -2565,6 +2604,8 @@ async function refreshAnimeMetadata() {
               description(asHtml: false)
               format
               averageScore
+              episodes
+              seasonYear
             }
           }
         }`;
@@ -2586,8 +2627,10 @@ async function refreshAnimeMetadata() {
       a.titleEn = m.title.english || m.title.romaji || a.title;
       a.titleRo = m.title.romaji  || m.title.english || a.title;
       a.description = stripHtml(m.description).slice(0, 500);
-      if (m.format) a.format = m.format;
+      if (m.format)       a.format     = m.format;
       if (m.averageScore) a.globalScore = m.averageScore;
+      if (m.episodes)     a.episodes   = m.episodes;
+      if (m.seasonYear)   a.seasonYear = m.seasonYear;
     });
 
     saveState();
@@ -2624,8 +2667,9 @@ function loadState(username, source = 'anilist') {
     excludedIds   = new Set(s.excludedIds ?? []);
     hiddenFormats  = new Set(s.hiddenFormats  ?? []);
     hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
-    hideWatching   = s.hideWatching ?? false;
     rankingView    = s.rankingView ?? 'grid';
+    currentSort    = s.currentSort  ?? 'elo';
+    sortAsc        = s.sortAsc      ?? false;
     // Migrate old saves that predate titleEn/titleRo/description/format fields
     animeList.forEach(a => {
       if (!a.titleEn) a.titleEn = a.title || '';
@@ -2897,16 +2941,18 @@ function skipBattle() {
 
 // ─── RESULTS ────────────────────────────────────────────────────────────────
 function getSortedList() {
+  const d = sortAsc ? 1 : -1; // 1 = ascending, -1 = descending
   switch (currentSort) {
     case 'winrate':
       return [...animeList].sort((a, b) => {
         const ra = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
         const rb = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
-        return rb - ra;
+        return d * (ra - rb);
       });
-    case 'battles':  return [...animeList].sort((a, b) => b.comparisons - a.comparisons);
-    case 'score':    return [...animeList].sort((a, b) => (b.globalScore || 0) - (a.globalScore || 0));
-    default:         return [...animeList].sort((a, b) => b.elo - a.elo);
+    case 'battles':    return [...animeList].sort((a, b) => d * (a.comparisons - b.comparisons));
+    case 'score':      return [...animeList].sort((a, b) => d * ((a.globalScore || 0) - (b.globalScore || 0)));
+    case 'confidence': return [...animeList].sort((a, b) => d * (a.comparisons - b.comparisons));
+    default:           return [...animeList].sort((a, b) => d * (a.elo - b.elo));
   }
 }
 
@@ -2985,9 +3031,9 @@ function showResults() {
 
   // Reset search, sort, fuzzy filter — but preserve the chosen view
   document.getElementById('search-input').value = '';
-  currentSort   = 'elo';
+  currentSort   = ''; // ensure setSort treats 'elo' as a fresh selection
   showFuzzyOnly = false;
-  document.querySelectorAll('.sort-btn').forEach(b => b.classList.toggle('active', b.dataset.sort === 'elo'));
+  setSort('elo');
   const ffBtn = document.getElementById('fuzzy-filter-btn');
   if (ffBtn) ffBtn.classList.remove('active');
   // Sync view buttons and panels to current rankingView
@@ -3001,8 +3047,13 @@ function showResults() {
 
   syncFormatButtons();
   syncEpRangeButtons();
-  const wBtn = document.getElementById('watching-toggle-btn');
-  if (wBtn) { wBtn.classList.toggle('active', !hideWatching); wBtn.classList.toggle('hidden-fmt', hideWatching); }
+  // Sync sort buttons to restored sort state
+  document.querySelectorAll('.sort-btn').forEach(b => {
+    const active = b.dataset.sort === currentSort;
+    b.classList.toggle('active', active);
+    const label = b.dataset.label || b.textContent.replace(/ [↑↓]$/, '');
+    b.textContent = active ? `${label} ${sortAsc ? '↑' : '↓'}` : label;
+  });
   renderRankingList();
   show('results-screen');
   switchResultsTab('rankings');
@@ -3754,7 +3805,8 @@ async function startLoading(overrideUsername, overrideSeed) {
     maybeShowKbTip();
     if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
     // Silently refresh titles + descriptions in background for old saves
-    const needsMeta = animeList.some(a => a.titleRo === a.titleEn && a.titleRo === a.title);
+    // Refresh if titles need migrating OR if any anime is missing episode data
+    const needsMeta = animeList.some(a => (a.titleRo === a.titleEn && a.titleRo === a.title) || a.episodes === undefined);
     if (needsMeta) refreshAnimeMetadata();
     // Background check for new anime added to AniList since last session.
     // Also re-checks on window focus and every 5 min so anime added while the
@@ -4295,8 +4347,7 @@ function filterRankings() {
     const matchFuzzy   = !showFuzzyOnly || isFuzzy;
     const matchFormat  = !hiddenFormats.has(fmt);
     const matchEpRange = !hiddenEpRanges.has(epR);
-    const matchStatus  = !hideWatching || (status !== 'CURRENT' && status !== 'REPEATING');
-    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange && matchStatus) ? '' : 'none';
+    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange) ? '' : 'none';
   });
   // Also re-render table with updated filters when in list view
   if (rankingView === 'list') renderRankingTable();
@@ -4603,12 +4654,24 @@ function toggleLanguage() {
 }
 
 // ─── SORT & FUZZY FILTER ─────────────────────────────────────────────────────
+// Default ascending direction per sort type (overrides global false default)
+const _sortDefaultAsc = { confidence: true };
+
 function setSort(type) {
-  currentSort = type;
-  document.querySelectorAll('.sort-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.sort === type));
+  if (currentSort === type) {
+    sortAsc = !sortAsc; // re-clicking the active sort toggles direction
+  } else {
+    currentSort = type;
+    sortAsc = _sortDefaultAsc[type] ?? false;
+  }
+  document.querySelectorAll('.sort-btn').forEach(b => {
+    const active = b.dataset.sort === currentSort;
+    b.classList.toggle('active', active);
+    const label = b.dataset.label || b.textContent.replace(/ [↑↓]$/, '');
+    b.textContent = active ? `${label} ${sortAsc ? '↑' : '↓'}` : label;
+  });
   renderRankingList();
-  filterRankings(); // reapply search + fuzzy filter
+  filterRankings();
 }
 
 function toggleFuzzyFilter() {
@@ -4656,7 +4719,6 @@ function epRange(episodes) {
 function isFilterHidden(a) {
   if (hiddenFormats.has(a.format || 'TV')) return true;
   if (hiddenEpRanges.has(epRange(a.episodes))) return true;
-  if (hideWatching && (a.status === 'CURRENT' || a.status === 'REPEATING')) return true;
   return false;
 }
 
@@ -4678,18 +4740,6 @@ function syncEpRangeButtons() {
     b.classList.toggle('active',     !isHidden);
     b.classList.toggle('hidden-fmt',  isHidden);
   });
-}
-
-function toggleWatching() {
-  hideWatching = !hideWatching;
-  const btn = document.getElementById('watching-toggle-btn');
-  if (btn) {
-    btn.classList.toggle('active',     !hideWatching);
-    btn.classList.toggle('hidden-fmt',  hideWatching);
-  }
-  saveState();
-  renderRankingList();
-  filterRankings();
 }
 
 // ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
