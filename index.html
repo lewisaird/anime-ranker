@@ -570,6 +570,41 @@
       color: #8b949e;
     }
 
+    /* EPISODE + STATUS META */
+    .ep-meta {
+      font-size: 0.72rem;
+      color: #8b949e;
+      margin-top: 2px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      justify-content: center;
+    }
+    .ep-badge {
+      font-size: 0.68rem;
+      color: #8b949e;
+      background: #21262d;
+      border-radius: 10px;
+      padding: 1px 6px;
+    }
+    .watching-badge {
+      font-size: 0.68rem;
+      color: #58a6ff;
+      background: #1a2d45;
+      border: 1px solid #1f4880;
+      border-radius: 10px;
+      padding: 1px 6px;
+    }
+    .rewatching-badge {
+      font-size: 0.68rem;
+      color: #a371f7;
+      background: #1e1a35;
+      border: 1px solid #3d2d6e;
+      border-radius: 10px;
+      padding: 1px 6px;
+    }
+
     /* BATTLE ACTIONS ROW */
     .battle-actions {
       display: flex;
@@ -1775,6 +1810,7 @@
         <div class="anime-card-body">
           <div class="title" id="title-a"></div>
           <div class="elo-badge" id="elo-a"></div>
+          <div class="ep-meta" id="ep-a"></div>
           <div class="card-actions">
             <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">🌫 Can't remember</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,0)" title="About this show">ℹ About</button>
@@ -1790,6 +1826,7 @@
         <div class="anime-card-body">
           <div class="title" id="title-b"></div>
           <div class="elo-badge" id="elo-b"></div>
+          <div class="ep-meta" id="ep-b"></div>
           <div class="card-actions">
             <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">🌫 Can't remember</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,1)" title="About this show">ℹ About</button>
@@ -1854,6 +1891,16 @@
         <button class="format-btn active" data-format="ONA"      onclick="toggleFormat('ONA')">ONA</button>
         <button class="format-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT')">Short</button>
         <button class="format-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL')">Special</button>
+        <span class="format-row-label" style="margin-left:8px">Status:</span>
+        <button class="format-btn active" id="watching-toggle-btn" onclick="toggleWatching()">👁 Watching</button>
+      </div>
+      <div class="format-row" id="ep-filter-row">
+        <span class="format-row-label">Length:</span>
+        <button class="format-btn active" data-ep="≤12"  onclick="toggleEpRange('≤12')">≤12 ep</button>
+        <button class="format-btn active" data-ep="13–24" onclick="toggleEpRange('13–24')">13–24 ep</button>
+        <button class="format-btn active" data-ep="25–70" onclick="toggleEpRange('25–70')">25–70 ep</button>
+        <button class="format-btn active" data-ep="70+"  onclick="toggleEpRange('70+')">70+ ep</button>
+        <button class="format-btn active" data-ep="?"    onclick="toggleEpRange('?')">Unknown</button>
       </div>
       <div class="list-controls">
         <button class="sort-btn active" data-sort="elo"     onclick="setSort('elo')">ELO</button>
@@ -2154,6 +2201,8 @@ let battleHistory   = [];    // [{winnerTitle, loserTitle, winnerEloAfter, loser
 const MAX_HISTORY   = 200;
 let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
 let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.g. 'OVA', 'ONA')
+let hiddenEpRanges  = new Set(); // episode-length buckets hidden from battles AND rankings
+let hideWatching    = false;     // when true, CURRENT/REPEATING anime are hidden from battles + rankings
 let preferRomaji    = false;     // title language preference
 let currentSort     = 'elo';     // active sort in rankings view
 let _renderGen      = 0;         // cancel in-flight chunked grid renders
@@ -2356,6 +2405,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
           entries {
             score
             status
+            progress
             media {
               id
               title { romaji english }
@@ -2365,6 +2415,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
               averageScore
               genres
               seasonYear
+              episodes
             }
           }
         }
@@ -2404,6 +2455,9 @@ async function fetchAllAnime(username, seedFromScores = false) {
       globalScore: e.media.averageScore || 0,
       genres: e.media.genres || [],
       seasonYear: e.media.seasonYear || null,
+      episodes:   e.media.episodes   || null,
+      status:     e.status,
+      progress:   e.progress         || 0,
       elo: startElo,
       wins: 0, losses: 0, comparisons: 0,
       fuzzy: false,
@@ -2480,6 +2534,8 @@ function saveState() {
     animeList, battleCount, currentA, currentB, battleHistory,
     excludedIds: [...excludedIds],
     hiddenFormats: [...hiddenFormats],
+    hiddenEpRanges: [...hiddenEpRanges],
+    hideWatching,
     rankingView,
   }));
 }
@@ -2566,8 +2622,10 @@ function loadState(username, source = 'anilist') {
     currentB      = s.currentB      ?? null;
     battleHistory = s.battleHistory ?? [];
     excludedIds   = new Set(s.excludedIds ?? []);
-    hiddenFormats = new Set(s.hiddenFormats ?? []);
-    rankingView   = s.rankingView ?? 'grid';
+    hiddenFormats  = new Set(s.hiddenFormats  ?? []);
+    hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
+    hideWatching   = s.hideWatching ?? false;
+    rankingView    = s.rankingView ?? 'grid';
     // Migrate old saves that predate titleEn/titleRo/description/format fields
     animeList.forEach(a => {
       if (!a.titleEn) a.titleEn = a.title || '';
@@ -2622,7 +2680,7 @@ function pickOpponents() {
 
   // weight: 0 for excluded, lower for fuzzy, higher for fewer comparisons
   const weights = animeList.map(a => {
-    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return 0;
+    if (excludedIds.has(a.id) || isFilterHidden(a)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
@@ -2698,6 +2756,23 @@ function renderPair(ia, ib) {
   const fuzzyBtnB = document.getElementById('fuzzy-b');
   fuzzyBtnB.classList.toggle('active', !!b.fuzzy);
   fuzzyBtnB.textContent = b.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+
+  // Episode count + watch status meta
+  function buildEpMeta(anime) {
+    const parts = [];
+    if (anime.episodes) parts.push(`<span class="ep-badge">${anime.episodes} ep</span>`);
+    if (anime.status === 'CURRENT') {
+      const pct = anime.episodes ? Math.round((anime.progress || 0) / anime.episodes * 100) : null;
+      parts.push(`<span class="watching-badge">👁 ${pct !== null ? pct + '% watched' : 'Watching'}</span>`);
+    } else if (anime.status === 'REPEATING') {
+      parts.push(`<span class="rewatching-badge">🔁 Rewatching</span>`);
+    }
+    return parts.join('');
+  }
+  const epMetaA = document.getElementById('ep-a');
+  const epMetaB = document.getElementById('ep-b');
+  if (epMetaA) epMetaA.innerHTML = buildEpMeta(a);
+  if (epMetaB) epMetaB.innerHTML = buildEpMeta(b);
 
   // Synopsis panels — reset, scroll back to top, and pre-fill content
   const synA = document.getElementById('synopsis-a');
@@ -2840,7 +2915,9 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const eloRank = eloRankMap.get(anime.id) ?? i;
   const card = document.createElement('div');
   card.className = 'rank-card';
-  card.dataset.format = anime.format || 'TV';
+  card.dataset.format  = anime.format  || 'TV';
+  card.dataset.epRange = epRange(anime.episodes);
+  card.dataset.status  = anime.status  || 'COMPLETED';
   card.style.cursor = 'pointer';
   card.title = 'Click for details';
   card.addEventListener('click', () => showAnimeDetail(anime.id));
@@ -2853,18 +2930,23 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     : currentSort === 'battles' ? `<div class="rank-elo">${anime.comparisons} battles</div>`
     : currentSort === 'score'   ? `<div class="rank-elo">${anime.globalScore ? anime.globalScore+'%' : 'Unscored'}</div>`
     : `<div class="rank-elo">ELO ${anime.elo}</div>`;
+  const epBadge      = anime.episodes ? `<span class="ep-badge">${anime.episodes} ep</span>` : '';
+  const statusBadge  = anime.status === 'CURRENT'   ? '<span class="watching-badge">👁 Watching</span>'
+                     : anime.status === 'REPEATING' ? '<span class="rewatching-badge">🔁 Rewatching</span>'
+                     : '';
   card.innerHTML = `
     <span class="rank-number ${numClass}">#${displayRank}</span>
     <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
     <img src="${anime.cover}" alt="${displayTitle(anime)}" loading="lazy" />
     <div class="rank-title">${displayTitle(anime)}</div>
     ${sortExtra}
+    ${epBadge}${statusBadge}
     <span class="confidence ${conf.cls}" title="${conf.title}">${conf.dot} ${conf.label}</span>
     ${anime.fuzzy ? '<span class="fuzzy-tag" title="Can&#39;t Remember \u2014 you selected this option during a battle. This anime appears less often until you&#39;ve refreshed your memory of it.">&#x1F32B; Fuzzy</span>' : ''}
     ${streakBadge(anime)}
   `;
   if (showFuzzyOnly && !anime.fuzzy) card.style.display = 'none';
-  if (hiddenFormats.has(anime.format))  card.style.display = 'none';
+  if (isFilterHidden(anime)) card.style.display = 'none';
   return card;
 }
 
@@ -2918,6 +3000,9 @@ function showResults() {
     `After ${battleCount} battles · Rankings update as you keep going`;
 
   syncFormatButtons();
+  syncEpRangeButtons();
+  const wBtn = document.getElementById('watching-toggle-btn');
+  if (wBtn) { wBtn.classList.toggle('active', !hideWatching); wBtn.classList.toggle('hidden-fmt', hideWatching); }
   renderRankingList();
   show('results-screen');
   switchResultsTab('rankings');
@@ -3815,7 +3900,7 @@ async function startGuestMode() {
 function pickOneOpponent(keepIdx) {
   const n = animeList.length;
   const weights = animeList.map(a => {
-    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return 0;
+    if (excludedIds.has(a.id) || isFilterHidden(a)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
@@ -4203,11 +4288,15 @@ function filterRankings() {
   document.querySelectorAll('#ranking-list .rank-card').forEach(card => {
     const title      = card.querySelector('.rank-title').textContent.toLowerCase();
     const isFuzzy    = card.querySelector('.fuzzy-tag') !== null;
-    const fmt        = card.dataset.format || '';
+    const fmt        = card.dataset.format  || 'TV';
+    const epR        = card.dataset.epRange || '?';
+    const status     = card.dataset.status  || 'COMPLETED';
     const matchSearch  = !q || title.includes(q);
     const matchFuzzy   = !showFuzzyOnly || isFuzzy;
     const matchFormat  = !hiddenFormats.has(fmt);
-    card.style.display = (matchSearch && matchFuzzy && matchFormat) ? '' : 'none';
+    const matchEpRange = !hiddenEpRanges.has(epR);
+    const matchStatus  = !hideWatching || (status !== 'CURRENT' && status !== 'REPEATING');
+    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange && matchStatus) ? '' : 'none';
   });
   // Also re-render table with updated filters when in list view
   if (rankingView === 'list') renderRankingTable();
@@ -4554,6 +4643,55 @@ function syncFormatButtons() {
   });
 }
 
+// Returns one of '≤12' | '13–24' | '25–70' | '70+' | '?' based on episode count
+function epRange(episodes) {
+  if (!episodes) return '?';
+  if (episodes <= 12) return '≤12';
+  if (episodes <= 24) return '13–24';
+  if (episodes <= 70) return '25–70';
+  return '70+';
+}
+
+// Single source of truth: is this anime hidden by any active filter?
+function isFilterHidden(a) {
+  if (hiddenFormats.has(a.format || 'TV')) return true;
+  if (hiddenEpRanges.has(epRange(a.episodes))) return true;
+  if (hideWatching && (a.status === 'CURRENT' || a.status === 'REPEATING')) return true;
+  return false;
+}
+
+function toggleEpRange(range) {
+  if (hiddenEpRanges.has(range)) {
+    hiddenEpRanges.delete(range);
+  } else {
+    hiddenEpRanges.add(range);
+  }
+  syncEpRangeButtons();
+  saveState();
+  renderRankingList();
+  filterRankings();
+}
+
+function syncEpRangeButtons() {
+  document.querySelectorAll('[data-ep]').forEach(b => {
+    const isHidden = hiddenEpRanges.has(b.dataset.ep);
+    b.classList.toggle('active',     !isHidden);
+    b.classList.toggle('hidden-fmt',  isHidden);
+  });
+}
+
+function toggleWatching() {
+  hideWatching = !hideWatching;
+  const btn = document.getElementById('watching-toggle-btn');
+  if (btn) {
+    btn.classList.toggle('active',     !hideWatching);
+    btn.classList.toggle('hidden-fmt',  hideWatching);
+  }
+  saveState();
+  renderRankingList();
+  filterRankings();
+}
+
 // ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
 function toggleDisagreements() { switchResultsTab('stats'); }
 
@@ -4639,7 +4777,7 @@ function pickSettlePair() {
     .map((a, i) => ({ i, a }))
     .filter(({ i, a }) =>
       !excludedIds.has(a.id) &&
-      !hiddenFormats.has(a.format) &&
+      !isFilterHidden(a) &&
       a.comparisons < 15
     );
 
@@ -4691,7 +4829,7 @@ function populateTowerList(q) {
     .map((a, i) => ({ i, a }))
     .filter(({ a }) =>
       !excludedIds.has(a.id) &&
-      !hiddenFormats.has(a.format) &&
+      !isFilterHidden(a) &&
       (!q || displayTitle(a).toLowerCase().includes(q))
     )
     .sort((x, y) => y.a.elo - x.a.elo);
@@ -4724,7 +4862,7 @@ function startTower(championIdx) {
     .filter(({ i, a }) =>
       i !== championIdx &&
       !excludedIds.has(a.id) &&
-      !hiddenFormats.has(a.format)
+      !isFilterHidden(a)
     )
     .sort((x, y) => y.a.elo - x.a.elo);
 
@@ -4860,7 +4998,7 @@ function renderRankingTable() {
     const title   = displayTitle(anime);
     const hidden  = (q && !title.toLowerCase().includes(q)) ||
                     (showFuzzyOnly && !anime.fuzzy) ||
-                    hiddenFormats.has(anime.format || 'TV');
+                    isFilterHidden(anime);
     if (hidden) return;
     const eloRank = eloRankMap.get(anime.id) ?? i;
     const tier    = getTier(eloRank, sorted.length);
@@ -5012,6 +5150,7 @@ async function reseedFromAniList() {
     battleHistory = [];
     currentA      = null;
     currentB      = null;
+    renderBattle(); // pick a fresh pair so the battle screen is ready
     saveState();
     renderRankingList();
 
