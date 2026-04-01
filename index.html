@@ -2253,6 +2253,10 @@ async function _fetchViewer() {
       };
       saveAuth();
       _updateAuthUI();
+      // Auto-load their list: restore saved session if one exists, otherwise
+      // fetch fresh from AniList with warm-start seeding from their scores
+      const hasSave = !!localStorage.getItem('anime_elo_' + viewer.name.toLowerCase());
+      startLoading(viewer.name, !hasSave);
     }
   }).catch(err => {
     console.error('AniList login failed:', err);
@@ -2261,12 +2265,21 @@ async function _fetchViewer() {
   });
 })();
 
-// On page load: restore token from localStorage
+// On page load: restore token from localStorage and auto-load list
 if (loadAuthFromStorage()) {
-  // Defer UI update until DOM is ready
-  document.addEventListener('DOMContentLoaded', _updateAuthUI);
-  // Also update immediately in case DOMContentLoaded already fired
-  if (document.readyState !== 'loading') _updateAuthUI();
+  const _onAuthReady = () => {
+    _updateAuthUI();
+    if (authUser?.name) {
+      // Restore saved session if one exists, otherwise load fresh with warm-start
+      const hasSave = !!localStorage.getItem('anime_elo_' + authUser.name.toLowerCase());
+      startLoading(authUser.name, !hasSave);
+    }
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _onAuthReady);
+  } else {
+    _onAuthReady();
+  }
 }
 
 // ─── ANILIST FETCH ──────────────────────────────────────────────────────────
@@ -3490,11 +3503,16 @@ async function runCompatibility() {
 function toggleCompatibility() { switchResultsTab('social'); }
 
 // ─── ENTRY POINT ─────────────────────────────────────────────────────────────
-async function startLoading() {
-  const username = document.getElementById('username-input').value.trim();
+async function startLoading(overrideUsername, overrideSeed) {
+  const username = (overrideUsername !== undefined
+    ? overrideUsername
+    : document.getElementById('username-input').value
+  ).trim();
   if (!username) return;
 
-  const seedFromScores = document.getElementById('warm-start-chk').checked;
+  const seedFromScores = overrideSeed !== undefined
+    ? overrideSeed
+    : document.getElementById('warm-start-chk').checked;
 
   // If warm start is requested and a save exists, ask whether to re-seed
   const existingSaveKey = 'anime_elo_' + username.toLowerCase();
