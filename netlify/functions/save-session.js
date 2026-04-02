@@ -1,72 +1,50 @@
-const https = require('https');
-const { getStore } = require('@netlify/blobs');
+import { getStore } from '@netlify/blobs';
 
-function anilistRequest(query, token) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ query });
-    const options = {
-      hostname: 'graphql.anilist.co',
-      path: '/',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Content-Length': Buffer.byteLength(body)
-      }
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error('Parse error: ' + data)); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+async function verifyAniListToken(token) {
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ query: '{ Viewer { id } }' }),
   });
+  const data = await res.json();
+  return data?.data?.Viewer?.id ?? null;
 }
 
-exports.handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+export default async (request, context) => {
+  if (request.method !== 'POST') {
+    return Response.json({ error: 'Method not allowed' }, { status: 405 });
   }
 
   let token, session;
   try {
-    ({ token, session } = JSON.parse(event.body));
-  } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
+    ({ token, session } = await request.json());
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
   if (!token || !session) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing token or session' }) };
+    return Response.json({ error: 'Missing token or session' }, { status: 400 });
   }
 
-  // Verify token by fetching viewer identity
   let userId;
   try {
-    const result = await anilistRequest('{ Viewer { id } }', token);
-    userId = result?.data?.Viewer?.id;
+    userId = await verifyAniListToken(token);
     if (!userId) throw new Error('No viewer id');
-  } catch (e) {
-    return { statusCode: 401, body: JSON.stringify({ error: 'Invalid AniList token' }) };
+  } catch {
+    return Response.json({ error: 'Invalid AniList token' }, { status: 401 });
   }
 
-  // Store session in Netlify Blobs
   try {
-    const store = getStore('anime-elo-sessions');
-    const key = `session_${userId}`;
+    const store = getStore({ name: 'anime-elo-sessions', context });
     const value = typeof session === 'string' ? session : JSON.stringify(session);
-    await store.set(key, value);
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ok: true, savedAt: JSON.parse(value).savedAt || null })
-    };
+    await store.set(`session_${userId}`, value);
+    const parsed = JSON.parse(value);
+    return Response.json({ ok: true, savedAt: parsed.savedAt ?? null });
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Blob store error: ' + e.message }) };
+    return Response.json({ error: 'Blob store error: ' + e.message }, { status: 500 });
   }
 };
