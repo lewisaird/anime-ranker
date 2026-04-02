@@ -1912,6 +1912,7 @@
         <button class="util-btn" onclick="showHelp()">❓ Help</button>
         <button class="util-btn" onclick="exportRankings()">📋 Text</button>
         <button class="util-btn" onclick="exportCSV()">⬇ CSV</button>
+        <button class="util-btn-anilist" id="cloud-load-btn" onclick="loadFromCloudManual()">☁️ Load latest</button>
         <button class="util-btn-anilist" id="reseed-anilist-btn" onclick="reseedFromAniList()">🌡 Re-seed scores</button>
         <button class="util-btn-anilist" id="sync-anilist-btn" onclick="openSyncModal()">🔵 Sync to AniList</button>
         <button class="util-btn util-danger" onclick="resetAll()">🔄 Start Over</button>
@@ -2368,7 +2369,7 @@ function _updateAuthUI() {
   }
 
   // Show/hide the AniList-only buttons
-  ['sync-anilist-btn', 'reseed-anilist-btn'].forEach(id => {
+  ['cloud-load-btn', 'sync-anilist-btn', 'reseed-anilist-btn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = loggedIn ? 'inline-block' : 'none';
   });
@@ -2715,6 +2716,50 @@ function applyCloudSession() {
   document.getElementById('cloud-sync-banner').style.display = 'none';
   _applySession(s);
   if (saveKey) localStorage.setItem(saveKey, JSON.stringify(s));
+}
+
+async function loadFromCloudManual() {
+  if (!authToken) return;
+  const btn = document.getElementById('cloud-load-btn');
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⏳ Checking…'; btn.disabled = true; }
+  try {
+    const res = await fetch('/.netlify/functions/load-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: authToken }),
+    });
+    if (!res.ok) throw new Error('Server error ' + res.status);
+    const { session: cloudSession } = await res.json();
+    if (!cloudSession) {
+      if (btn) { btn.textContent = '✓ No cloud save'; btn.disabled = false; }
+      setTimeout(() => { if (btn) btn.textContent = origText; }, 2500);
+      return;
+    }
+
+    const cloudSavedAt = cloudSession.savedAt || 0;
+    const localRaw = saveKey ? localStorage.getItem(saveKey) : null;
+    const localSavedAt = localRaw ? (JSON.parse(localRaw).savedAt || 0) : 0;
+
+    if (cloudSavedAt <= localSavedAt) {
+      if (btn) { btn.textContent = '✓ Already up to date'; btn.disabled = false; }
+      setTimeout(() => { if (btn) btn.textContent = origText; }, 2500);
+      return;
+    }
+
+    // Cloud is newer — update dedup tracker and surface the banner
+    _lastSeenCloudSavedAt = cloudSavedAt;
+    _pendingCloudSession = cloudSession;
+    const cloudDate = new Date(cloudSavedAt).toLocaleString();
+    const msg = document.getElementById('cloud-sync-msg');
+    const banner = document.getElementById('cloud-sync-banner');
+    if (msg) msg.textContent = `☁️ Newer ranking found from another device (${cloudDate})`;
+    if (banner) banner.style.display = 'flex';
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
+  } catch (e) {
+    if (btn) { btn.textContent = '✗ Sync failed'; btn.disabled = false; }
+    setTimeout(() => { if (btn) btn.textContent = origText; }, 2500);
+  }
 }
 
 function _applySession(s) {
@@ -5488,7 +5533,7 @@ async function executeSyncToAniList() {
 // Show/hide the sync button based on auth state
 function _refreshSyncButton() {
   const loggedIn = !!(authToken && authUser);
-  ['sync-anilist-btn', 'reseed-anilist-btn'].forEach(id => {
+  ['cloud-load-btn', 'sync-anilist-btn', 'reseed-anilist-btn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = loggedIn ? 'inline-block' : 'none';
   });
