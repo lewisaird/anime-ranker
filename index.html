@@ -2365,7 +2365,7 @@ async function _fetchViewer() {
   _exchangeCodeForToken(code).then(token => {
     authToken = token;
     return _fetchViewer();
-  }).then(viewer => {
+  }).then(async viewer => {
     if (viewer?.name) {
       authUser = {
         id: viewer.id, name: viewer.name,
@@ -2373,10 +2373,12 @@ async function _fetchViewer() {
         scoreFormat: viewer.mediaListOptions?.scoreFormat || 'POINT_10'
       };
       saveAuth();
+      saveKey = 'anime_elo_' + viewer.name.toLowerCase();
       _updateAuthUI();
-      // Auto-load their list: restore saved session if one exists, otherwise
-      // fetch fresh from AniList with warm-start seeding from their scores
-      const hasSave = !!localStorage.getItem('anime_elo_' + viewer.name.toLowerCase());
+      // Try loading cloud session first; if cloud is newer it will apply it.
+      // Then start loading (which will restore local or fetch fresh).
+      await loadFromCloud();
+      const hasSave = !!localStorage.getItem(saveKey);
       startLoading(viewer.name, !hasSave);
     }
   }).catch(err => {
@@ -2388,11 +2390,15 @@ async function _fetchViewer() {
 
 // On page load: restore token from localStorage and auto-load list
 if (loadAuthFromStorage()) {
-  const _onAuthReady = () => {
+  const _onAuthReady = async () => {
     _updateAuthUI();
     if (authUser?.name) {
-      // Restore saved session if one exists, otherwise load fresh with warm-start
-      const hasSave = !!localStorage.getItem('anime_elo_' + authUser.name.toLowerCase());
+      saveKey = 'anime_elo_' + authUser.name.toLowerCase();
+      // Check cloud for a newer session before restoring local
+      await loadFromCloud();
+      // Restore saved session if one exists (cloud load may have updated localStorage),
+      // otherwise fetch fresh from AniList with warm-start seeding
+      const hasSave = !!localStorage.getItem(saveKey);
       startLoading(authUser.name, !hasSave);
     }
   };
@@ -2576,7 +2582,74 @@ function saveState() {
     hiddenEpRanges: [...hiddenEpRanges],
     rankingView,
     currentSort, sortAsc,
+    savedAt: Date.now(),
   }));
+  saveToCloud();
+}
+
+// ─── CLOUD SYNC ──────────────────────────────────────────────────────────────
+let _cloudSaveTimer = null;
+function saveToCloud() {
+  if (!authToken) return;
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(async () => {
+    try {
+      const raw = localStorage.getItem(saveKey);
+      if (!raw) return;
+      await fetch('/.netlify/functions/save-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: authToken, session: raw }),
+      });
+    } catch (e) { /* silent — cloud sync is best-effort */ }
+  }, 3000);
+}
+
+async function loadFromCloud() {
+  if (!authToken) return;
+  try {
+    const res = await fetch('/.netlify/functions/load-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: authToken }),
+    });
+    if (!res.ok) return;
+    const { session: cloudSession } = await res.json();
+    if (!cloudSession) return;
+
+    const cloudSavedAt = cloudSession.savedAt || 0;
+    const localRaw = saveKey ? localStorage.getItem(saveKey) : null;
+    const localSavedAt = localRaw ? (JSON.parse(localRaw).savedAt || 0) : 0;
+
+    // Only offer to load cloud data if it's meaningfully newer (>60 s)
+    if (cloudSavedAt - localSavedAt > 60000) {
+      const cloudDate = new Date(cloudSavedAt).toLocaleString();
+      const useCloud = confirm(
+        `A newer ranking was found from another device (saved ${cloudDate}).\n\nLoad it? (Cancel to keep this device's data)`
+      );
+      if (!useCloud) return;
+      // Apply cloud session
+      _applySession(cloudSession);
+      if (saveKey) localStorage.setItem(saveKey, JSON.stringify(cloudSession));
+    }
+  } catch (e) { /* silent */ }
+}
+
+function _applySession(s) {
+  animeList     = s.animeList     || [];
+  battleCount   = s.battleCount   || 0;
+  currentA      = s.currentA      ?? null;
+  currentB      = s.currentB      ?? null;
+  battleHistory = s.battleHistory || [];
+  excludedIds   = new Set(s.excludedIds || []);
+  hiddenFormats = new Set(s.hiddenFormats || []);
+  hiddenEpRanges= new Set(s.hiddenEpRanges || []);
+  rankingView   = s.rankingView   || 'list';
+  currentSort   = s.currentSort   || 'elo';
+  sortAsc       = s.sortAsc       || false;
+  renderBattle();
+  renderRankingList();
+  filterRankings();
 }
 
 // ─── METADATA REFRESH ────────────────────────────────────────────────────────
