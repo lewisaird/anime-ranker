@@ -1296,6 +1296,49 @@
     }
     #new-anime-banner .nb-dismiss:hover { border-color: #f85149; color: #f85149; }
 
+    /* CLOUD SYNC BANNER */
+    #cloud-sync-banner {
+      display: none;
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a2f1a;
+      border: 1px solid #3fb950;
+      color: #e6edf3;
+      border-radius: 10px;
+      padding: 10px 16px;
+      gap: 12px;
+      align-items: center;
+      z-index: 1000;
+      font-size: 0.88rem;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      max-width: calc(100% - 32px);
+      width: max-content;
+    }
+    #cloud-sync-msg { flex: 1; }
+    #cloud-sync-banner .cs-load {
+      background: none;
+      border: 1px solid #3fb950;
+      color: #3fb950;
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+    #cloud-sync-banner .cs-load:hover { background: #1a3020; }
+    #cloud-sync-banner .cs-dismiss {
+      background: none;
+      border: 1px solid #484f58;
+      color: #8b949e;
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 0.78rem;
+    }
+    #cloud-sync-banner .cs-dismiss:hover { border-color: #f85149; color: #f85149; }
+
     /* TOWER OF POWER */
     #tower-modal {
       display: none;
@@ -1669,6 +1712,13 @@
   <span id="new-anime-msg"></span>
   <button class="nb-add" onclick="addNewAnime()">Add to ranking</button>
   <button class="nb-dismiss" onclick="dismissNewAnimeBanner()" title="Dismiss">✕</button>
+</div>
+
+<!-- CLOUD SYNC BANNER -->
+<div id="cloud-sync-banner" style="display:none;">
+  <span id="cloud-sync-msg"></span>
+  <button class="cs-load" onclick="applyCloudSession()">☁️ Load it</button>
+  <button class="cs-dismiss" onclick="document.getElementById('cloud-sync-banner').style.display='none'" title="Dismiss">✕</button>
 </div>
 
 <div id="main">
@@ -2365,7 +2415,7 @@ async function _fetchViewer() {
   _exchangeCodeForToken(code).then(token => {
     authToken = token;
     return _fetchViewer();
-  }).then(async viewer => {
+  }).then(viewer => {
     if (viewer?.name) {
       authUser = {
         id: viewer.id, name: viewer.name,
@@ -2375,11 +2425,10 @@ async function _fetchViewer() {
       saveAuth();
       saveKey = 'anime_elo_' + viewer.name.toLowerCase();
       _updateAuthUI();
-      // Try loading cloud session first; if cloud is newer it will apply it.
-      // Then start loading (which will restore local or fetch fresh).
-      await loadFromCloud();
       const hasSave = !!localStorage.getItem(saveKey);
       startLoading(viewer.name, !hasSave);
+      // Check cloud in background after local session is restored
+      loadFromCloud();
     }
   }).catch(err => {
     console.error('AniList login failed:', err);
@@ -2390,16 +2439,14 @@ async function _fetchViewer() {
 
 // On page load: restore token from localStorage and auto-load list
 if (loadAuthFromStorage()) {
-  const _onAuthReady = async () => {
+  const _onAuthReady = () => {
     _updateAuthUI();
     if (authUser?.name) {
       saveKey = 'anime_elo_' + authUser.name.toLowerCase();
-      // Check cloud for a newer session before restoring local
-      await loadFromCloud();
-      // Restore saved session if one exists (cloud load may have updated localStorage),
-      // otherwise fetch fresh from AniList with warm-start seeding
       const hasSave = !!localStorage.getItem(saveKey);
       startLoading(authUser.name, !hasSave);
+      // Check cloud in background after local session is restored
+      loadFromCloud();
     }
   };
   if (document.readyState === 'loading') {
@@ -2605,6 +2652,8 @@ function saveToCloud() {
   }, 3000);
 }
 
+let _pendingCloudSession = null; // holds cloud session until user accepts
+
 async function loadFromCloud() {
   if (!authToken) return;
   try {
@@ -2621,18 +2670,25 @@ async function loadFromCloud() {
     const localRaw = saveKey ? localStorage.getItem(saveKey) : null;
     const localSavedAt = localRaw ? (JSON.parse(localRaw).savedAt || 0) : 0;
 
-    // Only offer to load cloud data if it's meaningfully newer (>60 s)
+    // Only surface the banner if cloud is meaningfully newer (>60 s)
     if (cloudSavedAt - localSavedAt > 60000) {
+      _pendingCloudSession = cloudSession;
       const cloudDate = new Date(cloudSavedAt).toLocaleString();
-      const useCloud = confirm(
-        `A newer ranking was found from another device (saved ${cloudDate}).\n\nLoad it? (Cancel to keep this device's data)`
-      );
-      if (!useCloud) return;
-      // Apply cloud session
-      _applySession(cloudSession);
-      if (saveKey) localStorage.setItem(saveKey, JSON.stringify(cloudSession));
+      const msg = document.getElementById('cloud-sync-msg');
+      const banner = document.getElementById('cloud-sync-banner');
+      if (msg) msg.textContent = `☁️ Newer ranking found from another device (${cloudDate})`;
+      if (banner) banner.style.display = 'flex';
     }
-  } catch (e) { /* silent */ }
+  } catch (e) { /* silent — cloud sync is best-effort */ }
+}
+
+function applyCloudSession() {
+  if (!_pendingCloudSession) return;
+  const s = _pendingCloudSession;
+  _pendingCloudSession = null;
+  document.getElementById('cloud-sync-banner').style.display = 'none';
+  _applySession(s);
+  if (saveKey) localStorage.setItem(saveKey, JSON.stringify(s));
 }
 
 function _applySession(s) {
