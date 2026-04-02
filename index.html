@@ -2345,7 +2345,14 @@ function _updateAuthUI() {
   // Username screen badge
   const loginBtn  = document.getElementById('auth-login-btn');
   const loggedBadge = document.getElementById('auth-username-badge');
-  if (loginBtn)    loginBtn.style.display    = loggedIn ? 'none' : '';
+  if (loginBtn) {
+    loginBtn.style.display = loggedIn ? 'none' : '';
+    if (!loggedIn) {
+      // Always reset to a clean clickable state when shown after logout
+      loginBtn.textContent = '🔐 Login with AniList';
+      loginBtn.disabled = false;
+    }
+  }
   if (loggedBadge) loggedBadge.style.display = loggedIn ? 'flex'  : 'none';
   if (loggedIn && loggedBadge) {
     const av = document.getElementById('auth-badge-avatar');
@@ -2372,6 +2379,8 @@ function startOAuthFlow() {
     alert('AniList login is not configured yet.');
     return;
   }
+  const btn = document.getElementById('auth-login-btn');
+  if (btn) { btn.textContent = '⏳ Redirecting…'; btn.disabled = true; }
   const redirectUri = window.location.href.split('#')[0].split('?')[0];
   const authUrl = 'https://anilist.co/api/v2/oauth/authorize'
     + '?client_id='    + encodeURIComponent(ANILIST_CLIENT_ID)
@@ -2652,7 +2661,22 @@ function saveToCloud() {
   }, 3000);
 }
 
-let _pendingCloudSession = null; // holds cloud session until user accepts
+let _pendingCloudSession = null;  // holds cloud session until user accepts
+let _lastSeenCloudSavedAt = 0;    // prevents re-showing banner for same cloud snapshot
+
+let _cloudSyncPollingStarted = false;
+function _startCloudSyncPolling() {
+  if (_cloudSyncPollingStarted) return;
+  _cloudSyncPollingStarted = true;
+  // Re-check when user switches back to the tab (main trigger)
+  window.addEventListener('focus', () => {
+    if (authToken && saveKey) loadFromCloud();
+  });
+  // Also poll every 5 minutes as a fallback
+  setInterval(() => {
+    if (authToken && saveKey) loadFromCloud();
+  }, 5 * 60 * 1000);
+}
 
 async function loadFromCloud() {
   if (!authToken) return;
@@ -2670,8 +2694,10 @@ async function loadFromCloud() {
     const localRaw = saveKey ? localStorage.getItem(saveKey) : null;
     const localSavedAt = localRaw ? (JSON.parse(localRaw).savedAt || 0) : 0;
 
-    // Only surface the banner if cloud is meaningfully newer (>60 s)
-    if (cloudSavedAt - localSavedAt > 60000) {
+    // Only surface the banner if cloud is genuinely newer AND we haven't
+    // already offered this exact snapshot (prevents re-showing after dismiss)
+    if (cloudSavedAt - localSavedAt > 60000 && cloudSavedAt !== _lastSeenCloudSavedAt) {
+      _lastSeenCloudSavedAt = cloudSavedAt;
       _pendingCloudSession = cloudSession;
       const cloudDate = new Date(cloudSavedAt).toLocaleString();
       const msg = document.getElementById('cloud-sync-msg');
@@ -3943,6 +3969,7 @@ async function startLoading(overrideUsername, overrideSeed) {
     if (authUser?.name) {
       setTimeout(() => checkForNewAnime(username), 1500);
       _startNewAnimePolling(username);
+      _startCloudSyncPolling();
     }
     return;
   }
@@ -3977,6 +4004,10 @@ async function startLoading(overrideUsername, overrideSeed) {
     snapshotSessionStart();
     maybeShowKbTip();
     renderBattle();
+    if (authUser?.name) {
+      _startNewAnimePolling(username);
+      _startCloudSyncPolling();
+    }
   } catch (err) {
     hide('loading-screen');
     showFlex('username-screen');
