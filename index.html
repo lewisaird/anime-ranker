@@ -1319,6 +1319,24 @@
     }
     #settle-banner.active { display: flex; }
 
+    #new-anime-banner {
+      display: none;
+      background: linear-gradient(90deg, #1a2237, #161e2e);
+      border: 1px solid #388bfd;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin: 0 auto 12px;
+      max-width: 900px;
+      width: calc(100% - 32px);
+      font-size: 0.82rem;
+      color: #58a6ff;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+      box-sizing: border-box;
+    }
+    #new-anime-banner.active { display: flex; }
+
     /* TOWER OF POWER */
     #tower-modal {
       display: none;
@@ -1687,6 +1705,14 @@
   </div>
 </header>
 
+<div id="new-anime-banner">
+  <span id="new-anime-msg">🆕 New anime found on your AniList</span>
+  <div style="display:flex;gap:6px">
+    <button onclick="addPendingNewAnime()" style="background:none;border:1px solid #388bfd;color:#58a6ff;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Add to ranking</button>
+    <button onclick="dismissNewAnimeBanner()" style="background:none;border:none;color:#58a6ff;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:0.78rem">✕</button>
+  </div>
+</div>
+
 <div id="main">
 
   <!-- USERNAME SCREEN -->
@@ -1715,53 +1741,13 @@
     <hr class="onboarding-divider" />
 
     <!-- AniList OAuth login -->
-    <button class="btn-anilist-login" id="auth-login-btn" onclick="openAuthSetup()">🔐 Login with AniList</button>
+    <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
 
     <!-- Logged-in badge (shown when token exists) -->
     <div class="auth-logged-in-row" id="auth-username-badge" style="display:none">
       <img id="auth-badge-avatar" src="" alt="" />
       <span class="auth-logged-in-name" id="auth-badge-name"></span>
       <button class="auth-logout-btn" onclick="clearAuth()">Logout</button>
-    </div>
-
-    <!-- OAuth setup panel -->
-    <div id="auth-setup-panel" class="auth-setup-panel" style="display:none">
-      <button class="auth-panel-close" onclick="closeAuthSetup()" title="Close">✕</button>
-      <h4>🔗 Connect your AniList account</h4>
-
-      <div class="auth-step">
-        <div class="auth-step-num">1</div>
-        <div style="flex:1;min-width:0">
-          <strong>Create a free AniList client</strong>
-          <p>Go to <a href="https://anilist.co/settings/developer" target="_blank">anilist.co/settings/developer</a> → <em>Create New Client</em>.<br>
-          Set the <strong>Redirect URL</strong> to:</p>
-          <div class="auth-redirect-row">
-            <code id="auth-redirect-uri-display">Loading…</code>
-            <button class="auth-copy-btn" onclick="copyRedirectUri()">Copy</button>
-          </div>
-          <p id="auth-hosting-hint" style="margin-top:6px"></p>
-        </div>
-      </div>
-
-      <div class="auth-step" style="margin-top:2px">
-        <div class="auth-step-num">2</div>
-        <div style="flex:1;min-width:0">
-          <strong>Enter your Client ID and log in</strong>
-          <input type="text" id="auth-client-id" placeholder="Client ID (just numbers, e.g. 12345)" style="width:100%;margin-top:6px"
-                 onkeydown="if(event.key==='Enter')startOAuthFlow()" />
-          <button class="btn-primary" style="margin-top:8px;width:100%" onclick="startOAuthFlow()">Login with AniList →</button>
-        </div>
-      </div>
-
-      <!-- Paste fallback — shown for file:// users or if auto-redirect fails -->
-      <details class="auth-manual-details" id="auth-manual-details">
-        <summary>Using a local file or redirect didn't work?</summary>
-        <p>Set your redirect URL to <code style="font-size:0.75rem;background:#21262d;padding:1px 5px;border-radius:3px">https://anilist.co</code> in your AniList client, then paste the URL you were redirected to below:</p>
-        <input type="text" id="auth-token-input" placeholder="https://anilist.co#access_token=…" style="width:100%;margin-top:6px"
-               onkeydown="if(event.key==='Enter')completeOAuthFlow()" />
-        <p id="auth-error-msg" style="margin-top:6px"></p>
-        <button class="btn-primary" style="margin-top:8px;width:100%" onclick="completeOAuthFlow()">Connect manually ✓</button>
-      </details>
     </div>
 
     <div style="display:flex;align-items:center;gap:8px;color:#8b949e;font-size:0.8rem;margin:2px 0 4px">
@@ -1782,11 +1768,12 @@
         <input type="text" id="username-input" placeholder="e.g. Xinil" />
         <button class="btn-primary" onclick="startLoading()">Load List</button>
       </div>
-      <label class="warm-start-row">
+      <label class="warm-start-row" id="warm-start-row">
         <input type="checkbox" id="warm-start-chk" />
         Warm start — seed ELO from my AniList scores
       </label>
-      <p class="warm-start-info">Only applies when starting fresh. Scores map 10→1500 · 7→1200 · 4→900.</p>
+      <p class="warm-start-info" id="warm-start-info">Only applies when starting fresh. Scores map 10→1500 · 7→1200 · 4→900.</p>
+      <p class="warm-start-info" id="oauth-seed-note" style="display:none;color:#58a6ff">✓ Your AniList scores will be used as starting ELO values on a fresh load.</p>
     </div>
 
     <!-- MAL username input -->
@@ -1854,6 +1841,7 @@
       <span>🎯 Settle mode — targeting uncertain matchups</span>
       <button onclick="toggleSettleMode()" style="background:none;border:1px solid #238636;color:#3fb950;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
+
 
     <div class="battle-prompt">
       <h2 id="battle-prompt-h2">Which did you enjoy more?</h2>
@@ -1943,6 +1931,15 @@
         <button class="format-btn active" data-format="ONA"      onclick="toggleFormat('ONA')">ONA</button>
         <button class="format-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT')">Short</button>
         <button class="format-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL')">Special</button>
+      </div>
+      <div class="format-row" id="ep-filter-row">
+        <span class="format-row-label">Length:</span>
+        <button class="format-btn active" data-ep="short"   onclick="toggleEpRange('short')"  >≤12 ep</button>
+        <button class="format-btn active" data-ep="medium"  onclick="toggleEpRange('medium')" >13–24</button>
+        <button class="format-btn active" data-ep="long"    onclick="toggleEpRange('long')"   >25–70</button>
+        <button class="format-btn active" data-ep="vlong"   onclick="toggleEpRange('vlong')"  >70+</button>
+        <button class="format-btn active" data-ep="unknown" onclick="toggleEpRange('unknown')">Unknown</button>
+        <button class="format-btn active" id="watching-filter-btn" onclick="toggleWatchingFilter()">👁 Watching</button>
       </div>
       <div class="list-controls">
         <button class="sort-btn active" data-sort="elo"     data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
@@ -2084,6 +2081,7 @@
         <div class="manage-section" id="manage-anilist-section" style="display:none">
           <div class="manage-section-title">AniList</div>
           <button id="sync-anilist-btn" class="manage-btn manage-btn-anilist" onclick="openSyncModal()">🔵 Sync to AniList</button>
+          <button id="reseed-anilist-btn" class="manage-btn" onclick="reseedFromAniList()">🌱 Re-seed ELO from AniList scores</button>
         </div>
 
         <div class="manage-section">
@@ -2189,9 +2187,11 @@
           <p>Share your top 20 rankings as a link. Anyone with the link can view them without needing an account — rankings are encoded directly in the URL.</p>
         </div>
 
-        <div class="help-section">
-          <h4>☁️ Cloud Sync</h4>
-          <p>When logged in with AniList, your rankings are automatically saved to the cloud. If you rank on another device, a banner will appear letting you load the latest save.</p>
+        <div class="help-section" id="help-anilist-section" style="display:none">
+          <h4>🔵 AniList Integration</h4>
+          <p><strong>On first load</strong> — your AniList scores are automatically converted into starting ELO values (10→1500 · 7→1200 · 4→900), so your rankings begin close to where you already know they should be.</p>
+          <p style="margin-top:6px"><strong>Sync to AniList</strong> (Manage tab) — once you've done enough battles, push your ELO rankings back to AniList as updated scores. You'll see a preview of every change before confirming.</p>
+          <p style="margin-top:6px"><strong>Re-seed from AniList</strong> (Manage tab) — re-pull your current AniList scores and replace your ELO values with fresh starting points, without erasing your battle history.</p>
         </div>
 
       </div>
@@ -2301,8 +2301,13 @@ let battleHistory   = [];    // [{winnerTitle, loserTitle, winnerEloAfter, loser
 const MAX_HISTORY   = 200;
 let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
 let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.g. 'OVA', 'ONA')
+let hiddenEpRanges  = new Set(); // episode-length buckets hidden from rankings
+let hideWatching    = false;     // when true, hide CURRENT-status anime from rankings
+let _pendingNewAnime    = [];    // anime on AniList not yet in rankings (new anime detection)
+let _newAnimePollingTimer = null;
 let preferRomaji    = false;     // title language preference
 let currentSort     = 'elo';     // active sort in rankings view
+let sortAsc         = false;     // false = descending (highest first)
 let _renderGen      = 0;         // cancel in-flight chunked grid renders
 let _vsTableData    = [];        // pre-computed rows for table virtual scroll
 let _vsScrollRaf    = null;      // rAF handle for table scroll throttling
@@ -2392,119 +2397,53 @@ function _updateAuthUI() {
   // Show/hide the AniList manage section (only when logged in)
   const manageAnilist = document.getElementById('manage-anilist-section');
   if (manageAnilist) manageAnilist.style.display = loggedIn ? '' : 'none';
+
+  // When OAuth-logged-in, hide the manual warm-start checkbox and show the auto-seed note
+  const warmRow  = document.getElementById('warm-start-row');
+  const warmInfo = document.getElementById('warm-start-info');
+  const oauthNote = document.getElementById('oauth-seed-note');
+  if (warmRow)   warmRow.style.display   = loggedIn ? 'none' : '';
+  if (warmInfo)  warmInfo.style.display  = loggedIn ? 'none' : '';
+  if (oauthNote) oauthNote.style.display = loggedIn ? ''     : 'none';
+
+  // Show/hide the AniList help section in the help modal
+  const helpAnilist = document.getElementById('help-anilist-section');
+  if (helpAnilist) helpAnilist.style.display = loggedIn ? '' : 'none';
+
+  // Start new-anime polling when logged in; stop when logged out
+  if (loggedIn && animeList.length) {
+    _startNewAnimePolling();
+  } else if (!loggedIn && _newAnimePollingTimer) {
+    clearInterval(_newAnimePollingTimer);
+    _newAnimePollingTimer = null;
+    document.getElementById('new-anime-banner')?.classList.remove('active');
+  }
+}
+
+const ANILIST_CLIENT_ID = '37947';
+
+function startOAuthFlow() {
+  const btn = document.getElementById('auth-login-btn');
+  if (btn) { btn.textContent = '⏳ Redirecting…'; btn.disabled = true; }
+  const redirectUri = window.location.href.split('#')[0].split('?')[0];
+  window.location.href = 'https://anilist.co/api/v2/oauth/authorize?client_id='
+    + ANILIST_CLIENT_ID
+    + '&redirect_uri=' + encodeURIComponent(redirectUri)
+    + '&response_type=token';
 }
 
 function _getRedirectUri() {
-  const url = window.location.href.split('#')[0].split('?')[0];
-  return url.startsWith('file://') ? 'https://anilist.co' : url;
-}
-
-function _isHosted() {
-  return window.location.protocol === 'http:' || window.location.protocol === 'https:';
-}
-
-function copyRedirectUri() {
-  const uri = _getRedirectUri();
-  navigator.clipboard?.writeText(uri).catch(() => {});
-  const btn = document.querySelector('.auth-copy-btn');
-  if (btn) { btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); }
-}
-
-function openAuthSetup() {
-  const panel = document.getElementById('auth-setup-panel');
-  if (!panel) return;
-  panel.style.display = '';
-
-  // Show the redirect URI
-  const uriEl = document.getElementById('auth-redirect-uri-display');
-  if (uriEl) uriEl.textContent = _getRedirectUri();
-
-  // Show hosting hint if running as local file
-  const hintEl = document.getElementById('auth-hosting-hint');
-  if (hintEl) {
-    if (!_isHosted()) {
-      hintEl.innerHTML = '⚠️ You\'re running as a local file. For a seamless login, host the file on <a href="https://pages.github.com" target="_blank">GitHub Pages</a> first — or use the manual method below.';
-      hintEl.style.color = '#e3a000';
-      hintEl.style.fontSize = '0.75rem';
-      // Auto-open the manual details
-      const det = document.getElementById('auth-manual-details');
-      if (det) det.open = true;
-    } else {
-      hintEl.textContent = '';
-    }
-  }
-
-  // Restore saved client ID
-  const saved = localStorage.getItem('anime_elo_auth_client_id');
-  if (saved) {
-    const inp = document.getElementById('auth-client-id');
-    if (inp && !inp.value) inp.value = saved;
-  }
-}
-
-function closeAuthSetup() {
-  const panel = document.getElementById('auth-setup-panel');
-  if (panel) panel.style.display = 'none';
-}
-
-function startOAuthFlow() {
-  const clientId = (document.getElementById('auth-client-id')?.value || '').trim();
-  if (!clientId) {
-    alert('Please enter your Client ID from anilist.co/settings/developer first.');
-    return;
-  }
-  localStorage.setItem('anime_elo_auth_client_id', clientId);
-  const redirectUri = _getRedirectUri();
-  const authUrl = 'https://anilist.co/api/v2/oauth/authorize?client_id='
-    + encodeURIComponent(clientId)
-    + '&redirect_uri=' + encodeURIComponent(redirectUri)
-    + '&response_type=token';
-
-  if (_isHosted()) {
-    // Hosted: navigate in same tab — redirect will come back to this page automatically
-    window.location.href = authUrl;
-  } else {
-    // Local file: open in new tab, user must paste the redirect URL
-    window.open(authUrl, '_blank');
-    const det = document.getElementById('auth-manual-details');
-    if (det) det.open = true;
-  }
+  return window.location.href.split('#')[0].split('?')[0];
 }
 
 async function completeOAuthFlow() {
-  const raw = (document.getElementById('auth-token-input')?.value || '').trim();
-  const errEl = document.getElementById('auth-error-msg');
-  if (errEl) errEl.style.display = 'none';
-  if (!raw) return;
-
-  // Extract token from pasted URL or raw token string
-  let token = raw;
-  if (raw.includes('access_token')) {
-    const hash = raw.includes('#') ? raw.split('#')[1] : raw.split('?')[1] || raw;
-    token = new URLSearchParams(hash).get('access_token') || '';
-  }
-  if (!token) {
-    if (errEl) { errEl.textContent = 'Could not find access_token. Copy the full URL from your browser after approving.'; errEl.style.display = ''; }
-    return;
-  }
-
-  authToken = token;
-  try {
-    const viewer = await _fetchViewer();
-    if (!viewer?.name) throw new Error('Could not retrieve account details.');
-    authUser = {
-      id: viewer.id, name: viewer.name,
-      avatar: viewer.avatar?.medium || '',
-      scoreFormat: viewer.mediaListOptions?.scoreFormat || 'POINT_10'
-    };
-    saveAuth();
-    closeAuthSetup();
-    _updateAuthUI();
-  } catch (e) {
-    authToken = null;
-    if (errEl) { errEl.textContent = 'Login failed: ' + e.message; errEl.style.display = ''; }
-  }
+  // kept for any legacy references — no-op in new flow
 }
+
+// placeholder so old saves that stored client_id don't break anything
+function openAuthSetup() { startOAuthFlow(); }
+function closeAuthSetup() {}
+
 
 async function _fetchViewer() {
   const query = `query {
@@ -2581,6 +2520,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
               coverImage { medium large }
               description(asHtml: false)
               format
+              episodes
               averageScore
               genres
               seasonYear
@@ -2620,9 +2560,11 @@ async function fetchAllAnime(username, seedFromScores = false) {
       cover: e.media.coverImage.large || e.media.coverImage.medium,
       description: stripHtml(e.media.description).slice(0, 500),
       format: e.media.format || 'TV',
+      episodes: e.media.episodes || 0,
       globalScore: e.media.averageScore || 0,
       genres: e.media.genres || [],
       seasonYear: e.media.seasonYear || null,
+      status: e.status || 'COMPLETED',
       elo: startElo,
       wins: 0, losses: 0, comparisons: 0,
       fuzzy: false,
@@ -2638,7 +2580,9 @@ function saveState() {
   localStorage.setItem(saveKey, JSON.stringify({
     animeList, battleCount, currentA, currentB, battleHistory,
     excludedIds: [...excludedIds],
-    hiddenFormats: [...hiddenFormats],
+    hiddenFormats:  [...hiddenFormats],
+    hiddenEpRanges: [...hiddenEpRanges],
+    hideWatching,
     rankingView,
     currentSort,
     sortAsc,
@@ -2669,6 +2613,7 @@ async function refreshAnimeMetadata() {
               title { romaji english }
               description(asHtml: false)
               format
+              episodes
               averageScore
             }
           }
@@ -2692,6 +2637,7 @@ async function refreshAnimeMetadata() {
       a.titleRo = m.title.romaji  || m.title.english || a.title;
       a.description = stripHtml(m.description).slice(0, 500);
       if (m.format) a.format = m.format;
+      if (m.episodes) a.episodes = m.episodes;
       if (m.averageScore) a.globalScore = m.averageScore;
     });
 
@@ -2727,10 +2673,12 @@ function loadState(username, source = 'anilist') {
     currentB      = s.currentB      ?? null;
     battleHistory = s.battleHistory ?? [];
     excludedIds   = new Set(s.excludedIds ?? []);
-    hiddenFormats = new Set(s.hiddenFormats ?? []);
-    rankingView   = s.rankingView ?? 'grid';
-    currentSort   = s.currentSort ?? 'elo';
-    sortAsc       = s.sortAsc     ?? false;
+    hiddenFormats  = new Set(s.hiddenFormats  ?? []);
+    hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
+    hideWatching   = s.hideWatching ?? false;
+    rankingView    = s.rankingView ?? 'grid';
+    currentSort    = s.currentSort ?? 'elo';
+    sortAsc        = s.sortAsc     ?? false;
     // Migrate old saves that predate titleEn/titleRo/description/format fields
     animeList.forEach(a => {
       if (!a.titleEn) a.titleEn = a.title || '';
@@ -2738,6 +2686,8 @@ function loadState(username, source = 'anilist') {
       if (a.description === undefined) a.description = '';
       if (!a.format) a.format = 'TV';
       if (a.globalScore === undefined) a.globalScore = 0;
+      if (a.episodes === undefined) a.episodes = 0;
+      if (a.status  === undefined) a.status  = 'COMPLETED';
     });
     return true;
   } catch { return false; }
@@ -3010,7 +2960,9 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const displayRank = eloRank + 1; // always show true ELO rank, regardless of current sort
   const card = document.createElement('div');
   card.className = 'rank-card';
-  card.dataset.format = anime.format || 'TV';
+  card.dataset.format   = anime.format || 'TV';
+  card.dataset.epRange  = epRange(anime.episodes, anime.format);
+  card.dataset.watching = (anime.status === 'CURRENT') ? '1' : '0';
   card.style.cursor = 'pointer';
   card.title = 'Click for details';
   card.addEventListener('click', () => showAnimeDetail(anime.id));
@@ -3037,8 +2989,10 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     ${anime.fuzzy ? '<span class="fuzzy-tag" title="Can&#39;t Remember \u2014 you selected this option during a battle. This anime appears less often until you&#39;ve refreshed your memory of it.">&#x1F32B; Fuzzy</span>' : ''}
     ${streakBadge(anime)}
   `;
-  if (showFuzzyOnly && !anime.fuzzy) card.style.display = 'none';
-  if (hiddenFormats.has(anime.format))  card.style.display = 'none';
+  if (showFuzzyOnly && !anime.fuzzy)         card.style.display = 'none';
+  if (hiddenFormats.has(anime.format))       card.style.display = 'none';
+  if (anime.format !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
+  if (hideWatching && anime.status === 'CURRENT') card.style.display = 'none';
   return card;
 }
 
@@ -3099,9 +3053,13 @@ function showResults() {
     `After ${battleCount} battles · Rankings update as you keep going`;
 
   syncFormatButtons();
+  syncEpRangeButtons();
+  syncWatchingBtn();
   renderRankingList();
   show('results-screen');
   switchResultsTab('rankings');
+  // Start polling for new anime if logged in (deferred so ranking renders first)
+  if (authToken && authUser) setTimeout(_startNewAnimePolling, 2000);
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
@@ -3802,11 +3760,18 @@ async function startLoading() {
   const username = document.getElementById('username-input').value.trim();
   if (!username) return;
 
-  const seedFromScores = document.getElementById('warm-start-chk').checked;
-
-  // If warm start is requested and a save exists, ask whether to re-seed
+  const isOAuthUser = !!(authToken && authUser);
   const existingSaveKey = 'anime_elo_' + username.toLowerCase();
-  if (seedFromScores && localStorage.getItem(existingSaveKey)) {
+  const hasSave = !!localStorage.getItem(existingSaveKey);
+
+  // OAuth users: seed automatically on a fresh load; restore existing save as-is
+  // (re-seeding an existing save is done deliberately via Manage → Re-seed)
+  // Non-OAuth users: honour the warm-start checkbox as before
+  const checkboxSeed = document.getElementById('warm-start-chk').checked;
+  const seedFromScores = hasSave ? checkboxSeed : (isOAuthUser || checkboxSeed);
+
+  // If manually requesting warm-start on an existing save, confirm before wiping
+  if (checkboxSeed && hasSave) {
     const ok = confirm(
       'You have a saved session for this user.\n\n' +
       '"Warm start" will re-seed all ELO scores from your AniList ratings and reset battle progress.\n\n' +
@@ -3834,7 +3799,7 @@ async function startLoading() {
   document.getElementById('error-msg').style.display = 'none';
   showFlex('loading-screen');
 
-  // Check for saved state (only if warm start not requested / confirmed above)
+  // Check for saved state (only if not starting fresh)
   if (!seedFromScores && loadState(username)) {
     document.getElementById('loading-msg').textContent = 'Restoring your saved session…';
     await new Promise(r => setTimeout(r, 600));
@@ -4379,13 +4344,17 @@ function flagFuzzy(event, side) {
 function filterRankings() {
   const q = document.getElementById('search-input').value.toLowerCase().trim();
   document.querySelectorAll('#ranking-list .rank-card').forEach(card => {
-    const title      = card.querySelector('.rank-title').textContent.toLowerCase();
-    const isFuzzy    = card.querySelector('.fuzzy-tag') !== null;
-    const fmt        = card.dataset.format || '';
-    const matchSearch  = !q || title.includes(q);
-    const matchFuzzy   = !showFuzzyOnly || isFuzzy;
-    const matchFormat  = !hiddenFormats.has(fmt);
-    card.style.display = (matchSearch && matchFuzzy && matchFormat) ? '' : 'none';
+    const title    = card.querySelector('.rank-title').textContent.toLowerCase();
+    const isFuzzy  = card.querySelector('.fuzzy-tag') !== null;
+    const fmt      = card.dataset.format || '';
+    const epRng    = card.dataset.epRange || 'unknown';
+    const watching = card.dataset.watching === '1';
+    const matchSearch   = !q || title.includes(q);
+    const matchFuzzy    = !showFuzzyOnly || isFuzzy;
+    const matchFormat   = !hiddenFormats.has(fmt);
+    const matchEpRange  = fmt === 'MOVIE' || !hiddenEpRanges.has(epRng);
+    const matchWatching = !hideWatching || !watching;
+    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange && matchWatching) ? '' : 'none';
   });
   // Also re-render table with updated filters when in list view
   if (rankingView === 'list') renderRankingTable();
@@ -4736,10 +4705,55 @@ function toggleFormat(fmt) {
 
 function syncFormatButtons() {
   document.querySelectorAll('.format-btn').forEach(b => {
+    if (!b.dataset.format) return;
     const isHidden = hiddenFormats.has(b.dataset.format);
     b.classList.toggle('active',     !isHidden);
     b.classList.toggle('hidden-fmt',  isHidden);
   });
+}
+
+// ─── EPISODE RANGE FILTER ────────────────────────────────────────────────────
+function epRange(episodes, format) {
+  if (format === 'MOVIE') return 'movie'; // movies bypass length filter
+  if (!episodes)          return 'unknown';
+  if (episodes <= 12)     return 'short';
+  if (episodes <= 24)     return 'medium';
+  if (episodes <= 70)     return 'long';
+  return 'vlong';
+}
+
+function toggleEpRange(range) {
+  if (hiddenEpRanges.has(range)) {
+    hiddenEpRanges.delete(range);
+  } else {
+    hiddenEpRanges.add(range);
+  }
+  syncEpRangeButtons();
+  saveState();
+  filterRankings();
+}
+
+function syncEpRangeButtons() {
+  document.querySelectorAll('[data-ep]').forEach(b => {
+    const isHidden = hiddenEpRanges.has(b.dataset.ep);
+    b.classList.toggle('active',     !isHidden);
+    b.classList.toggle('hidden-fmt',  isHidden);
+  });
+}
+
+// ─── WATCHING FILTER ─────────────────────────────────────────────────────────
+function toggleWatchingFilter() {
+  hideWatching = !hideWatching;
+  syncWatchingBtn();
+  saveState();
+  filterRankings();
+}
+
+function syncWatchingBtn() {
+  const btn = document.getElementById('watching-filter-btn');
+  if (!btn) return;
+  btn.classList.toggle('active',     !hideWatching);
+  btn.classList.toggle('hidden-fmt',  hideWatching);
 }
 
 // ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
@@ -5269,10 +5283,93 @@ async function executeSyncToAniList() {
   actionBtns.style.display = 'flex';
 }
 
-// Show/hide the sync button based on auth state
-function _refreshSyncButton() {
-  const btn = document.getElementById('sync-anilist-btn');
-  if (btn) btn.style.display = (authToken && authUser) ? '' : 'none';
+// ─── RESEED FROM ANILIST SCORES ───────────────────────────────────────────────
+async function reseedFromAniList() {
+  if (!authToken || !authUser) {
+    alert('Please log in with AniList first.');
+    return;
+  }
+  const btn = document.getElementById('reseed-anilist-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching scores…'; }
+
+  try {
+    const query = `
+      query ($username: String) {
+        MediaListCollection(userName: $username, type: ANIME) {
+          lists { entries { score status media { id } } }
+        }
+      }`;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { username: authUser.name } })
+    });
+    const data = await res.json();
+    if (data.errors) throw new Error(data.errors[0].message);
+
+    const scoreMap = {};
+    data.data.MediaListCollection.lists
+      .flatMap(l => l.entries)
+      .forEach(e => { if (e.score) scoreMap[e.media.id] = e.score; });
+
+    let updated = 0;
+    animeList.forEach(a => {
+      const score = scoreMap[a.id];
+      if (score) {
+        a.elo = scoreToElo(score);
+        a.anilistScore = score;
+        updated++;
+      }
+    });
+
+    saveState();
+    renderRankingList();
+    filterRankings();
+    alert(`✅ Re-seeded ${updated} anime from your AniList scores.\nBattle history is preserved — ELO will adjust as you rank.`);
+  } catch (err) {
+    alert('Error re-seeding: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌱 Re-seed ELO from AniList scores'; }
+  }
+}
+
+// ─── NEW ANIME DETECTION ──────────────────────────────────────────────────────
+async function checkForNewAnime() {
+  if (!authToken || !authUser || !animeList.length) return;
+  try {
+    const entries = await fetchAllAnime(authUser.name, false);
+    const ownIds = new Set(animeList.map(a => a.id));
+    _pendingNewAnime = entries.filter(e => !ownIds.has(e.id));
+    if (_pendingNewAnime.length > 0) {
+      const msg = document.getElementById('new-anime-msg');
+      if (msg) msg.textContent = `🆕 ${_pendingNewAnime.length} new anime on your AniList — not yet in rankings`;
+      document.getElementById('new-anime-banner')?.classList.add('active');
+    } else {
+      document.getElementById('new-anime-banner')?.classList.remove('active');
+    }
+  } catch { /* silent — don't bother user on background poll failure */ }
+}
+
+function dismissNewAnimeBanner() {
+  document.getElementById('new-anime-banner')?.classList.remove('active');
+  _pendingNewAnime = [];
+}
+
+function addPendingNewAnime() {
+  if (!_pendingNewAnime.length) return;
+  _pendingNewAnime.forEach(a => animeList.push(a));
+  _pendingNewAnime = [];
+  document.getElementById('new-anime-banner')?.classList.remove('active');
+  saveState();
+  renderRankingList();
+  filterRankings();
+}
+
+function _startNewAnimePolling() {
+  if (_newAnimePollingTimer) clearInterval(_newAnimePollingTimer);
+  // Check immediately then every 5 minutes
+  checkForNewAnime();
+  _newAnimePollingTimer = setInterval(checkForNewAnime, 5 * 60 * 1000);
 }
 
 // Auto-load if username is pre-filled, or show shared view if URL has a share hash
