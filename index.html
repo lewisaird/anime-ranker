@@ -1742,6 +1742,7 @@
 
     <!-- AniList OAuth login -->
     <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
+    <p id="auth-error-msg"></p>
 
     <!-- Logged-in badge (shown when token exists) -->
     <div class="auth-logged-in-row" id="auth-username-badge" style="display:none">
@@ -2431,6 +2432,8 @@ function _getRedirectUri() {
 function startOAuthFlow() {
   const btn = document.getElementById('auth-login-btn');
   if (btn) { btn.textContent = '⏳ Redirecting…'; btn.disabled = true; }
+  const errEl = document.getElementById('auth-error-msg');
+  if (errEl) errEl.style.display = 'none';
   window.location.href = 'https://anilist.co/api/v2/oauth/authorize?client_id='
     + ANILIST_CLIENT_ID
     + '&redirect_uri=' + encodeURIComponent(_getRedirectUri())
@@ -2505,6 +2508,8 @@ async function _fetchViewer() {
     console.error('AniList OAuth token exchange failed:', err);
     authToken = null;
     if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
+    const errEl = document.getElementById('auth-error-msg');
+    if (errEl) { errEl.textContent = 'Login failed: ' + (err.message || 'unknown error'); errEl.style.display = 'block'; }
   }
 })();
 
