@@ -2420,8 +2420,8 @@ function _updateAuthUI() {
   }
 }
 
-const ANILIST_CLIENT_ID     = '37947';
-const ANILIST_CLIENT_SECRET = 'xqTuSS886KKKQT6II1kBycQAM6BXTEsDlsIc60FR';
+const ANILIST_CLIENT_ID = '37947';
+// Client secret is kept server-side in the Netlify Function — never in client code.
 
 function _getRedirectUri() {
   // Must exactly match the Redirect URL registered in AniList developer settings
@@ -2478,17 +2478,11 @@ async function _fetchViewer() {
   if (btn) { btn.textContent = '⏳ Logging in…'; btn.disabled = true; }
 
   try {
-    // Exchange the authorization code for an access token
-    const res = await fetch('https://anilist.co/api/v2/oauth/token', {
+    // Exchange the authorization code via our Netlify Function (keeps client secret server-side)
+    const res = await fetch('/.netlify/functions/anilist-auth', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
-        grant_type:    'authorization_code',
-        client_id:     ANILIST_CLIENT_ID,
-        client_secret: ANILIST_CLIENT_SECRET,
-        redirect_uri:  redirectUri,
-        code,
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
     });
     const data = await res.json();
     if (!data.access_token) throw new Error(data.message || 'No access token in response');
