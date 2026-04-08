@@ -2360,6 +2360,12 @@ function clearAuth() {
   authUser  = null;
   localStorage.removeItem('anime_elo_auth');
   _updateAuthUI();
+  // Return to the home screen
+  hide('battle-screen');
+  hide('results-screen');
+  document.getElementById('change-user-btn').style.display = 'none';
+  document.getElementById('progress-info').textContent = '';
+  showFlex('username-screen');
 }
 
 function _updateAuthUI() {
@@ -2500,6 +2506,8 @@ async function _fetchViewer() {
       };
       saveAuth();
       _updateAuthUI();
+      // Auto-load the user's list and go straight to the battle screen
+      startLoading();
     } else {
       authToken = null;
       if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
