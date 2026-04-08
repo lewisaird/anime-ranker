@@ -2420,20 +2420,21 @@ function _updateAuthUI() {
   }
 }
 
-const ANILIST_CLIENT_ID = '37947';
+const ANILIST_CLIENT_ID     = '37947';
+const ANILIST_CLIENT_SECRET = 'xqTuSS886KKKQT6II1kBycQAM6BXTEsDlsIc60FR';
+
+function _getRedirectUri() {
+  // Must exactly match the Redirect URL registered in AniList developer settings
+  return window.location.origin + window.location.pathname;
+}
 
 function startOAuthFlow() {
   const btn = document.getElementById('auth-login-btn');
   if (btn) { btn.textContent = '⏳ Redirecting…'; btn.disabled = true; }
-  const redirectUri = window.location.href.split('#')[0].split('?')[0];
   window.location.href = 'https://anilist.co/api/v2/oauth/authorize?client_id='
     + ANILIST_CLIENT_ID
-    + '&redirect_uri=' + encodeURIComponent(redirectUri)
-    + '&response_type=token';
-}
-
-function _getRedirectUri() {
-  return window.location.href.split('#')[0].split('?')[0];
+    + '&redirect_uri=' + encodeURIComponent(_getRedirectUri())
+    + '&response_type=code';
 }
 
 async function completeOAuthFlow() {
@@ -2462,16 +2463,38 @@ async function _fetchViewer() {
   return data?.data?.Viewer ?? null;
 }
 
-// On page load: check URL hash for OAuth callback (for hosted / localhost users)
-(function _checkOAuthCallback() {
-  if (!window.location.hash) return;
-  const params = new URLSearchParams(window.location.hash.slice(1));
-  const token = params.get('access_token');
-  if (!token) return;
-  // Clean hash from URL so it doesn't linger
-  history.replaceState(null, '', window.location.pathname + window.location.search);
-  authToken = token;
-  _fetchViewer().then(viewer => {
+// On page load: check URL query params for OAuth authorization code callback
+(async function _checkOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  if (!code) return;
+
+  // Capture redirect URI before cleaning the URL (must match what was sent)
+  const redirectUri = _getRedirectUri();
+  history.replaceState(null, '', window.location.pathname);
+
+  // Show loading state on the login button if visible
+  const btn = document.getElementById('auth-login-btn');
+  if (btn) { btn.textContent = '⏳ Logging in…'; btn.disabled = true; }
+
+  try {
+    // Exchange the authorization code for an access token
+    const res = await fetch('https://anilist.co/api/v2/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        grant_type:    'authorization_code',
+        client_id:     ANILIST_CLIENT_ID,
+        client_secret: ANILIST_CLIENT_SECRET,
+        redirect_uri:  redirectUri,
+        code,
+      })
+    });
+    const data = await res.json();
+    if (!data.access_token) throw new Error(data.message || 'No access token in response');
+
+    authToken = data.access_token;
+    const viewer = await _fetchViewer();
     if (viewer?.name) {
       authUser = {
         id: viewer.id, name: viewer.name,
@@ -2482,8 +2505,13 @@ async function _fetchViewer() {
       _updateAuthUI();
     } else {
       authToken = null;
+      if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
     }
-  }).catch(() => { authToken = null; });
+  } catch (err) {
+    console.error('AniList OAuth token exchange failed:', err);
+    authToken = null;
+    if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
+  }
 })();
 
 // On page load: restore token from localStorage
