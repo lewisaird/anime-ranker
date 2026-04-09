@@ -1705,6 +1705,7 @@
   <h1>🎌 Anime ELO Ranker</h1>
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
+    <span id="cloud-sync-indicator" style="display:none;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
     <div id="auth-header-badge">
       <img id="auth-hdr-avatar" src="" alt="" />
       <span class="auth-hdr-name" id="auth-hdr-name"></span>
@@ -2083,6 +2084,15 @@
       <div class="manage-tab-content">
 
         <div class="manage-section">
+          <div class="manage-section-title">Backup &amp; Sync</div>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Save a full backup of your rankings to transfer to another device or browser.</p>
+          <button class="manage-btn" onclick="downloadBackup()">⬇ Download backup</button>
+          <button class="manage-btn" onclick="document.getElementById('backup-import-input').click()">📂 Import backup</button>
+          <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(event)">
+          <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
+        </div>
+
+        <div class="manage-section">
           <div class="manage-section-title">Export</div>
           <button class="manage-btn" onclick="exportRankings()">📋 Copy as text</button>
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
@@ -2433,6 +2443,10 @@ function _updateAuthUI() {
     _newAnimePollingTimer = null;
     document.getElementById('new-anime-banner')?.classList.remove('active');
   }
+
+  // Enable/disable cloud sync
+  _cloudSyncEnabled = loggedIn;
+  if (!loggedIn) _setSyncIndicator('hidden');
 }
 
 const ANILIST_CLIENT_ID = '37947';
@@ -2629,6 +2643,140 @@ function saveState() {
     currentSort,
     sortAsc,
   }));
+  schedulCloudSave();
+}
+
+// ─── CLOUD SYNC ──────────────────────────────────────────────────────────────
+// Auto-saves to Netlify Blobs keyed by AniList user ID.
+// The Netlify Function verifies the AniList token server-side.
+
+let _cloudSaveTimer   = null;  // debounce handle
+let _cloudSyncEnabled = false; // only when AniList-authenticated
+
+function _setSyncIndicator(state) {
+  // state: 'saving' | 'saved' | 'error' | 'hidden'
+  const el = document.getElementById('cloud-sync-indicator');
+  if (!el) return;
+  if (state === 'hidden' || !_cloudSyncEnabled) { el.style.display = 'none'; return; }
+  el.style.display = 'inline';
+  if (state === 'saving') { el.textContent = '☁️ Saving…';  el.style.color = '#8b949e'; }
+  if (state === 'saved')  { el.textContent = '☁️ Synced';   el.style.color = '#3fb950'; }
+  if (state === 'error')  { el.textContent = '☁️ Sync err'; el.style.color = '#f85149'; }
+}
+
+// Call this after saveState() for anything battle-related.
+// Debounced — fires 5 s after the last change to avoid hammering the function.
+function schedulCloudSave() {
+  if (!_cloudSyncEnabled || !authToken || !authUser) return;
+  clearTimeout(_cloudSaveTimer);
+  _setSyncIndicator('saving');
+  _cloudSaveTimer = setTimeout(_doCloudSave, 5000);
+}
+
+async function _doCloudSave() {
+  if (!_cloudSyncEnabled || !authToken || !authUser || !animeList.length) return;
+  try {
+    const session = {
+      saveKey,
+      animeList,
+      battleCount,
+      currentA,
+      currentB,
+      battleHistory,
+      excludedIds:    [...excludedIds],
+      hiddenFormats:  [...hiddenFormats],
+      hiddenEpRanges: [...hiddenEpRanges],
+      rankingView,
+      currentSort,
+      sortAsc,
+      savedAt: new Date().toISOString(),
+    };
+    const res = await fetch('/.netlify/functions/save-session', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ token: authToken, session }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _setSyncIndicator('saved');
+    // Fade back to hidden after 3 s
+    setTimeout(() => _setSyncIndicator('hidden'), 3000);
+  } catch (err) {
+    console.warn('Cloud save failed:', err);
+    _setSyncIndicator('error');
+  }
+}
+
+// Called on login / page load (when already logged in).
+// Returns the session object or null.
+async function _loadCloudSave() {
+  if (!authToken || !authUser) return null;
+  try {
+    const res = await fetch('/.netlify/functions/load-session', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ token: authToken }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    return data?.session ?? null; // { session: {...} } wrapper
+  } catch (err) {
+    console.warn('Cloud load failed:', err);
+    return null;
+  }
+}
+
+// Compare cloud vs local and prompt if cloud is newer.
+// Returns true if the cloud save was applied (caller should skip normal load).
+async function checkAndApplyCloudSave(localSaveKey) {
+  if (!_cloudSyncEnabled || !authToken || !authUser) return false;
+  const cloud = await _loadCloudSave();
+  if (!cloud || !cloud.animeList || !cloud.saveKey) return false;
+
+  const cloudDate = cloud.savedAt ? new Date(cloud.savedAt) : null;
+
+  // Compare with local
+  const localRaw = localStorage.getItem(localSaveKey);
+  if (localRaw) {
+    try {
+      const local = JSON.parse(localRaw);
+      // If cloud has more battles, it's likely the more up-to-date source
+      const cloudBattles = cloud.battleCount || 0;
+      const localBattles = local.battleCount || 0;
+      if (cloudBattles <= localBattles) return false; // local is at least as fresh
+    } catch { /* corrupt local save — fall through */ }
+  }
+
+  const dateStr = cloudDate ? cloudDate.toLocaleString() : 'an unknown time';
+  const cloudBattles = cloud.battleCount || 0;
+  const cloudCount   = cloud.animeList.length;
+  const ok = confirm(
+    `☁️ A newer cloud save was found (${dateStr}).\n\n` +
+    `Cloud: ${cloudBattles} battles across ${cloudCount} anime\n\n` +
+    `Load the cloud save? (Your local data will be replaced.)`
+  );
+  if (!ok) return false;
+
+  // Apply cloud save to localStorage and reload
+  try {
+    localStorage.setItem(cloud.saveKey, JSON.stringify({
+      animeList:      cloud.animeList,
+      battleCount:    cloud.battleCount    ?? 0,
+      currentA:       cloud.currentA       ?? null,
+      currentB:       cloud.currentB       ?? null,
+      battleHistory:  cloud.battleHistory  ?? [],
+      excludedIds:    cloud.excludedIds    ?? [],
+      hiddenFormats:  cloud.hiddenFormats  ?? [],
+      hiddenEpRanges: cloud.hiddenEpRanges ?? [],
+      rankingView:    cloud.rankingView    ?? 'grid',
+      currentSort:    cloud.currentSort    ?? 'elo',
+      sortAsc:        cloud.sortAsc        ?? false,
+    }));
+    location.reload();
+    return true;
+  } catch (err) {
+    console.error('Failed to apply cloud save:', err);
+    return false;
+  }
 }
 
 // ─── METADATA REFRESH ────────────────────────────────────────────────────────
@@ -3205,6 +3353,102 @@ function exportCSV() {
   link.download = (nameFromKey ? nameFromKey + '_' : '') + 'anime_rankings.csv';
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ─── BACKUP / RESTORE ────────────────────────────────────────────────────────
+function downloadBackup() {
+  if (!animeList || !animeList.length) {
+    alert('Nothing to back up yet — start ranking first!');
+    return;
+  }
+  const payload = {
+    _version:     2,
+    _exportedAt:  new Date().toISOString(),
+    saveKey,
+    animeList,
+    battleCount,
+    currentA,
+    currentB,
+    battleHistory,
+    excludedIds:    [...excludedIds],
+    hiddenFormats:  [...hiddenFormats],
+    hiddenEpRanges: [...hiddenEpRanges],
+    rankingView,
+    currentSort,
+    sortAsc,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href  = url;
+  const name = saveKey ? saveKey.replace(/^anime_elo_(mal_)?/, '') : 'backup';
+  link.download = name + '_anime_backup.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function importBackup(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  // Reset so the same file can be re-imported if needed
+  event.target.value = '';
+
+  const msgEl = document.getElementById('backup-import-msg');
+  msgEl.style.display = 'block';
+  msgEl.style.color = '#8b949e';
+  msgEl.textContent = 'Reading file…';
+
+  let payload;
+  try {
+    const text = await file.text();
+    payload = JSON.parse(text);
+  } catch {
+    msgEl.style.color = '#f85149';
+    msgEl.textContent = '✗ Could not read file — make sure it is a valid backup JSON.';
+    return;
+  }
+
+  if (!payload.saveKey || !Array.isArray(payload.animeList) || !payload.animeList.length) {
+    msgEl.style.color = '#f85149';
+    msgEl.textContent = '✗ File does not look like a valid anime ranker backup.';
+    return;
+  }
+
+  const count    = payload.animeList.length;
+  const battles  = payload.battleCount || 0;
+  const exported = payload._exportedAt ? new Date(payload._exportedAt).toLocaleDateString() : 'unknown date';
+  const ok = confirm(
+    `Import backup from ${exported}?\n\n` +
+    `• ${count} anime\n• ${battles} battles\n\n` +
+    `This will REPLACE your current rankings for "${payload.saveKey.replace(/^anime_elo_(mal_)?/, '')}". ` +
+    `Your existing data will be lost.`
+  );
+  if (!ok) {
+    msgEl.style.display = 'none';
+    return;
+  }
+
+  try {
+    localStorage.setItem(payload.saveKey, JSON.stringify({
+      animeList:      payload.animeList,
+      battleCount:    payload.battleCount    ?? 0,
+      currentA:       payload.currentA       ?? null,
+      currentB:       payload.currentB       ?? null,
+      battleHistory:  payload.battleHistory  ?? [],
+      excludedIds:    payload.excludedIds    ?? [],
+      hiddenFormats:  payload.hiddenFormats  ?? [],
+      hiddenEpRanges: payload.hiddenEpRanges ?? [],
+      rankingView:    payload.rankingView    ?? 'grid',
+      currentSort:    payload.currentSort    ?? 'elo',
+      sortAsc:        payload.sortAsc        ?? false,
+    }));
+    msgEl.style.color = '#3fb950';
+    msgEl.textContent = `✓ Imported ${count} anime — reloading…`;
+    setTimeout(() => location.reload(), 800);
+  } catch (err) {
+    msgEl.style.color = '#f85149';
+    msgEl.textContent = '✗ Failed to save: ' + (err.message || 'unknown error');
+  }
 }
 
 function resetAll() {
@@ -3846,6 +4090,14 @@ async function startLoading() {
   document.getElementById('error-msg').style.display = 'none';
   showFlex('loading-screen');
 
+  // For AniList users: check if cloud has a newer save than what's on this device.
+  // If it does, prompt and apply — this is how rankings stay in sync across devices.
+  if (isOAuthUser) {
+    document.getElementById('loading-msg').textContent = '☁️ Checking for cloud save…';
+    const applied = await checkAndApplyCloudSave(existingSaveKey);
+    if (applied) return; // page is reloading
+  }
+
   // Check for saved state (only if not starting fresh)
   if (!seedFromScores && loadState(username)) {
     document.getElementById('loading-msg').textContent = 'Restoring your saved session…';
@@ -3885,6 +4137,8 @@ async function startLoading() {
     battleCount = 0;
     excludedIds = new Set();
     saveState();
+    // Push initial state to cloud immediately for fresh loads
+    if (isOAuthUser) _doCloudSave();
 
     hide('loading-screen');
     show('battle-screen');
