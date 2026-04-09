@@ -609,6 +609,16 @@
       color: #8b949e;
       margin-top: 2px;
     }
+    .status-badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      border-radius: 4px;
+      padding: 1px 5px;
+      margin-top: 2px;
+      margin-left: 3px;
+    }
+    .status-badge.watching   { background: #1a2d1a; border: 1px solid #238636; color: #3fb950; }
+    .status-badge.rewatching { background: #1a2237; border: 1px solid #388bfd; color: #58a6ff; }
 
     /* BATTLE ACTIONS ROW */
     .battle-actions {
@@ -1940,7 +1950,6 @@
         <button class="format-btn active" data-ep="long"    onclick="toggleEpRange('long')"   >25–70</button>
         <button class="format-btn active" data-ep="vlong"   onclick="toggleEpRange('vlong')"  >70+</button>
         <button class="format-btn active" data-ep="unknown" onclick="toggleEpRange('unknown')">Unknown</button>
-        <button class="format-btn active" id="watching-filter-btn" onclick="toggleWatchingFilter()">👁 Watching</button>
       </div>
       <div class="list-controls">
         <button class="sort-btn active" data-sort="elo"     data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
@@ -2303,7 +2312,6 @@ const MAX_HISTORY   = 200;
 let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
 let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.g. 'OVA', 'ONA')
 let hiddenEpRanges  = new Set(); // episode-length buckets hidden from rankings
-let hideWatching    = false;     // when true, hide CURRENT-status anime from rankings
 let _pendingNewAnime    = [];    // anime on AniList not yet in rankings (new anime detection)
 let _newAnimePollingTimer = null;
 let preferRomaji    = false;     // title language preference
@@ -2617,7 +2625,6 @@ function saveState() {
     excludedIds: [...excludedIds],
     hiddenFormats:  [...hiddenFormats],
     hiddenEpRanges: [...hiddenEpRanges],
-    hideWatching,
     rankingView,
     currentSort,
     sortAsc,
@@ -2710,7 +2717,6 @@ function loadState(username, source = 'anilist') {
     excludedIds   = new Set(s.excludedIds ?? []);
     hiddenFormats  = new Set(s.hiddenFormats  ?? []);
     hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
-    hideWatching   = s.hideWatching ?? false;
     rankingView    = s.rankingView ?? 'grid';
     currentSort    = s.currentSort ?? 'elo';
     sortAsc        = s.sortAsc     ?? false;
@@ -2829,16 +2835,18 @@ function renderPair(ia, ib) {
   document.getElementById('img-a').alt   = displayTitle(a);
   document.getElementById('title-a').textContent = displayTitle(a);
   document.getElementById('elo-a').textContent   = `ELO ${a.elo}`;
-  document.getElementById('ep-meta-a').innerHTML = a.format === 'MOVIE'
-    ? '<span class="ep-badge">Movie</span>'
-    : a.episodes ? `<span class="ep-badge">${a.episodes} ep</span>` : '';
+  document.getElementById('ep-meta-a').innerHTML =
+    (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
+      : a.episodes ? `<span class="ep-badge">${a.episodes} ep</span>` : '') +
+    _statusBadge(a.status);
   document.getElementById('img-b').src   = b.cover;
   document.getElementById('img-b').alt   = displayTitle(b);
   document.getElementById('title-b').textContent = displayTitle(b);
   document.getElementById('elo-b').textContent   = `ELO ${b.elo}`;
-  document.getElementById('ep-meta-b').innerHTML = b.format === 'MOVIE'
-    ? '<span class="ep-badge">Movie</span>'
-    : b.episodes ? `<span class="ep-badge">${b.episodes} ep</span>` : '';
+  document.getElementById('ep-meta-b').innerHTML =
+    (b.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
+      : b.episodes ? `<span class="ep-badge">${b.episodes} ep</span>` : '') +
+    _statusBadge(b.status);
 
   // AniList links
   document.getElementById('anilist-a').href = `https://anilist.co/anime/${a.id}`;
@@ -3027,7 +3035,6 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   if (showFuzzyOnly && !anime.fuzzy)         card.style.display = 'none';
   if (hiddenFormats.has(anime.format))       card.style.display = 'none';
   if (anime.format !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
-  if (hideWatching && anime.status === 'CURRENT') card.style.display = 'none';
   return card;
 }
 
@@ -3089,7 +3096,6 @@ function showResults() {
 
   syncFormatButtons();
   syncEpRangeButtons();
-  syncWatchingBtn();
   renderRankingList();
   show('results-screen');
   switchResultsTab('rankings');
@@ -3122,6 +3128,12 @@ function getStreak(anime) {
     else break;
   }
   return { type: streakType, count: streak };
+}
+
+function _statusBadge(status) {
+  if (status === 'CURRENT')   return '<span class="status-badge watching">👁 Watching</span>';
+  if (status === 'REPEATING') return '<span class="status-badge rewatching">🔄 Rewatching</span>';
+  return '';
 }
 
 function streakBadge(anime) {
@@ -4777,20 +4789,6 @@ function syncEpRangeButtons() {
 }
 
 // ─── WATCHING FILTER ─────────────────────────────────────────────────────────
-function toggleWatchingFilter() {
-  hideWatching = !hideWatching;
-  syncWatchingBtn();
-  saveState();
-  filterRankings();
-}
-
-function syncWatchingBtn() {
-  const btn = document.getElementById('watching-filter-btn');
-  if (!btn) return;
-  btn.classList.toggle('active',     !hideWatching);
-  btn.classList.toggle('hidden-fmt',  hideWatching);
-}
-
 // ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
 function toggleDisagreements() { switchResultsTab('stats'); }
 
@@ -5095,9 +5093,12 @@ function renderRankingTable() {
   _vsTableData = [];
   sorted.forEach((anime, i) => {
     const title   = displayTitle(anime);
-    const hidden  = (q && !title.toLowerCase().includes(q)) ||
-                    (showFuzzyOnly && !anime.fuzzy) ||
-                    hiddenFormats.has(anime.format || 'TV');
+    const fmt    = anime.format || 'TV';
+    const hidden = (q && !title.toLowerCase().includes(q)) ||
+                   (showFuzzyOnly && !anime.fuzzy) ||
+                   hiddenFormats.has(fmt) ||
+                   (fmt !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, fmt))) ||
+                   (hideWatching && anime.status === 'CURRENT');
     if (hidden) return;
     const eloRank = eloRankMap.get(anime.id) ?? i;
     const tier    = getTier(eloRank, sorted.length);
