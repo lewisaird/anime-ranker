@@ -1969,7 +1969,6 @@
       </div>
       <div class="format-row" id="ep-filter-row">
         <span class="format-row-label">Length:</span>
-        <button class="format-btn active" data-ep="movie"   onclick="toggleEpRange('movie')"  >Movie</button>
         <button class="format-btn active" data-ep="short"   onclick="toggleEpRange('short')"  >≤12 ep</button>
         <button class="format-btn active" data-ep="medium"  onclick="toggleEpRange('medium')" >13–24</button>
         <button class="format-btn active" data-ep="long"    onclick="toggleEpRange('long')"   >25–70</button>
@@ -1978,9 +1977,12 @@
       </div>
       <div class="list-controls">
         <button class="sort-btn active" data-sort="elo"     data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
+        <button class="sort-btn"        data-sort="title"   data-label="Title"      onclick="setSort('title')">Title</button>
         <button class="sort-btn"        data-sort="winrate" data-label="Win Rate"   onclick="setSort('winrate')">Win Rate</button>
         <button class="sort-btn"        data-sort="battles" data-label="Battles"    onclick="setSort('battles')">Battles</button>
-        <button class="sort-btn"        data-sort="score"   data-label="AniList Avg" onclick="setSort('score')">AniList Avg</button>
+        <button class="sort-btn"        data-sort="score"      data-label="AniList Avg"  onclick="setSort('score')">AniList Avg</button>
+        <button class="sort-btn"        data-sort="tier"       data-label="Tier"         onclick="setSort('tier')">Tier</button>
+        <button class="sort-btn"        data-sort="confidence" data-label="Confidence"   onclick="setSort('confidence')">Confidence</button>
         <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">🌫 Fuzzy only</button>
         <div id="view-toggle-wrap">
           <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view">⊞</button>
@@ -1994,13 +1996,13 @@
             <tr>
               <th style="width:36px">#</th>
               <th style="width:40px"></th>
-              <th onclick="setSort('elo')"     class="sorted" id="th-elo">Title ▾</th>
-              <th onclick="setSort('elo')"     id="th-elo2">ELO</th>
-              <th onclick="setSort('winrate')" id="th-wr">Win Rate</th>
-              <th onclick="setSort('battles')" id="th-bt">Battles</th>
-              <th onclick="setSort('score')"   id="th-sc">AniList Avg</th>
-              <th>Tier</th>
-              <th>Confidence</th>
+              <th onclick="setSort('title')"      id="th-title">Title</th>
+              <th onclick="setSort('elo')"        class="sorted" id="th-elo">ELO ▾</th>
+              <th onclick="setSort('winrate')"    id="th-wr">Win Rate</th>
+              <th onclick="setSort('battles')"    id="th-bt">Battles</th>
+              <th onclick="setSort('score')"      id="th-sc">AniList Avg</th>
+              <th onclick="setSort('tier')"       id="th-tier">Tier</th>
+              <th onclick="setSort('confidence')" id="th-conf">Confidence</th>
             </tr>
           </thead>
           <tbody id="ranking-table-body"></tbody>
@@ -3261,6 +3263,25 @@ function getSortedList() {
       });
     case 'battles':  return [...animeList].sort((a, b) => (a.comparisons - b.comparisons) * dir);
     case 'score':    return [...animeList].sort((a, b) => ((a.globalScore || 0) - (b.globalScore || 0)) * dir);
+    case 'title':    return [...animeList].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b)) * dir);
+    case 'tier': {
+      const tierOrder = { S: 0, A: 1, B: 2, C: 3, D: 4 };
+      const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
+      const rankMap   = new Map(eloSorted.map((a, i) => [a.id, i]));
+      return [...animeList].sort((a, b) => {
+        const ta = tierOrder[getTier(rankMap.get(a.id) ?? 0, animeList.length)] ?? 5;
+        const tb = tierOrder[getTier(rankMap.get(b.id) ?? 0, animeList.length)] ?? 5;
+        return ta !== tb ? (ta - tb) * dir : (b.elo - a.elo); // within tier, sort by ELO
+      });
+    }
+    case 'confidence': {
+      const confOrder = { confident: 0, settling: 1, uncertain: 2 };
+      return [...animeList].sort((a, b) => {
+        const ca = confOrder[confidenceLabel(a.comparisons).cls] ?? 3;
+        const cb = confOrder[confidenceLabel(b.comparisons).cls] ?? 3;
+        return ca !== cb ? (ca - cb) * dir : (b.elo - a.elo); // within confidence, sort by ELO
+      });
+    }
     default:         return [...animeList].sort((a, b) => (a.elo - b.elo) * dir);
   }
 }
@@ -3268,17 +3289,19 @@ function getSortedList() {
 function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const eloRank = eloRankMap.get(anime.id) ?? i;
   const displayRank = eloRank + 1; // always show true ELO rank, regardless of current sort
+  const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
+  const conf = confidenceLabel(anime.comparisons);
+  const tier = getTier(eloRank, totalLen);
+
   const card = document.createElement('div');
   card.className = 'rank-card';
   card.dataset.format  = anime.format || 'TV';
   card.dataset.epRange = epRange(anime.episodes, anime.format);
+  card.dataset.tier    = tier;
+  card.dataset.conf    = conf.cls;
   card.style.cursor = 'pointer';
   card.title = 'Click for details';
   card.addEventListener('click', () => showAnimeDetail(anime.id));
-
-  const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
-  const conf = confidenceLabel(anime.comparisons);
-  const tier = getTier(eloRank, totalLen);
   const sortExtra = currentSort === 'winrate'
     ? `<div class="rank-elo">${(a => (a.wins+a.losses)>0 ? Math.round(a.wins/(a.wins+a.losses)*100)+'% WR' : '–')(anime)}</div>`
     : currentSort === 'battles' ? `<div class="rank-elo">${anime.comparisons} battles</div>`
@@ -3344,13 +3367,8 @@ function showResults() {
   if (!currentSort) currentSort = 'elo';
   const ffBtn = document.getElementById('fuzzy-filter-btn');
   if (ffBtn) ffBtn.classList.remove('active');
-  // Sync sort buttons to restored sort state
-  document.querySelectorAll('.sort-btn').forEach(b => {
-    const active = b.dataset.sort === currentSort;
-    b.classList.toggle('active', active);
-    const label = b.dataset.label || b.textContent.replace(/ [↑↓]$/, '');
-    b.textContent = active ? `${label} ${sortAsc ? '↑' : '↓'}` : label;
-  });
+  // Sync sort buttons and table headers to restored sort state
+  _syncSortUI();
   // Sync view buttons and panels to current rankingView
   document.getElementById('ranking-list').style.display       = rankingView === 'grid' ? '' : 'none';
   document.getElementById('ranking-table-wrap').style.display = rankingView === 'list' ? '' : 'none';
@@ -4775,18 +4793,16 @@ function flagFuzzy(event, side) {
 function filterRankings() {
   const q = document.getElementById('search-input').value.toLowerCase().trim();
   document.querySelectorAll('#ranking-list .rank-card').forEach(card => {
-    const title    = card.querySelector('.rank-title').textContent.toLowerCase();
-    const isFuzzy  = card.querySelector('.fuzzy-tag') !== null;
-    const fmt      = card.dataset.format || '';
-    const epRng    = card.dataset.epRange || 'unknown';
-    const watching = card.dataset.watching === '1';
-    const matchSearch   = !q || title.includes(q);
-    const matchFuzzy    = !showFuzzyOnly || isFuzzy;
-    const matchFormat   = !hiddenFormats.has(fmt);
-    const matchEpRange  = !hiddenEpRanges.has(epRng);
-    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange) ? '' : 'none';
+    const title   = card.querySelector('.rank-title').textContent.toLowerCase();
+    const isFuzzy = card.querySelector('.fuzzy-tag') !== null;
+    const fmt     = card.dataset.format  || '';
+    const epRng   = card.dataset.epRange || 'unknown';
+    const show = (!q || title.includes(q))
+      && (!showFuzzyOnly || isFuzzy)
+      && !hiddenFormats.has(fmt)
+      && !hiddenEpRanges.has(epRng);
+    card.style.display = show ? '' : 'none';
   });
-  // Also re-render table with updated filters when in list view
   if (rankingView === 'list') renderRankingTable();
 }
 
@@ -5091,19 +5107,35 @@ function toggleLanguage() {
 }
 
 // ─── SORT & FUZZY FILTER ─────────────────────────────────────────────────────
-function setSort(type) {
-  if (currentSort === type) {
-    sortAsc = !sortAsc; // clicking the active sort toggles direction
-  } else {
-    currentSort = type;
-    sortAsc = false; // new sort always starts descending
-  }
+// Maps sort type → table header element id
+const _sortToTh = { elo: 'th-elo', title: 'th-title', winrate: 'th-wr', battles: 'th-bt', score: 'th-sc', tier: 'th-tier', confidence: 'th-conf' };
+
+function _syncSortUI() {
+  // Update sort buttons
   document.querySelectorAll('.sort-btn').forEach(b => {
     const active = b.dataset.sort === currentSort;
     b.classList.toggle('active', active);
     const label = b.dataset.label || b.textContent.replace(/ [↑↓]$/, '');
     b.textContent = active ? `${label} ${sortAsc ? '↑' : '↓'}` : label;
   });
+  // Update table headers
+  document.querySelectorAll('#ranking-table thead th[id]').forEach(th => {
+    const isActive = th.id === (_sortToTh[currentSort] || '');
+    th.classList.toggle('sorted', isActive);
+    // Strip any existing arrow then add current one
+    const base = th.textContent.replace(/ [▾▴]$/, '');
+    th.textContent = isActive ? `${base} ${sortAsc ? '▴' : '▾'}` : base;
+  });
+}
+
+function setSort(type) {
+  if (currentSort === type) {
+    sortAsc = !sortAsc;
+  } else {
+    currentSort = type;
+    sortAsc = false;
+  }
+  _syncSortUI();
   saveState();
   renderRankingList();
   filterRankings();
@@ -5144,7 +5176,7 @@ function syncFormatButtons() {
 
 // ─── EPISODE RANGE FILTER ────────────────────────────────────────────────────
 function epRange(episodes, format) {
-  if (format === 'MOVIE') return 'movie';
+  if (format === 'MOVIE') return 'short'; // movies count as ≤12 ep
   if (!episodes)          return 'unknown';
   if (episodes <= 12)     return 'short';
   if (episodes <= 24)     return 'medium';
@@ -5171,7 +5203,6 @@ function syncEpRangeButtons() {
   });
 }
 
-// ─── WATCHING FILTER ─────────────────────────────────────────────────────────
 // ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
 function toggleDisagreements() { switchResultsTab('stats'); }
 
@@ -5477,14 +5508,14 @@ function renderRankingTable() {
   sorted.forEach((anime, i) => {
     const title   = displayTitle(anime);
     const fmt    = anime.format || 'TV';
+    const eloRank = eloRankMap.get(anime.id) ?? i;
+    const tier    = getTier(eloRank, sorted.length);
+    const conf    = confidenceLabel(anime.comparisons);
     const hidden = (q && !title.toLowerCase().includes(q)) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
                    hiddenFormats.has(fmt) ||
                    hiddenEpRanges.has(epRange(anime.episodes, fmt));
     if (hidden) return;
-    const eloRank = eloRankMap.get(anime.id) ?? i;
-    const tier    = getTier(eloRank, sorted.length);
-    const conf    = confidenceLabel(anime.comparisons);
     const wr      = (anime.wins + anime.losses) > 0
       ? Math.round(anime.wins / (anime.wins + anime.losses) * 100) + '%' : '–';
     const sb      = streakBadge(anime);
