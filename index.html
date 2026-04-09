@@ -2086,6 +2086,10 @@
         <div class="manage-section">
           <div class="manage-section-title">Backup &amp; Sync</div>
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Save a full backup of your rankings to transfer to another device or browser.</p>
+          <div id="cloud-sync-btns" style="display:none">
+            <button class="manage-btn" onclick="manualCloudPush()">☁️ Save to cloud now</button>
+            <button class="manage-btn" onclick="manualCloudPull()">☁️ Load from cloud</button>
+          </div>
           <button class="manage-btn" onclick="downloadBackup()">⬇ Download backup</button>
           <button class="manage-btn" onclick="document.getElementById('backup-import-input').click()">📂 Import backup</button>
           <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(event)">
@@ -2447,6 +2451,10 @@ function _updateAuthUI() {
   // Enable/disable cloud sync
   _cloudSyncEnabled = loggedIn;
   if (!loggedIn) _setSyncIndicator('hidden');
+
+  // Show cloud push/pull buttons only when AniList-authenticated
+  const cloudBtns = document.getElementById('cloud-sync-btns');
+  if (cloudBtns) cloudBtns.style.display = loggedIn ? '' : 'none';
 }
 
 const ANILIST_CLIENT_ID = '37947';
@@ -2727,6 +2735,36 @@ async function _loadCloudSave() {
 
 // Compare cloud vs local and prompt if cloud is newer.
 // Returns true if the cloud save was applied (caller should skip normal load).
+// Applies a cloud save object directly into memory and navigates to battle screen.
+// Avoids a full page reload so _cloudSyncEnabled stays true and auto-save keeps working.
+function _applyCloudSaveToMemory(cloud) {
+  animeList      = cloud.animeList;
+  battleCount    = cloud.battleCount    ?? 0;
+  currentA       = cloud.currentA       ?? null;
+  currentB       = cloud.currentB       ?? null;
+  battleHistory  = cloud.battleHistory  ?? [];
+  excludedIds    = new Set(cloud.excludedIds    ?? []);
+  hiddenFormats  = new Set(cloud.hiddenFormats  ?? []);
+  hiddenEpRanges = new Set(cloud.hiddenEpRanges ?? []);
+  rankingView    = cloud.rankingView    ?? 'grid';
+  currentSort    = cloud.currentSort    ?? 'elo';
+  sortAsc        = cloud.sortAsc        ?? false;
+
+  // Migrate old data fields
+  animeList.forEach(a => {
+    if (!a.titleEn)                a.titleEn     = a.title || '';
+    if (!a.titleRo)                a.titleRo     = a.title || '';
+    if (a.description === undefined) a.description = '';
+    if (!a.format)                 a.format      = 'TV';
+    if (a.globalScore === undefined) a.globalScore = 0;
+    if (a.episodes === undefined)  a.episodes    = 0;
+    if (a.status === undefined)    a.status      = 'COMPLETED';
+  });
+
+  if (cloud.saveKey) saveKey = cloud.saveKey;
+  saveState(); // persist to localStorage + schedule cloud save (noop here since just loaded)
+}
+
 async function checkAndApplyCloudSave(localSaveKey) {
   if (!_cloudSyncEnabled || !authToken || !authUser) return false;
   const cloud = await _loadCloudSave();
@@ -2734,19 +2772,18 @@ async function checkAndApplyCloudSave(localSaveKey) {
 
   const cloudDate = cloud.savedAt ? new Date(cloud.savedAt) : null;
 
-  // Compare with local
+  // Compare with local — only prompt if cloud has more battles
   const localRaw = localStorage.getItem(localSaveKey);
   if (localRaw) {
     try {
       const local = JSON.parse(localRaw);
-      // If cloud has more battles, it's likely the more up-to-date source
       const cloudBattles = cloud.battleCount || 0;
       const localBattles = local.battleCount || 0;
       if (cloudBattles <= localBattles) return false; // local is at least as fresh
     } catch { /* corrupt local save — fall through */ }
   }
 
-  const dateStr = cloudDate ? cloudDate.toLocaleString() : 'an unknown time';
+  const dateStr    = cloudDate ? cloudDate.toLocaleString() : 'an unknown time';
   const cloudBattles = cloud.battleCount || 0;
   const cloudCount   = cloud.animeList.length;
   const ok = confirm(
@@ -2756,26 +2793,62 @@ async function checkAndApplyCloudSave(localSaveKey) {
   );
   if (!ok) return false;
 
-  // Apply cloud save to localStorage and reload
   try {
-    localStorage.setItem(cloud.saveKey, JSON.stringify({
-      animeList:      cloud.animeList,
-      battleCount:    cloud.battleCount    ?? 0,
-      currentA:       cloud.currentA       ?? null,
-      currentB:       cloud.currentB       ?? null,
-      battleHistory:  cloud.battleHistory  ?? [],
-      excludedIds:    cloud.excludedIds    ?? [],
-      hiddenFormats:  cloud.hiddenFormats  ?? [],
-      hiddenEpRanges: cloud.hiddenEpRanges ?? [],
-      rankingView:    cloud.rankingView    ?? 'grid',
-      currentSort:    cloud.currentSort    ?? 'elo',
-      sortAsc:        cloud.sortAsc        ?? false,
-    }));
-    location.reload();
-    return true;
+    _applyCloudSaveToMemory(cloud);
+    return true; // caller should navigate to battle screen
   } catch (err) {
     console.error('Failed to apply cloud save:', err);
     return false;
+  }
+}
+
+// Manual cloud push — accessible from Manage tab
+async function manualCloudPush() {
+  if (!authToken || !authUser) return;
+  if (!animeList.length) { alert('Nothing to save yet.'); return; }
+  _setSyncIndicator('saving');
+  clearTimeout(_cloudSaveTimer);
+  await _doCloudSave();
+}
+
+// Manual cloud pull — accessible from Manage tab
+async function manualCloudPull() {
+  if (!authToken || !authUser) { alert('You need to be logged in with AniList to use cloud sync.'); return; }
+  const cloud = await _loadCloudSave();
+  if (!cloud || !cloud.animeList) { alert('No cloud save found.'); return; }
+
+  const cloudDate    = cloud.savedAt ? new Date(cloud.savedAt).toLocaleString() : 'unknown time';
+  const cloudBattles = cloud.battleCount || 0;
+  const cloudCount   = cloud.animeList.length;
+  const localBattles = battleCount || 0;
+
+  const ok = confirm(
+    `☁️ Cloud save from ${cloudDate}\n\n` +
+    `Cloud: ${cloudBattles} battles across ${cloudCount} anime\n` +
+    `Local: ${localBattles} battles\n\n` +
+    `Replace your local rankings with the cloud save?`
+  );
+  if (!ok) return;
+
+  try {
+    _applyCloudSaveToMemory(cloud);
+    // Navigate to battle screen if not already there
+    const onBattle  = document.getElementById('battle-screen').style.display  !== 'none';
+    const onResults = document.getElementById('results-screen').style.display !== 'none';
+    if (!onBattle && !onResults) {
+      hide('username-screen');
+      show('battle-screen');
+      document.getElementById('change-user-btn').style.display = 'block';
+      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+    } else if (onBattle) {
+      syncFormatButtons(); syncEpRangeButtons();
+      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+    } else {
+      renderRankingList();
+    }
+    alert('✓ Cloud save loaded successfully.');
+  } catch (err) {
+    alert('Failed to load cloud save: ' + (err.message || 'unknown error'));
   }
 }
 
@@ -4091,11 +4164,23 @@ async function startLoading() {
   showFlex('loading-screen');
 
   // For AniList users: check if cloud has a newer save than what's on this device.
-  // If it does, prompt and apply — this is how rankings stay in sync across devices.
+  // If it does, prompt and apply in-memory — no page reload needed.
   if (isOAuthUser) {
     document.getElementById('loading-msg').textContent = '☁️ Checking for cloud save…';
     const applied = await checkAndApplyCloudSave(existingSaveKey);
-    if (applied) return; // page is reloading
+    if (applied) {
+      // Cloud state is now in memory — go straight to battle screen
+      document.getElementById('loading-msg').textContent = '☁️ Cloud save loaded!';
+      await new Promise(r => setTimeout(r, 500));
+      hide('loading-screen');
+      show('battle-screen');
+      document.getElementById('change-user-btn').style.display = 'block';
+      snapshotSessionStart();
+      maybeShowKbTip();
+      syncFormatButtons(); syncEpRangeButtons();
+      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      return;
+    }
   }
 
   // Check for saved state (only if not starting fresh)
