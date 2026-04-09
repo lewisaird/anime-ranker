@@ -1946,6 +1946,7 @@
       </div>
       <div class="format-row" id="ep-filter-row">
         <span class="format-row-label">Length:</span>
+        <button class="format-btn active" data-ep="movie"   onclick="toggleEpRange('movie')"  >Movie</button>
         <button class="format-btn active" data-ep="short"   onclick="toggleEpRange('short')"  >≤12 ep</button>
         <button class="format-btn active" data-ep="medium"  onclick="toggleEpRange('medium')" >13–24</button>
         <button class="format-btn active" data-ep="long"    onclick="toggleEpRange('long')"   >25–70</button>
@@ -3255,7 +3256,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   `;
   if (showFuzzyOnly && !anime.fuzzy)         card.style.display = 'none';
   if (hiddenFormats.has(anime.format))       card.style.display = 'none';
-  if (anime.format !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
+  if (hiddenEpRanges.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
   return card;
 }
 
@@ -4738,7 +4739,7 @@ function filterRankings() {
     const matchSearch   = !q || title.includes(q);
     const matchFuzzy    = !showFuzzyOnly || isFuzzy;
     const matchFormat   = !hiddenFormats.has(fmt);
-    const matchEpRange  = fmt === 'MOVIE' || !hiddenEpRanges.has(epRng);
+    const matchEpRange  = !hiddenEpRanges.has(epRng);
     card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange) ? '' : 'none';
   });
   // Also re-render table with updated filters when in list view
@@ -5099,7 +5100,7 @@ function syncFormatButtons() {
 
 // ─── EPISODE RANGE FILTER ────────────────────────────────────────────────────
 function epRange(episodes, format) {
-  if (format === 'MOVIE') return 'movie'; // movies bypass length filter
+  if (format === 'MOVIE') return 'movie';
   if (!episodes)          return 'unknown';
   if (episodes <= 12)     return 'short';
   if (episodes <= 24)     return 'medium';
@@ -5435,7 +5436,7 @@ function renderRankingTable() {
     const hidden = (q && !title.toLowerCase().includes(q)) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
                    hiddenFormats.has(fmt) ||
-                   (fmt !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, fmt)));
+                   hiddenEpRanges.has(epRange(anime.episodes, fmt));
     if (hidden) return;
     const eloRank = eloRankMap.get(anime.id) ?? i;
     const tier    = getTier(eloRank, sorted.length);
