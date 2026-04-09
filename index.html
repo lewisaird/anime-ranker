@@ -4739,8 +4739,7 @@ function filterRankings() {
     const matchFuzzy    = !showFuzzyOnly || isFuzzy;
     const matchFormat   = !hiddenFormats.has(fmt);
     const matchEpRange  = fmt === 'MOVIE' || !hiddenEpRanges.has(epRng);
-    const matchWatching = !hideWatching || !watching;
-    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange && matchWatching) ? '' : 'none';
+    card.style.display = (matchSearch && matchFuzzy && matchFormat && matchEpRange) ? '' : 'none';
   });
   // Also re-render table with updated filters when in list view
   if (rankingView === 'list') renderRankingTable();
@@ -5436,8 +5435,7 @@ function renderRankingTable() {
     const hidden = (q && !title.toLowerCase().includes(q)) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
                    hiddenFormats.has(fmt) ||
-                   (fmt !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, fmt))) ||
-                   (hideWatching && anime.status === 'CURRENT');
+                   (fmt !== 'MOVIE' && hiddenEpRanges.has(epRange(anime.episodes, fmt)));
     if (hidden) return;
     const eloRank = eloRankMap.get(anime.id) ?? i;
     const tier    = getTier(eloRank, sorted.length);
