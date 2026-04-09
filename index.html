@@ -1697,6 +1697,28 @@
       .compat-ranks { white-space: normal; max-width: 80px; text-align: right; }
       .compat-anime-row { flex-wrap: wrap; }
     }
+  /* ── Toast notification ───────────────────────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%) translateY(12px);
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    color: #e6edf3;
+    font-size: 0.85rem;
+    padding: 10px 20px;
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    white-space: nowrap;
+  }
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
   </style>
 </head>
 <body>
@@ -1753,6 +1775,7 @@
 
     <!-- AniList OAuth login -->
     <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
+    <p style="font-size:0.75rem;color:#8b949e;margin:4px 0 0" id="anilist-new-hint">New to AniList? <a href="https://anilist.co/register" target="_blank" rel="noopener" style="color:#58a6ff">Create a free account ↗</a> — it's where you track anime you've watched.</p>
     <p id="auth-error-msg"></p>
 
     <!-- Logged-in badge (shown when token exists) -->
@@ -2414,8 +2437,10 @@ function _updateAuthUI() {
   // Username screen badge
   const loginBtn  = document.getElementById('auth-login-btn');
   const loggedBadge = document.getElementById('auth-username-badge');
+  const newHint   = document.getElementById('anilist-new-hint');
   if (loginBtn)    loginBtn.style.display    = loggedIn ? 'none' : '';
   if (loggedBadge) loggedBadge.style.display = loggedIn ? 'flex'  : 'none';
+  if (newHint)     newHint.style.display     = loggedIn ? 'none'  : '';
   if (loggedIn && loggedBadge) {
     const av = document.getElementById('auth-badge-avatar');
     const nm = document.getElementById('auth-badge-name');
@@ -2666,8 +2691,9 @@ function saveState() {
 // Auto-saves to Netlify Blobs keyed by AniList user ID.
 // The Netlify Function verifies the AniList token server-side.
 
-let _cloudSaveTimer   = null;  // debounce handle
-let _cloudSyncEnabled = false; // only when AniList-authenticated
+let _cloudSaveTimer    = null;  // debounce handle
+let _cloudSyncEnabled  = false; // only when AniList-authenticated
+let _suppressCloudSave = false; // true while applying a cloud save to avoid an immediate re-save
 
 function _setSyncIndicator(state) {
   // state: 'saving' | 'saved' | 'error' | 'hidden'
@@ -2683,7 +2709,7 @@ function _setSyncIndicator(state) {
 // Call this after saveState() for anything battle-related.
 // Debounced — fires 5 s after the last change to avoid hammering the function.
 function schedulCloudSave() {
-  if (!_cloudSyncEnabled || !authToken || !authUser) return;
+  if (_suppressCloudSave || !_cloudSyncEnabled || !authToken || !authUser) return;
   clearTimeout(_cloudSaveTimer);
   _setSyncIndicator('saving');
   _cloudSaveTimer = setTimeout(_doCloudSave, 5000);
@@ -2770,7 +2796,9 @@ function _applyCloudSaveToMemory(cloud) {
   });
 
   if (cloud.saveKey) saveKey = cloud.saveKey;
-  saveState(); // persist to localStorage + schedule cloud save (noop here since just loaded)
+  _suppressCloudSave = true;
+  saveState(); // persist to localStorage — suppress cloud save since we just loaded from cloud
+  _suppressCloudSave = false;
 }
 
 async function checkAndApplyCloudSave(localSaveKey) {
@@ -2813,7 +2841,7 @@ async function checkAndApplyCloudSave(localSaveKey) {
 // Manual cloud push — accessible from Manage tab
 async function manualCloudPush() {
   if (!authToken || !authUser) return;
-  if (!animeList.length) { alert('Nothing to save yet.'); return; }
+  if (!animeList.length) { showToast('Nothing to save yet — start ranking first.'); return; }
   _setSyncIndicator('saving');
   clearTimeout(_cloudSaveTimer);
   await _doCloudSave();
@@ -2821,9 +2849,9 @@ async function manualCloudPush() {
 
 // Manual cloud pull — accessible from Manage tab
 async function manualCloudPull() {
-  if (!authToken || !authUser) { alert('You need to be logged in with AniList to use cloud sync.'); return; }
+  if (!authToken || !authUser) { showToast('Log in with AniList to use cloud sync.'); return; }
   const cloud = await _loadCloudSave();
-  if (!cloud || !cloud.animeList) { alert('No cloud save found.'); return; }
+  if (!cloud || !cloud.animeList) { showToast('No cloud save found yet.'); return; }
 
   const cloudDate    = cloud.savedAt ? new Date(cloud.savedAt).toLocaleString() : 'unknown time';
   const cloudBattles = cloud.battleCount || 0;
@@ -2854,9 +2882,9 @@ async function manualCloudPull() {
     } else {
       renderRankingList();
     }
-    alert('✓ Cloud save loaded successfully.');
+    showToast('✓ Cloud save loaded.');
   } catch (err) {
-    alert('Failed to load cloud save: ' + (err.message || 'unknown error'));
+    showToast('Failed to load cloud save: ' + (err.message || 'unknown error'));
   }
 }
 
@@ -2967,6 +2995,16 @@ function loadState(username, source = 'anilist') {
 function show(id)  { document.getElementById(id).style.display = 'block'; }
 function hide(id)  { document.getElementById(id).style.display = 'none'; }
 function showFlex(id) { document.getElementById(id).style.display = 'flex'; }
+
+let _toastTimer = null;
+function showToast(msg, duration = 3000) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
 
 function updateProgress() {
   const pct = Math.min(100, (battleCount / TARGET_BATTLES) * 100);
@@ -3232,9 +3270,8 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const displayRank = eloRank + 1; // always show true ELO rank, regardless of current sort
   const card = document.createElement('div');
   card.className = 'rank-card';
-  card.dataset.format   = anime.format || 'TV';
-  card.dataset.epRange  = epRange(anime.episodes, anime.format);
-  card.dataset.watching = (anime.status === 'CURRENT') ? '1' : '0';
+  card.dataset.format  = anime.format || 'TV';
+  card.dataset.epRange = epRange(anime.episodes, anime.format);
   card.style.cursor = 'pointer';
   card.title = 'Click for details';
   card.addEventListener('click', () => showAnimeDetail(anime.id));
@@ -3439,7 +3476,7 @@ function exportCSV() {
 // ─── BACKUP / RESTORE ────────────────────────────────────────────────────────
 function downloadBackup() {
   if (!animeList || !animeList.length) {
-    alert('Nothing to back up yet — start ranking first!');
+    showToast('Nothing to back up yet — start ranking first.');
     return;
   }
   const payload = {
@@ -4211,7 +4248,7 @@ async function startLoading() {
     document.getElementById('loading-msg').textContent = 'Fetching your anime list from AniList…';
     animeList = await fetchAllAnime(username, seedFromScores);
 
-    if (animeList.length === 0) throw new Error('No completed anime found.');
+    if (animeList.length === 0) throw new Error('No completed anime found on this account. Make sure you have anime marked as "Completed" on AniList.');
 
     // Warn if warm start was requested but user has no AniList scores
     const scoredCount = animeList.filter(a => a.anilistScore > 0).length;
@@ -5667,7 +5704,7 @@ async function executeSyncToAniList() {
 // ─── RESEED FROM ANILIST SCORES ───────────────────────────────────────────────
 async function reseedFromAniList() {
   if (!authToken || !authUser) {
-    alert('Please log in with AniList first.');
+    showToast('Please log in with AniList first.');
     return;
   }
   const btn = document.getElementById('reseed-anilist-btn');
@@ -5706,9 +5743,9 @@ async function reseedFromAniList() {
     saveState();
     renderRankingList();
     filterRankings();
-    alert(`✅ Re-seeded ${updated} anime from your AniList scores.\nBattle history is preserved — ELO will adjust as you rank.`);
+    showToast(`✓ Re-seeded ${updated} anime from AniList scores.`);
   } catch (err) {
-    alert('Error re-seeding: ' + err.message);
+    showToast('Error re-seeding: ' + err.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🌱 Re-seed ELO from AniList scores'; }
   }
@@ -5762,6 +5799,26 @@ window.addEventListener('load', () => {
   const input = document.getElementById('username-input');
   if (input.value.trim()) startLoading();
 });
+
+// Save to cloud when the user closes the tab or navigates away.
+// sendBeacon is the only reliable mechanism for this — it fires even if the page is unloading.
+window.addEventListener('beforeunload', () => {
+  if (!_cloudSyncEnabled || !authToken || !authUser || !animeList.length || !saveKey) return;
+  clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
+  const session = {
+    saveKey, animeList, battleCount, currentA, currentB, battleHistory,
+    excludedIds:    [...excludedIds],
+    hiddenFormats:  [...hiddenFormats],
+    hiddenEpRanges: [...hiddenEpRanges],
+    rankingView, currentSort, sortAsc,
+    savedAt: new Date().toISOString(),
+  };
+  const blob = new Blob(
+    [JSON.stringify({ token: authToken, session })],
+    { type: 'application/json' }
+  );
+  navigator.sendBeacon('/.netlify/functions/save-session', blob);
+});
 </script>
 <script>
   if ('serviceWorker' in navigator) {
@@ -5770,5 +5827,6 @@ window.addEventListener('load', () => {
     });
   }
 </script>
+<div id="toast"></div>
 </body>
 </html>
