@@ -2195,7 +2195,7 @@
 
         <div class="help-section">
           <h4>📋 Rankings Filters &amp; Sort</h4>
-          <p>Filter by format (TV, Movie, OVA…) and sort by ELO, Win Rate, Battles, or AniList Average. Toggle grid or list view. Your filters and sort are remembered between sessions.</p>
+          <p>Filter by <strong>format</strong> (TV, Movie, OVA…) and <strong>episode length</strong> (Movie · ≤12 · 13–24 · 25–70 · 70+ · Unknown). Sort by ELO, Win Rate, Battles, or AniList Average. Toggle grid or list view. All filters and sort order are remembered between sessions.</p>
         </div>
 
         <div class="help-section">
@@ -2204,7 +2204,7 @@
           <strong>History</strong> — recent battle log.<br>
           <strong>Discover</strong> — recommendations based on your top picks.<br>
           <strong>Social</strong> — compare taste with any AniList user.<br>
-          <strong>Manage</strong> — export rankings, sync to AniList, or reset everything.</p>
+          <strong>Manage</strong> — cloud sync, export rankings, sync to AniList, or reset everything.</p>
         </div>
 
         <div class="help-section">
@@ -2213,10 +2213,15 @@
         </div>
 
         <div class="help-section" id="help-anilist-section" style="display:none">
+          <h4>☁️ Cloud Sync</h4>
+          <p>When logged in with AniList, your rankings automatically save to the cloud after each battle (with a short delay). Opening the app on another device will prompt you to load the cloud save if it's newer than your local one. You can also push or pull manually any time from <strong>Manage → Backup &amp; Sync</strong>.</p>
+        </div>
+
+        <div class="help-section" id="help-anilist-section-2" style="display:none">
           <h4>🔵 AniList Integration</h4>
-          <p><strong>On first load</strong> — your AniList scores are automatically converted into starting ELO values (10→1500 · 7→1200 · 4→900), so your rankings begin close to where you already know they should be.</p>
-          <p style="margin-top:6px"><strong>Sync to AniList</strong> (Manage tab) — once you've done enough battles, push your ELO rankings back to AniList as updated scores. You'll see a preview of every change before confirming.</p>
-          <p style="margin-top:6px"><strong>Re-seed from AniList</strong> (Manage tab) — re-pull your current AniList scores and replace your ELO values with fresh starting points, without erasing your battle history.</p>
+          <p><strong>On first load</strong> — your AniList scores seed starting ELO values (10→1500 · 7→1200 · 4→900), so rankings begin close to where you already know they should be.</p>
+          <p style="margin-top:6px"><strong>Sync to AniList</strong> (Manage tab) — push your ELO rankings back to AniList as updated scores. You'll see a preview of every change before confirming.</p>
+          <p style="margin-top:6px"><strong>Re-seed from AniList</strong> (Manage tab) — re-pull your current AniList scores and replace ELO values with fresh starting points, without erasing battle history.</p>
         </div>
 
       </div>
@@ -2436,9 +2441,11 @@ function _updateAuthUI() {
   if (warmInfo)  warmInfo.style.display  = loggedIn ? 'none' : '';
   if (oauthNote) oauthNote.style.display = loggedIn ? ''     : 'none';
 
-  // Show/hide the AniList help section in the help modal
-  const helpAnilist = document.getElementById('help-anilist-section');
-  if (helpAnilist) helpAnilist.style.display = loggedIn ? '' : 'none';
+  // Show/hide the AniList help sections in the help modal
+  const helpAnilist  = document.getElementById('help-anilist-section');
+  const helpAnilist2 = document.getElementById('help-anilist-section-2');
+  if (helpAnilist)  helpAnilist.style.display  = loggedIn ? '' : 'none';
+  if (helpAnilist2) helpAnilist2.style.display = loggedIn ? '' : 'none';
 
   // Start new-anime polling when logged in; stop when logged out
   if (loggedIn && animeList.length) {
