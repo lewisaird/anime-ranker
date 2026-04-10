@@ -4530,15 +4530,15 @@ function _toggleCompatDetail(id) {
   el.innerHTML = `
     <div class="compat-detail-stat">
       <span class="val">#${d.myOverallRank} <span style="font-size:0.7rem;color:#6e7681">of ${d.totalAnime}</span></span>
-      <span class="lbl">Your overall ELO rank</span>
+      <span class="lbl">Where you rank it across all your anime</span>
     </div>
     <div class="compat-detail-stat">
       <span class="val">${d.theirScore !== null ? d.theirScore + ' / 10' : 'Unscored'}</span>
-      <span class="lbl">Their AniList score</span>
+      <span class="lbl">The score they gave it on AniList</span>
     </div>
     <div class="compat-detail-stat">
       <span class="val">#${d.myOverlapRank} vs #${d.othOverlapRank}</span>
-      <span class="lbl">Rank within shared ${d.overlapSize} anime</span>
+      <span class="lbl">Your rank vs theirs among the ${d.overlapSize} anime you've both seen</span>
     </div>
     <div class="compat-detail-stat" style="justify-content:center">
       ${diffArrow}
@@ -4585,10 +4585,15 @@ async function runFriendRecs() {
     const ownIds = new Set(animeList.map(a => a.id));
     const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
 
-    // Candidate pool: friend watched + scored 60+, user hasn't seen
-    const candidates = data.data.MediaListCollection.lists
-      .flatMap(l => l.entries)
-      .filter(e => WATCHED.has(e.status) && e.score >= 60 && !ownIds.has(e.media.id));
+    // Detect friend's scoring scale from their highest score
+    // (AniList supports 10-point, 100-point, 5-star etc.)
+    const allEntries = data.data.MediaListCollection.lists.flatMap(l => l.entries);
+    const maxScore = Math.max(...allEntries.map(e => e.score).filter(s => s > 0), 0);
+    const scoreThreshold = maxScore > 10 ? 60 : 6;
+
+    // Candidate pool: friend watched + rated above threshold, user hasn't seen
+    const candidates = allEntries
+      .filter(e => WATCHED.has(e.status) && e.score >= scoreThreshold && !ownIds.has(e.media.id));
 
     if (!candidates.length) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
@@ -4617,9 +4622,9 @@ async function runFriendRecs() {
       const affinities = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
       const avgGenreElo = affinities.length ? affinities.reduce((s, v) => s + v, 0) / affinities.length : globalAvgElo;
       const genreBonus = (avgGenreElo - globalAvgElo) / 400; // normalised offset
-      const friendNorm = Math.min(e.score, 100) / 100;
+      const friendNorm = maxScore > 10 ? e.score / 100 : e.score / 10;
       const totalScore = friendNorm * 0.6 + genreBonus * 0.4;
-      const displayScore = e.score > 10 ? (e.score / 10).toFixed(1) : e.score.toFixed(1);
+      const displayScore = (maxScore > 10 ? e.score / 10 : e.score).toFixed(1);
       return { media: e.media, friendScore: displayScore, totalScore };
     });
 
