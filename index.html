@@ -1643,6 +1643,7 @@
     .compat-col h4 { font-size: 0.78rem; color: #8b949e; margin-bottom: 10px; }
     .compat-col-full { grid-column: 1 / -1; }
     .compat-anime-row {
+      cursor: pointer;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -1654,6 +1655,39 @@
     .compat-anime-row img { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
     .compat-anime-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .compat-ranks { font-size: 0.7rem; color: #8b949e; white-space: nowrap; flex-shrink: 0; }
+    .compat-anime-row:hover { background: #1c2128; border-radius: 6px; }
+    .compat-detail-row {
+      display: none;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 2px 0 6px;
+      font-size: 0.75rem;
+      color: #8b949e;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .compat-detail-row.open { display: flex; }
+    .compat-detail-stat { display: flex; flex-direction: column; gap: 2px; }
+    .compat-detail-stat .val { font-size: 0.9rem; font-weight: 700; color: #c9d1d9; }
+    .compat-detail-stat .lbl { font-size: 0.68rem; color: #6e7681; }
+
+    /* FRIEND RECS */
+    #friend-recs-section { margin-top: 32px; border-top: 1px solid #21262d; padding-top: 24px; }
+    #friend-recs-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 6px; text-align: center; }
+    #friend-recs-section p.recs-sub { font-size: 0.8rem; color: #6e7681; text-align: center; margin-bottom: 16px; }
+    .friend-rec-card { position: relative; }
+    .friend-score-badge {
+      position: absolute; top: 6px; right: 6px;
+      background: rgba(13,17,23,0.85);
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      font-size: 0.65rem;
+      color: #58a6ff;
+      padding: 2px 5px;
+      font-weight: 600;
+    }
 
     @media (max-width: 600px) {
       .battle-arena {
@@ -2137,7 +2171,18 @@
 
     <!-- ── SOCIAL panel ───────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-social" style="display:none">
-      <div id="compat-section">
+      <div id="friend-recs-section">
+        <h3>👀 What Should I Watch Next?</h3>
+        <p class="recs-sub">Anime your friend loved that fit your taste profile — ordered by how well they match your genres</p>
+        <div class="compat-input-row">
+          <input type="text" id="friend-recs-input" placeholder="Enter a friend's AniList username…" style="width:220px"
+                 onkeydown="if(event.key==='Enter')runFriendRecs()" />
+          <button class="btn-primary" onclick="runFriendRecs()">Get Recs</button>
+        </div>
+        <div id="friend-recs-results"></div>
+      </div>
+
+      <div id="compat-section" style="margin-top:32px;border-top:1px solid #21262d;padding-top:24px">
         <h3>👥 Taste Compatibility</h3>
         <div id="saved-comparisons"></div>
         <div class="compat-input-row">
@@ -4032,13 +4077,12 @@ async function fetchGenreDeepDive() {
 
   if (!genres.length) return { genre: null, items: [] };
   const topGenre = genres[0].name;
-  const excludeIds = animeList.map(a => a.id);
-
+  const ownIds = new Set(animeList.map(a => a.id));
   const query = `
-    query ($genre: String, $excludeIds: [Int]) {
-      Page(perPage: 10) {
-        media(type: ANIME, genre_in: [$genre], id_not_in: $excludeIds,
-              sort: SCORE_DESC, status: FINISHED, averageScore_greater: 72) {
+    query ($genre: String) {
+      Page(perPage: 20) {
+        media(type: ANIME, genre_in: [$genre], sort: SCORE_DESC,
+              averageScore_greater: 72, status_not_in: [NOT_YET_RELEASED, CANCELLED]) {
           id title { romaji english } coverImage { large medium } averageScore format
         }
       }
@@ -4046,38 +4090,84 @@ async function fetchGenreDeepDive() {
   try {
     const res = await fetch('https://graphql.anilist.co', {
       method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { genre: topGenre, excludeIds } })
+      body: JSON.stringify({ query, variables: { genre: topGenre } })
     });
     const json = await res.json();
+    if (json.errors) throw new Error(json.errors[0].message);
     const items = (json?.data?.Page?.media ?? [])
+      .filter(m => !ownIds.has(m.id))
       .map(m => ({ media: m }))
       .slice(0, 4);
     return { genre: topGenre, items };
-  } catch { return { genre: topGenre, items: [] }; }
+  } catch (e) { console.warn('Genre dive fetch failed:', e); return { genre: topGenre, items: [] }; }
 }
 
 // Hidden gems: highly rated but under the radar (low popularity)
 async function fetchHiddenGems() {
-  const excludeIds = animeList.map(a => a.id);
-  const query = `
-    query ($excludeIds: [Int]) {
-      Page(perPage: 10) {
-        media(type: ANIME, id_not_in: $excludeIds, sort: SCORE_DESC,
-              status: FINISHED, averageScore_greater: 78, popularity_less: 100000) {
+  const ownIds = new Set(animeList.map(a => a.id));
+  // No id_not_in — large arrays can hit AniList query complexity limits.
+  // Fetch a big pool and filter client-side instead.
+  // Step 1: fetch candidates — simple query, no nested data
+  const candidateQuery = `
+    {
+      Page(perPage: 20) {
+        media(type: ANIME, format: TV, sort: SCORE_DESC,
+              averageScore_greater: 70,
+              popularity_lesser: 150000,
+              status_in: [FINISHED, RELEASING]) {
           id title { romaji english } coverImage { large medium } averageScore format
         }
       }
     }`;
   try {
-    const res = await fetch('https://graphql.anilist.co', {
+    const r1 = await fetch('https://graphql.anilist.co', {
       method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { excludeIds } })
+      body: JSON.stringify({ query: candidateQuery })
     });
-    const json = await res.json();
-    return (json?.data?.Page?.media ?? [])
+    const j1 = await r1.json();
+    if (j1.errors) throw new Error(j1.errors[0].message);
+    const candidates = (j1?.data?.Page?.media ?? []).filter(m => !ownIds.has(m.id));
+    if (!candidates.length) return [];
+
+    // Step 2: check only those candidate IDs for popular prequels — tiny query
+    const ids = candidates.map(m => m.id);
+    const relQuery = `
+      query ($ids: [Int]) {
+        Page(perPage: 20) {
+          media(id_in: $ids, type: ANIME) {
+            id
+            relations {
+              edges {
+                relationType(version: 2)
+                node { popularity }
+              }
+            }
+          }
+        }
+      }`;
+    await new Promise(r => setTimeout(r, 600)); // small gap to avoid rate limit
+    const r2 = await fetch('https://graphql.anilist.co', {
+      method: 'POST', headers: anilistHeaders(),
+      body: JSON.stringify({ query: relQuery, variables: { ids } })
+    });
+    const j2 = await r2.json();
+    // Build a set of IDs that are sequels to popular franchises
+    const franchiseIds = new Set();
+    for (const m of (j2?.data?.Page?.media ?? [])) {
+      const isSequel = (m.relations?.edges ?? []).some(e =>
+        e.relationType === 'PREQUEL' && (e.node?.popularity ?? 0) > 50000
+      );
+      if (isSequel) franchiseIds.add(m.id);
+    }
+
+    return candidates
+      .filter(m => !franchiseIds.has(m.id))
       .map(m => ({ media: m }))
       .slice(0, 4);
-  } catch { return []; }
+  } catch (e) {
+    console.warn('Hidden gems fetch failed:', e);
+    return [];
+  }
 }
 
 async function fetchSeasonalRecommendations() {
@@ -4320,12 +4410,28 @@ async function runCompatibility() {
     const emojiFor = pct => pct >= 80 ? '💜' : pct >= 65 ? '🟢' : pct >= 50 ? '🟡' : pct >= 35 ? '🟠' : '🔴';
     const labelFor = pct => pct >= 80 ? 'Soulmates' : pct >= 65 ? 'Great Match' : pct >= 50 ? 'Good Compatibility' : pct >= 35 ? 'Some Common Ground' : 'Very Different Tastes';
 
+    // Store detail data for click-through panels
+    _compatDetailMap = new Map(overlap.map(a => {
+      const rawScore = otherById.get(a.id)?.score ?? 0;
+      // Normalise AniList score to /10 regardless of user's scoring format
+      const theirScore = rawScore > 10 ? (rawScore / 10).toFixed(1) : rawScore > 0 ? rawScore.toFixed(1) : null;
+      return [a.id, {
+        myOverallRank:  myRankMap.get(a.id),
+        myOverlapRank:  myOverlapRankMap.get(a.id),
+        othOverlapRank: othOverlapRankMap.get(a.id),
+        theirScore,
+        totalAnime: animeList.length,
+        overlapSize: n,
+      }];
+    }));
+
     const animeRowHtml = (item, desc) => `
-      <div class="compat-anime-row">
+      <div class="compat-anime-row" onclick="_toggleCompatDetail(${item.anime.id})">
         <img src="${item.cover}" alt="" />
         <span class="compat-anime-title">${item.title}</span>
-        <span class="compat-ranks">${desc}</span>
-      </div>`;
+        <span class="compat-ranks">${desc} ›</span>
+      </div>
+      <div class="compat-detail-row" id="compat-detail-${item.anime.id}"></div>`;
 
     resultsEl.innerHTML = `
       <div class="compat-score-box">
@@ -4372,6 +4478,13 @@ async function runCompatibility() {
   }
 }
 
+function _deleteComparison(username) {
+  const savedComps = JSON.parse(localStorage.getItem('anime_elo_saved_comparisons') || '[]');
+  const updated = savedComps.filter(c => c.username.toLowerCase() !== username.toLowerCase());
+  localStorage.setItem('anime_elo_saved_comparisons', JSON.stringify(updated));
+  _renderSavedComparisons();
+}
+
 function _renderSavedComparisons() {
   const container = document.getElementById('saved-comparisons');
   if (!container) return;
@@ -4388,11 +4501,157 @@ function _renderSavedComparisons() {
             <div class="scc-meta">${c.score}% · ${c.label} · ${c.date}</div>
           </div>
           <button class="btn-small" onclick="document.getElementById('compat-username-input').value='${c.username.replace(/'/g, "\\'")}';runCompatibility()">Re-run</button>
+          <button class="btn-small" onclick="_deleteComparison('${c.username.replace(/'/g, "\\'")}')">×</button>
         </div>`).join('')}
     </div>`;
 }
 
 function toggleCompatibility() { switchResultsTab('social'); }
+
+// ─── HEAD-TO-HEAD DETAIL ──────────────────────────────────────────────────────
+let _compatDetailMap = new Map(); // populated by runCompatibility()
+
+function _toggleCompatDetail(id) {
+  const el = document.getElementById('compat-detail-' + id);
+  if (!el) return;
+  const isOpen = el.classList.toggle('open');
+  if (!isOpen) return; // closing — nothing more to do
+
+  const d = _compatDetailMap.get(id);
+  if (!d) { el.innerHTML = '<span>No detail available.</span>'; return; }
+
+  const rankDiff = d.myOverlapRank - d.othOverlapRank; // negative = you rate it higher
+  const diffArrow = rankDiff < 0
+    ? `<span style="color:#3fb950">▲ You rate it ${Math.abs(rankDiff)} places higher</span>`
+    : rankDiff > 0
+    ? `<span style="color:#f85149">▼ They rate it ${rankDiff} places higher</span>`
+    : `<span style="color:#8b949e">= You both rank it the same</span>`;
+
+  el.innerHTML = `
+    <div class="compat-detail-stat">
+      <span class="val">#${d.myOverallRank} <span style="font-size:0.7rem;color:#6e7681">of ${d.totalAnime}</span></span>
+      <span class="lbl">Your overall ELO rank</span>
+    </div>
+    <div class="compat-detail-stat">
+      <span class="val">${d.theirScore !== null ? d.theirScore + ' / 10' : 'Unscored'}</span>
+      <span class="lbl">Their AniList score</span>
+    </div>
+    <div class="compat-detail-stat">
+      <span class="val">#${d.myOverlapRank} vs #${d.othOverlapRank}</span>
+      <span class="lbl">Rank within shared ${d.overlapSize} anime</span>
+    </div>
+    <div class="compat-detail-stat" style="justify-content:center">
+      ${diffArrow}
+    </div>`;
+}
+
+// ─── FRIEND RECS ─────────────────────────────────────────────────────────────
+async function runFriendRecs() {
+  const username = document.getElementById('friend-recs-input').value.trim();
+  if (!username) return;
+
+  const resultsEl = document.getElementById('friend-recs-results');
+  resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ${username}'s list…</p>`;
+
+  try {
+    const query = `
+      query ($username: String) {
+        MediaListCollection(userName: $username, type: ANIME) {
+          lists {
+            entries {
+              score status
+              media { id title { romaji english } coverImage { large medium } averageScore genres format }
+            }
+          }
+        }
+      }`;
+    let data;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch('https://graphql.anilist.co', {
+          method: 'POST', headers: anilistHeaders(),
+          body: JSON.stringify({ query, variables: { username } })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        data = await res.json();
+        break;
+      } catch (e) {
+        if (attempt === 2) throw e;
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
+    if (data.errors) throw new Error(data.errors[0].message);
+
+    const ownIds = new Set(animeList.map(a => a.id));
+    const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
+
+    // Candidate pool: friend watched + scored 60+, user hasn't seen
+    const candidates = data.data.MediaListCollection.lists
+      .flatMap(l => l.entries)
+      .filter(e => WATCHED.has(e.status) && e.score >= 60 && !ownIds.has(e.media.id));
+
+    if (!candidates.length) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
+        No unwatched anime found that ${username} has rated 6+.</p>`;
+      return;
+    }
+
+    // Build user's genre affinity map (avg ELO per genre)
+    const genreMap = {};
+    animeList.forEach(a => {
+      (a.genres || []).forEach(g => {
+        if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
+        genreMap[g].sum += a.elo;
+        genreMap[g].count++;
+      });
+    });
+    const genreAvg = {};
+    for (const [g, v] of Object.entries(genreMap)) {
+      if (v.count >= 2) genreAvg[g] = v.sum / v.count;
+    }
+    const globalAvgElo = animeList.reduce((s, a) => s + a.elo, 0) / animeList.length || 1200;
+
+    // Score each candidate
+    const scored = candidates.map(e => {
+      const genres = e.media.genres || [];
+      const affinities = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
+      const avgGenreElo = affinities.length ? affinities.reduce((s, v) => s + v, 0) / affinities.length : globalAvgElo;
+      const genreBonus = (avgGenreElo - globalAvgElo) / 400; // normalised offset
+      const friendNorm = Math.min(e.score, 100) / 100;
+      const totalScore = friendNorm * 0.6 + genreBonus * 0.4;
+      const displayScore = e.score > 10 ? (e.score / 10).toFixed(1) : e.score.toFixed(1);
+      return { media: e.media, friendScore: displayScore, totalScore };
+    });
+
+    scored.sort((a, b) => b.totalScore - a.totalScore);
+    const top = scored.slice(0, 8);
+
+    resultsEl.innerHTML = `
+      <p style="font-size:0.78rem;color:#6e7681;text-align:center;margin-bottom:14px">
+        ${candidates.length} unwatched titles ${username} rated 6+ · sorted by match to your taste profile
+      </p>
+      <div class="recs-subgrid">
+        ${top.map(({ media, friendScore }) => {
+          const title = media.title.english || media.title.romaji;
+          const cover = media.coverImage?.large || media.coverImage?.medium;
+          const avg   = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
+          return `
+            <a class="rec-card friend-rec-card" href="https://anilist.co/anime/${media.id}" target="_blank">
+              <img src="${cover}" alt="" loading="lazy" />
+              <div class="friend-score-badge">${username.slice(0,8)}: ${friendScore}</div>
+              <div class="rec-card-body">
+                <div class="rec-card-title">${title}</div>
+                <div class="rec-card-meta">${media.format || ''}</div>
+                <span class="rec-score-pill">⭐ ${avg}</span>
+              </div>
+            </a>`;
+        }).join('')}
+      </div>`;
+
+  } catch (err) {
+    resultsEl.innerHTML = `<p style="color:#f85149;text-align:center;padding:16px 0">Error: ${err.message}</p>`;
+  }
+}
 
 // ─── ENTRY POINT ─────────────────────────────────────────────────────────────
 async function startLoading() {
@@ -5366,8 +5625,9 @@ function toggleFormat(fmt) {
   } else {
     hiddenFormats.add(fmt);
   }
-  // Sync button appearance
+  // Sync button appearance (guard against ep-range buttons which share the class)
   document.querySelectorAll('.format-btn').forEach(b => {
+    if (!b.dataset.format) return;
     const isHidden = hiddenFormats.has(b.dataset.format);
     b.classList.toggle('active',      !isHidden);
     b.classList.toggle('hidden-fmt',   isHidden);
