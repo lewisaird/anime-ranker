@@ -1530,8 +1530,11 @@
     #recs-section p.recs-sub { font-size: 0.8rem; color: #6e7681; text-align: center; margin-bottom: 16px; }
     .recs-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 600px) {
+      .recs-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
     }
     .rec-card {
       background: #161b22;
@@ -1566,12 +1569,19 @@
     .recs-group-heading em { color: #58a6ff; font-style: normal; }
     .recs-subgrid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
     }
     .recs-extra-section { margin-top: 32px; }
     .recs-extra-heading { font-size: 0.88rem; color: #c9d1d9; margin: 0 0 4px; font-weight: 600; }
     .recs-extra-sub { font-size: 0.75rem; color: #6e7681; margin: 0 0 12px; }
+    @media (max-width: 600px) {
+      .recs-subgrid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .recs-group-heading, .recs-extra-heading { font-size: 0.82rem; }
+    }
+    @media (max-width: 360px) {
+      .recs-subgrid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    }
     .btn-small {
       background: #21262d;
       color: #8b949e;
@@ -3940,7 +3950,7 @@ async function fetchRecommendationsForYou() {
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
         recs.push({ media: rec, score: n.rating || 1 });
         usedIds.add(rec.id);
-        if (recs.length >= 6) break;
+        if (recs.length >= 4) break;
       }
       if (recs.length >= 2) groups.push({ seed: anime, recs });
     } catch { /* individual seed failure — keep going */ }
@@ -4041,7 +4051,7 @@ async function fetchGenreDeepDive() {
     const json = await res.json();
     const items = (json?.data?.Page?.media ?? [])
       .map(m => ({ media: m }))
-      .slice(0, 6);
+      .slice(0, 4);
     return { genre: topGenre, items };
   } catch { return { genre: topGenre, items: [] }; }
 }
@@ -4053,7 +4063,7 @@ async function fetchHiddenGems() {
     query ($excludeIds: [Int]) {
       Page(perPage: 10) {
         media(type: ANIME, id_not_in: $excludeIds, sort: SCORE_DESC,
-              status: FINISHED, averageScore_greater: 84, popularity_less: 60000) {
+              status: FINISHED, averageScore_greater: 78, popularity_less: 100000) {
           id title { romaji english } coverImage { large medium } averageScore format
         }
       }
@@ -4066,7 +4076,7 @@ async function fetchHiddenGems() {
     const json = await res.json();
     return (json?.data?.Page?.media ?? [])
       .map(m => ({ media: m }))
-      .slice(0, 6);
+      .slice(0, 4);
   } catch { return []; }
 }
 
@@ -4176,7 +4186,7 @@ async function _loadRecsGrid() {
     </div>
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading">💎 Hidden Gems</h4>
-      <p class="recs-extra-sub">Highly rated but under the radar — fewer than 60k followers on AniList</p>
+      <p class="recs-extra-sub">Well rated but under the radar — fewer than 100k followers on AniList</p>
       <div class="recs-subgrid" id="hidden-gems-grid"><p style="color:#8b949e;font-size:0.8rem">⏳ Loading…</p></div>
     </div>`;
 
