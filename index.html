@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Anime ELO Ranker</title>
+  <title>Kessen</title>
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -11,7 +11,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Anime Ranker" />
+  <meta name="apple-mobile-web-app-title" content="Kessen" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
   <link rel="icon" type="image/svg+xml" href="/icon.svg" />
 
@@ -169,6 +169,8 @@
       border: 1px solid #30363d;
     }
     .btn-secondary:hover { background: #30363d; }
+    #settle-btn.active { background: #1a2d1a; border-color: #238636; color: #3fb950; }
+    #blind-btn.active  { background: #1a1230; border-color: #6e40c9; color: #a371f7; }
 
     .btn-danger {
       background: #da3633;
@@ -1365,6 +1367,24 @@
     }
     #settle-banner.active { display: flex; }
 
+    #blind-banner {
+      display: none;
+      background: linear-gradient(90deg, #1a1230, #160f2a);
+      border: 1px solid #6e40c9;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 0.82rem;
+      color: #a371f7;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+    }
+    #blind-banner.active { display: flex; }
+
+    /* Blind mode — ELO ratings hidden so you pick on instinct, not numbers */
+    #battle-screen.blind .elo-badge { visibility: hidden; }
+
     #new-anime-banner {
       display: none;
       background: linear-gradient(90deg, #1a2237, #161e2e);
@@ -1902,7 +1922,7 @@
 <body>
 
 <header>
-  <h1>🎌 Anime ELO Ranker</h1>
+  <h1>⚔️ Kessen</h1>
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
     <span id="cloud-sync-indicator" style="display:none;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
@@ -2059,6 +2079,11 @@
       <button onclick="toggleSettleMode()" style="background:none;border:1px solid #238636;color:#3fb950;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
+    <div id="blind-banner">
+      <span>🙈 Blind mode — ELO ratings hidden, pick on instinct</span>
+      <button onclick="toggleBlindMode()" style="background:none;border:1px solid #6e40c9;color:#a371f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+    </div>
+
 
     <div class="battle-prompt">
       <h2 id="battle-prompt-h2">Which did you enjoy more?</h2>
@@ -2104,6 +2129,7 @@
       <button class="btn-secondary" id="skip-btn" onclick="skipBattle()">⏭ Skip</button>
       <button class="btn-secondary" onclick="showResults()">📊 Rankings</button>
       <button class="btn-secondary" id="settle-btn" onclick="toggleSettleMode()" title="Target low-confidence matchups">🎯 Settle</button>
+      <button class="btn-secondary" id="blind-btn" onclick="toggleBlindMode()" title="Hide ELO ratings — pick on instinct, not numbers">🙈 Blind</button>
       <button class="btn-secondary" onclick="openTowerModal()" title="Pick a champion to face 10 opponents">⚡ Tower</button>
     </div>
     <div class="kb-hints">
@@ -2277,6 +2303,11 @@
       </div>
       <div id="history-section">
         <h3>Battle History <span style="color:#8b949e;font-weight:400;font-size:0.85rem">(most recent first)</span></h3>
+        <div style="margin-bottom:10px">
+          <input type="text" id="history-search" placeholder="🔍 Search by title…"
+            oninput="filterHistory(this.value)"
+            style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:0.88rem" />
+        </div>
         <div class="history-list" id="history-list"></div>
       </div>
     </div>
@@ -2432,9 +2463,10 @@
         <div class="help-section">
           <h4>📊 Tabs</h4>
           <p><strong>Stats</strong> — genre &amp; era breakdowns, biggest upsets, most battled.<br>
-          <strong>History</strong> — recent battle log.<br>
+          <strong>History</strong> — recent battle log with search.<br>
           <strong>Discover</strong> — recommendations based on your top picks.<br>
           <strong>Social</strong> — compare taste with any AniList user.<br>
+          <strong>Achievements</strong> — earn Bronze, Silver, and Gold tiers by hitting ranking milestones.<br>
           <strong>Manage</strong> — cloud sync, export rankings, sync to AniList, or reset everything.</p>
         </div>
 
@@ -2508,7 +2540,10 @@
     <h2 id="ms-title"></h2>
     <p id="ms-msg"></p>
     <div class="milestone-top5" id="ms-top5"></div>
-    <button class="btn-primary" onclick="closeMilestone()">Keep Ranking! ▶</button>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="btn-secondary" id="ms-share-btn" onclick="shareMilestone()">🔗 Share</button>
+      <button class="btn-primary" onclick="closeMilestone()">Keep Ranking! ▶</button>
+    </div>
   </div>
 </div>
 
@@ -2548,6 +2583,7 @@
 <script>
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const K = 32;           // ELO K-factor
+const ELO_FLOOR = 400;  // minimum ELO — prevents outliers from being buried indefinitely
 const TARGET_BATTLES = 600; // soft target; user can always stop early
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
@@ -2576,6 +2612,7 @@ const VS_BUFFER     = 8;         // extra rows to render above/below viewport
 let rankingView     = 'grid';    // 'grid' or 'list'
 let showFuzzyOnly   = false;     // fuzzy filter toggle
 let settleMode      = false;     // targeted low-confidence matchmaking
+let blindMode       = false;     // hide titles & covers until a pick is made
 
 // ─── TOWER OF POWER ──────────────────────────────────────────────────────────
 let towerMode       = false;
@@ -2606,13 +2643,34 @@ function loadAuthFromStorage() {
   try {
     const raw = localStorage.getItem('anime_elo_auth');
     if (!raw) return false;
-    const { token, user } = JSON.parse(raw);
+    const { token, user, saved } = JSON.parse(raw);
     if (!token || !user) return false;
+    // AniList tokens expire after 1 year — clear if saved > 365 days ago
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    if (saved && Date.now() - saved > ONE_YEAR_MS) {
+      localStorage.removeItem('anime_elo_auth');
+      showToast('Your AniList session expired — please log in again.');
+      return false;
+    }
     authToken = token;
     authUser  = user;
     return true;
   } catch { return false; }
 }
+
+// Global 401 interceptor — catches expired AniList tokens across all fetch calls
+(function _installAnilistInterceptor() {
+  const _origFetch = window.fetch;
+  window.fetch = async function(...args) {
+    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+    const res = await _origFetch.apply(this, args);
+    if (res.status === 401 && url.includes('graphql.anilist.co') && authToken) {
+      clearAuth();
+      showToast('⚠️ AniList session expired — please log in again.');
+    }
+    return res;
+  };
+})();
 
 function clearAuth() {
   authToken = null;
@@ -3239,7 +3297,7 @@ function updateElo(winner, loser) {
   const ea = expectedScore(winner.elo, loser.elo);
   const eb = expectedScore(loser.elo, winner.elo);
   winner.elo = Math.round(winner.elo + K * (1 - ea));
-  loser.elo  = Math.round(loser.elo  + K * (0 - eb));
+  loser.elo  = Math.max(ELO_FLOOR, Math.round(loser.elo + K * (0 - eb)));
   winner.wins++;
   loser.losses++;
   winner.comparisons++;
@@ -3373,6 +3431,7 @@ function renderPair(ia, ib) {
   synB.textContent = b.description || 'No description available.';
 
   updateProgress();
+  _applyBlindState();
 }
 
 function renderCurrentPair() {
@@ -3435,8 +3494,6 @@ function pickWinner(side) {
 
   // Pick and show the next pair FIRST — then record it in the undo snapshot
   renderBattle();
-
-  // Now currentA/currentB are the next pair — save them so undo can restore them
   prevState = { ...snap, nextA: currentA, nextB: currentB };
   document.getElementById('undo-btn').disabled = false;
 }
@@ -3552,6 +3609,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     <img src="${anime.cover}" alt="${displayTitle(anime)}" loading="lazy" />
     <div class="rank-title">${displayTitle(anime)}</div>
     ${epBadge}
+    ${_statusBadge(anime.status)}
     ${sortExtra}
     <span class="confidence ${conf.cls}" title="${conf.title}">${conf.dot} ${conf.label}</span>
     ${anime.fuzzy ? '<span class="fuzzy-tag" title="Can&#39;t Remember \u2014 you selected this option during a battle. This anime appears less often until you&#39;ve refreshed your memory of it.">&#x1F32B; Fuzzy</span>' : ''}
@@ -3678,6 +3736,7 @@ function renderHistory() {
     battleHistory.forEach(h => {
       const row = document.createElement('div');
       row.className = 'history-item';
+      row.dataset.titles = ((h.winnerTitle || '') + ' ' + (h.loserTitle || '')).toLowerCase();
       row.innerHTML = `
         <span class="winner">🏆 ${h.winnerTitle}</span>
         <span class="elo-change">+${h.eloSwing} ELO</span>
@@ -3686,6 +3745,17 @@ function renderHistory() {
       list.appendChild(row);
     });
   }
+  // Re-apply any active search filter
+  const searchEl = document.getElementById('history-search');
+  if (searchEl && searchEl.value) filterHistory(searchEl.value);
+}
+
+function filterHistory(q) {
+  const term = q.trim().toLowerCase();
+  const rows = document.querySelectorAll('#history-list .history-item');
+  rows.forEach(row => {
+    row.style.display = (!term || row.dataset.titles.includes(term)) ? '' : 'none';
+  });
 }
 
 function resumeBattle() {
@@ -5263,6 +5333,29 @@ function closeMilestone() {
   document.getElementById('milestone-overlay').style.display = 'none';
 }
 
+function shareMilestone() {
+  const msTitle = document.getElementById('ms-title').textContent || 'Milestone';
+  const msEmoji = document.getElementById('ms-emoji').textContent || '🎉';
+  const top5 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 5);
+  const user = saveKey.replace('anime_elo_', '');
+  const payload = {
+    u: user,
+    b: battleCount,
+    ms: msEmoji + ' ' + msTitle,
+    top: top5.map((a, i) => ({ r: i + 1, t: a.title, e: a.elo, c: a.cover }))
+  };
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const url = location.href.split('#')[0] + '#r=' + encoded;
+  // Close milestone first so share modal isn't obscured behind it
+  closeMilestone();
+  document.getElementById('share-url').value = url;
+  document.getElementById('copy-btn').textContent = '📋 Copy Link';
+  // Update share modal description for milestone context
+  document.querySelector('#share-modal .share-box p').textContent =
+    `This link shows your top 5 at the ${msTitle} milestone. Anyone with it can view your snapshot.`;
+  document.getElementById('share-modal').style.display = 'flex';
+}
+
 // ─── SHARE LINK ───────────────────────────────────────────────────────────────
 function shareRankings() {
   const top20 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 20);
@@ -5276,6 +5369,8 @@ function shareRankings() {
   const url = location.href.split('#')[0] + '#r=' + encoded;
   document.getElementById('share-url').value = url;
   document.getElementById('copy-btn').textContent = '📋 Copy Link';
+  document.querySelector('#share-modal .share-box p').textContent =
+    'This link encodes your current top 20. Anyone with it can view your ranking snapshot.';
   document.getElementById('share-modal').style.display = 'flex';
 }
 
@@ -5708,9 +5803,13 @@ function tryLoadSharedView() {
   try {
     const payload = JSON.parse(decodeURIComponent(escape(atob(hash.slice(3)))));
     document.getElementById('shared-title').textContent =
-      `${payload.u}'s Top ${payload.top.length} Anime`;
+      payload.ms
+        ? `${payload.u} hit ${payload.ms}`
+        : `${payload.u}'s Top ${payload.top.length} Anime`;
     document.getElementById('shared-subtitle').textContent =
-      `After ${payload.b} battles`;
+      payload.ms
+        ? `Top 5 after ${payload.b} battles`
+        : `After ${payload.b} battles`;
     const list = document.getElementById('shared-list');
     list.innerHTML = '';
     payload.top.forEach(a => {
@@ -5982,15 +6081,17 @@ function showAnimeDetail(id) {
   unfuzzyBtn.style.display = anime.fuzzy ? 'inline-block' : 'none';
   unfuzzyBtn.dataset.animeId = id;
 
-  // Recent battles from history involving this anime
+  // Recent battles — prefer ID matching, fall back to title for legacy entries
   const related = battleHistory
-    .filter(h => h.winnerTitle === anime.title || h.loserTitle === anime.title)
+    .filter(h => h.winnerId != null
+      ? h.winnerId === anime.id || h.loserId === anime.id
+      : h.winnerTitle === anime.title || h.loserTitle === anime.title)
     .slice(0, 8);
 
   const recentEl = document.getElementById('modal-recent');
   if (related.length > 0) {
     recentEl.innerHTML = '<h4>Recent Battles</h4>' + related.map(h => {
-      const won = h.winnerTitle === anime.title;
+      const won = h.winnerId != null ? h.winnerId === anime.id : h.winnerTitle === anime.title;
       const opponent = won ? h.loserTitle : h.winnerTitle;
       return `<div class="modal-recent-item">
         <span class="${won ? 'modal-win' : 'modal-loss'}">${won ? '✓ W' : '✗ L'} vs ${opponent}</span>
@@ -6234,6 +6335,21 @@ function toggleSettleMode() {
   if (btn) btn.classList.toggle('active', settleMode);
   if (banner) banner.classList.toggle('active', settleMode);
   if (settleMode) renderBattle(); // re-pick with settle logic immediately
+}
+
+function toggleBlindMode() {
+  blindMode = !blindMode;
+  const btn    = document.getElementById('blind-btn');
+  const banner = document.getElementById('blind-banner');
+  const screen = document.getElementById('battle-screen');
+  if (btn)    btn.classList.toggle('active', blindMode);
+  if (banner) banner.classList.toggle('active', blindMode);
+  if (screen) screen.classList.toggle('blind', blindMode);
+}
+
+function _applyBlindState() {
+  const screen = document.getElementById('battle-screen');
+  if (screen) screen.classList.toggle('blind', blindMode);
 }
 
 // In settle mode, pickOpponents uses a tighter window and prefers uncertain anime.
@@ -6804,10 +6920,12 @@ window.addEventListener('beforeunload', () => {
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
   const session = {
     saveKey, animeList, battleCount, currentA, currentB, battleHistory,
-    excludedIds:    [...excludedIds],
-    hiddenFormats:  [...hiddenFormats],
-    hiddenEpRanges: [...hiddenEpRanges],
+    excludedIds:     [...excludedIds],
+    hiddenFormats:   [...hiddenFormats],
+    hiddenEpRanges:  [...hiddenEpRanges],
     rankingView, currentSort, sortAsc,
+    achievements,
+    comparedFriends: [...comparedFriends],
     savedAt: new Date().toISOString(),
   };
   const blob = new Blob(
