@@ -563,6 +563,10 @@
       contain-intrinsic-block-size: 340px;
     }
 
+    /* Global image fallback — grey background shown while loading or if src fails */
+    img { background: #21262d; }
+    img.img-broken { opacity: 0.3; }
+
     .rank-card img {
       width: 100%;
       max-width: 130px;
@@ -1273,6 +1277,25 @@
     }
     .sync-modal-box h3 { font-size: 1.1rem; margin-bottom: 4px; }
     .sync-modal-sub { font-size: 0.83rem; color: #8b949e; margin-bottom: 18px; line-height: 1.5; }
+    /* ── Confirm modal ── */
+    #confirm-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); z-index: 9999;
+      align-items: center; justify-content: center; padding: 16px;
+    }
+    #confirm-modal.open { display: flex; }
+    .confirm-modal-box {
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; padding: 24px 22px;
+      max-width: 360px; width: 100%;
+    }
+    .confirm-modal-box h3 { font-size: 1rem; color: #e6edf3; margin-bottom: 8px; }
+    .confirm-modal-box p  { font-size: 0.85rem; color: #8b949e; margin-bottom: 20px; line-height: 1.5; }
+    .confirm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .confirm-btn-cancel  { padding: 7px 16px; border-radius: 6px; border: 1px solid #30363d; background: transparent; color: #c9d1d9; cursor: pointer; font-size: 0.85rem; }
+    .confirm-btn-cancel:hover  { background: #21262d; }
+    .confirm-btn-danger  { padding: 7px 16px; border-radius: 6px; border: none; background: #da3633; color: #fff; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    .confirm-btn-danger:hover  { background: #f85149; }
     .sync-preview-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-bottom: 20px; }
     .sync-preview-table th {
       text-align: left; font-size: 0.72rem; color: #8b949e; font-weight: 600;
@@ -1314,6 +1337,19 @@
     .util-btn-anilist:hover { background: linear-gradient(135deg, #2d7cf7, #22b8ff); }
 
     /* SETTLE MODE BANNER */
+    #pool-warning-banner {
+      display: none;
+      background: linear-gradient(90deg, #2d1f0e, #241808);
+      border: 1px solid #bb8009;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 0.82rem;
+      color: #e3a000;
+      align-items: center;
+      gap: 8px;
+    }
+    #pool-warning-banner.active { display: flex; }
     #settle-banner {
       display: none;
       background: linear-gradient(90deg, #1a2d1a, #162416);
@@ -1548,6 +1584,20 @@
       color: inherit;
     }
     .rec-card:hover { border-color: #58a6ff; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(88,166,255,0.12); }
+    /* Discover tab skeleton loader */
+    @keyframes skeleton-pulse {
+      0%, 100% { background-color: #21262d; }
+      50%       { background-color: #30363d; }
+    }
+    .skeleton-card {
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; overflow: hidden;
+    }
+    .skeleton-img  { width: 100%; padding-top: 150%; background: #21262d; animation: skeleton-pulse 1.4s ease-in-out infinite; }
+    .skeleton-body { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .skeleton-line { height: 10px; border-radius: 4px; background: #21262d; animation: skeleton-pulse 1.4s ease-in-out infinite; }
+    .skeleton-line.short { width: 55%; }
+    .skeleton-line.shorter { width: 35%; }
     .rec-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
     .rec-card-body { padding: 8px; }
     .rec-card-title { font-size: 0.78rem; font-weight: 600; line-height: 1.3; color: #e6edf3; margin-bottom: 4px;
@@ -1592,6 +1642,57 @@
       cursor: pointer;
     }
     .btn-small:hover { background: #30363d; color: #c9d1d9; }
+
+    /* ACHIEVEMENTS */
+    .achievements-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .achievement-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .achievement-card.has-bronze { border-color: #cd7f32; }
+    .achievement-card.has-silver { border-color: #a0a0a0; }
+    .achievement-card.has-gold   { border-color: #ffd700; }
+    .achievement-header { display: flex; align-items: center; gap: 10px; }
+    .achievement-emoji { font-size: 1.6rem; line-height: 1; }
+    .achievement-name { font-size: 0.88rem; font-weight: 700; color: #c9d1d9; }
+    .achievement-desc { font-size: 0.72rem; color: #6e7681; margin: 0; }
+    .achievement-tiers { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ach-tier {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 3px; padding: 8px 10px;
+      border-radius: 8px; border: 1px solid #30363d;
+      background: #0d1117; min-width: 70px; flex: 1;
+      opacity: 0.4;
+    }
+    .ach-tier.unlocked { opacity: 1; }
+    .ach-tier.unlocked.bronze { border-color: #cd7f32; background: #1a1208; }
+    .ach-tier.unlocked.silver { border-color: #a0a0a0; background: #111418; }
+    .ach-tier.unlocked.gold   { border-color: #ffd700; background: #181400; }
+    .ach-tier .ach-icon  { font-size: 1.3rem; }
+    .ach-tier .ach-label { font-size: 0.68rem; font-weight: 700; color: #484f58; }
+    .ach-tier .ach-req   { font-size: 0.65rem; color: #484f58; text-align: center; }
+    .ach-tier.unlocked.bronze .ach-label { color: #cd7f32; }
+    .ach-tier.unlocked.silver .ach-label { color: #c0c0c0; }
+    .ach-tier.unlocked.gold   .ach-label { color: #ffd700; }
+    .ach-tier.unlocked .ach-req { color: #8b949e; }
+    .achievement-unlock-date { font-size: 0.65rem; color: #6e7681; margin-top: 2px; }
+    .achievements-summary {
+      text-align: center; padding: 12px 0 4px;
+      font-size: 0.8rem; color: #8b949e;
+    }
+    @media (max-width: 600px) {
+      .achievements-grid { grid-template-columns: 1fr; }
+    }
 
     /* SAVED COMPARISONS */
     .saved-comp-cards { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
@@ -1949,6 +2050,10 @@
     <div id="tower-progress-wrap"><div id="tower-progress-bar" style="width:0%"></div></div>
     <div id="tower-status" style="text-align:center;font-size:0.82rem;color:#e3a000;margin-bottom:8px"></div>
 
+    <div id="pool-warning-banner">
+      <span id="pool-warning-text">⚠️ Almost all anime are filtered out — only a few battles are possible.</span>
+    </div>
+
     <div id="settle-banner">
       <span>🎯 Settle mode — targeting uncertain matchups</span>
       <button onclick="toggleSettleMode()" style="background:none;border:1px solid #238636;color:#3fb950;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
@@ -1962,7 +2067,7 @@
 
     <div class="battle-arena">
       <div class="anime-card" id="card-a" onclick="pickWinner(0)">
-        <img id="img-a" src="" alt="" />
+        <img id="img-a" src="" alt="" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
         <div class="anime-card-body">
           <div class="title" id="title-a"></div>
           <div class="elo-badge" id="elo-a"></div>
@@ -1978,7 +2083,7 @@
       </div>
       <div class="vs-divider">VS</div>
       <div class="anime-card" id="card-b" onclick="pickWinner(1)">
-        <img id="img-b" src="" alt="" />
+        <img id="img-b" src="" alt="" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
         <div class="anime-card-body">
           <div class="title" id="title-b"></div>
           <div class="elo-badge" id="elo-b"></div>
@@ -2025,8 +2130,9 @@
       <button class="res-tab" data-tab="stats"    onclick="switchResultsTab('stats')">📊 Stats</button>
       <button class="res-tab" data-tab="history"  onclick="switchResultsTab('history')">⚔️ History</button>
       <button class="res-tab" data-tab="discover" onclick="switchResultsTab('discover')">🎯 Discover</button>
-      <button class="res-tab" data-tab="social"   onclick="switchResultsTab('social')">👥 Social</button>
-      <button class="res-tab" data-tab="manage"   onclick="switchResultsTab('manage')">⚙️ Manage</button>
+      <button class="res-tab" data-tab="social"        onclick="switchResultsTab('social')">👥 Social</button>
+      <button class="res-tab" data-tab="achievements" onclick="switchResultsTab('achievements')">🏆 Achievements</button>
+      <button class="res-tab" data-tab="manage"       onclick="switchResultsTab('manage')">⚙️ Manage</button>
     </div>
 
     <!-- ── RANKINGS panel ──────────────────────────────────────────────── -->
@@ -2146,7 +2252,13 @@
     <!-- ── DISCOVER panel ─────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-discover" style="display:none">
       <div id="recs-section">
-        <h3>🎯 Recommendations</h3>
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:4px">
+          <h3 style="margin:0">🎯 Recommendations</h3>
+          <button onclick="refreshDiscover()" id="discover-refresh-btn" title="Refresh recommendations"
+            style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.8rem;line-height:1">
+            ↻ Refresh
+          </button>
+        </div>
         <div class="source-tabs" style="width:300px;margin:0 auto 16px">
           <button class="source-tab active" id="recs-tab-foryou"   onclick="setRecsTab('foryou')">✨ For You</button>
           <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')">📅 This Season</button>
@@ -2192,6 +2304,11 @@
         </div>
         <div id="compat-results"></div>
       </div>
+    </div>
+
+    <!-- ── ACHIEVEMENTS panel ───────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-achievements" style="display:none">
+      <div id="achievements-content"></div>
     </div>
 
     <!-- ── MANAGE panel ──────────────────────────────────────────────── -->
@@ -2355,7 +2472,7 @@
   <div id="detail-modal" onclick="closeDetailOnOverlay(event)">
     <div class="modal-box">
       <button class="modal-close" onclick="closeDetail()">✕</button>
-      <img id="modal-cover" src="" alt="" />
+      <img id="modal-cover" src="" alt="" onerror="this.classList.add('img-broken')" />
       <div class="modal-content">
         <h2 id="modal-title"></h2>
         <div class="modal-rank-line" id="modal-rank-line"></div>
@@ -2713,6 +2830,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
               averageScore
               genres
               seasonYear
+              popularity
             }
           }
         }
@@ -2753,6 +2871,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
       globalScore: e.media.averageScore || 0,
       genres: e.media.genres || [],
       seasonYear: e.media.seasonYear || null,
+      popularity: e.media.popularity || 0,
       status: e.status || 'COMPLETED',
       elo: startElo,
       wins: 0, losses: 0, comparisons: 0,
@@ -2774,6 +2893,8 @@ function saveState() {
     rankingView,
     currentSort,
     sortAsc,
+    achievements,
+    comparedFriends: [...comparedFriends],
   }));
   schedulCloudSave();
 }
@@ -2822,6 +2943,8 @@ async function _doCloudSave() {
       rankingView,
       currentSort,
       sortAsc,
+      achievements,
+      comparedFriends: [...comparedFriends],
       savedAt: new Date().toISOString(),
     };
     const res = await fetch('/.netlify/functions/save-session', {
@@ -2874,6 +2997,7 @@ function _applyCloudSaveToMemory(cloud) {
   rankingView    = cloud.rankingView    ?? 'grid';
   currentSort    = cloud.currentSort    ?? 'elo';
   sortAsc        = cloud.sortAsc        ?? false;
+  achievements   = cloud.achievements   ?? {};
 
   // Migrate old data fields
   animeList.forEach(a => {
@@ -2913,10 +3037,10 @@ async function checkAndApplyCloudSave(localSaveKey) {
   const dateStr    = cloudDate ? cloudDate.toLocaleString() : 'an unknown time';
   const cloudBattles = cloud.battleCount || 0;
   const cloudCount   = cloud.animeList.length;
-  const ok = confirm(
-    `☁️ A newer cloud save was found (${dateStr}).\n\n` +
-    `Cloud: ${cloudBattles} battles across ${cloudCount} anime\n\n` +
-    `Load the cloud save? (Your local data will be replaced.)`
+  const ok = await _confirmAsync(
+    '☁️ Newer cloud save found',
+    `Saved ${dateStr} — ${cloudBattles} battles across ${cloudCount} anime.\n\nLoad the cloud save? Your local data will be replaced.`,
+    'Load cloud save'
   );
   if (!ok) return false;
 
@@ -2949,11 +3073,10 @@ async function manualCloudPull() {
   const cloudCount   = cloud.animeList.length;
   const localBattles = battleCount || 0;
 
-  const ok = confirm(
-    `☁️ Cloud save from ${cloudDate}\n\n` +
-    `Cloud: ${cloudBattles} battles across ${cloudCount} anime\n` +
-    `Local: ${localBattles} battles\n\n` +
-    `Replace your local rankings with the cloud save?`
+  const ok = await _confirmAsync(
+    '☁️ Load cloud save?',
+    `Cloud: ${cloudBattles} battles across ${cloudCount} anime (saved ${cloudDate})\nLocal: ${localBattles} battles\n\nThis will replace your local rankings.`,
+    'Load cloud save'
   );
   if (!ok) return;
 
@@ -3065,9 +3188,11 @@ function loadState(username, source = 'anilist') {
     excludedIds   = new Set(s.excludedIds ?? []);
     hiddenFormats  = new Set(s.hiddenFormats  ?? []);
     hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
-    rankingView    = s.rankingView ?? 'grid';
-    currentSort    = s.currentSort ?? 'elo';
-    sortAsc        = s.sortAsc     ?? false;
+    rankingView    = s.rankingView  ?? 'grid';
+    currentSort    = s.currentSort  ?? 'elo';
+    sortAsc        = s.sortAsc      ?? false;
+    achievements    = s.achievements    ?? {};
+    comparedFriends = new Set(s.comparedFriends ?? []);
     // Migrate old saves that predate titleEn/titleRo/description/format fields
     animeList.forEach(a => {
       if (!a.titleEn) a.titleEn = a.title || '';
@@ -3076,7 +3201,8 @@ function loadState(username, source = 'anilist') {
       if (!a.format) a.format = 'TV';
       if (a.globalScore === undefined) a.globalScore = 0;
       if (a.episodes === undefined) a.episodes = 0;
-      if (a.status  === undefined) a.status  = 'COMPLETED';
+      if (a.status     === undefined) a.status     = 'COMPLETED';
+      if (a.popularity === undefined) a.popularity = 0;
     });
     return true;
   } catch { return false; }
@@ -3140,8 +3266,23 @@ function pickOpponents() {
   });
   const totalW = weights.reduce((s, w) => s + w, 0);
 
-  // Fallback: if almost everything is excluded, use first two available
+  // Warn user if pool is very small; hide warning when healthy
   const activeCount = weights.filter(w => w > 0).length;
+  const poolBanner  = document.getElementById('pool-warning-banner');
+  const poolText    = document.getElementById('pool-warning-text');
+  if (poolBanner) {
+    if (activeCount < 2) {
+      poolText.textContent = '⚠️ All anime are filtered out — remove some filters to keep battling.';
+      poolBanner.classList.add('active');
+    } else if (activeCount <= 5) {
+      poolText.textContent = `⚠️ Only ${activeCount} anime in your battle pool — remove some filters to see more matchups.`;
+      poolBanner.classList.add('active');
+    } else {
+      poolBanner.classList.remove('active');
+    }
+  }
+
+  // Fallback: if almost everything is excluded, use first two available
   if (activeCount < 2) {
     const fallback = animeList.map((_, i) => i).filter(i => weights[i] > 0);
     return [fallback[0] ?? 0, fallback[1] ?? 1];
@@ -3189,16 +3330,20 @@ function renderPair(ia, ib) {
   currentB = ib;
   const a = animeList[ia];
   const b = animeList[ib];
-  document.getElementById('img-a').src   = a.cover;
-  document.getElementById('img-a').alt   = displayTitle(a);
+  const imgA = document.getElementById('img-a');
+  const imgB = document.getElementById('img-b');
+  imgA.classList.remove('img-broken');
+  imgB.classList.remove('img-broken');
+  imgA.src = a.cover;
+  imgA.alt = displayTitle(a);
   document.getElementById('title-a').textContent = displayTitle(a);
   document.getElementById('elo-a').textContent   = `ELO ${a.elo}`;
   document.getElementById('ep-meta-a').innerHTML =
     (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
       : a.episodes ? `<span class="ep-badge">${a.episodes} ep</span>` : '') +
     _statusBadge(a.status);
-  document.getElementById('img-b').src   = b.cover;
-  document.getElementById('img-b').alt   = displayTitle(b);
+  imgB.src = b.cover;
+  imgB.alt = displayTitle(b);
   document.getElementById('title-b').textContent = displayTitle(b);
   document.getElementById('elo-b').textContent   = `ELO ${b.elo}`;
   document.getElementById('ep-meta-b').innerHTML =
@@ -3285,6 +3430,7 @@ function pickWinner(side) {
   battleCount++;
   checkMilestone(prevCount, battleCount);
   checkSessionSummary();
+  _checkAchievements();
   saveState();
 
   // Pick and show the next pair FIRST — then record it in the undo snapshot
@@ -3388,6 +3534,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   card.dataset.epRange = epRange(anime.episodes, anime.format);
   card.dataset.tier    = tier;
   card.dataset.conf    = conf.cls;
+  card.dataset.animeId = anime.id;
   card.style.cursor = 'pointer';
   card.title = 'Click for details';
   card.addEventListener('click', () => showAnimeDetail(anime.id));
@@ -3410,9 +3557,10 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     ${anime.fuzzy ? '<span class="fuzzy-tag" title="Can&#39;t Remember \u2014 you selected this option during a battle. This anime appears less often until you&#39;ve refreshed your memory of it.">&#x1F32B; Fuzzy</span>' : ''}
     ${streakBadge(anime)}
   `;
-  if (showFuzzyOnly && !anime.fuzzy)         card.style.display = 'none';
-  if (hiddenFormats.has(anime.format))       card.style.display = 'none';
+  if (showFuzzyOnly && !anime.fuzzy)                             card.style.display = 'none';
+  if (hiddenFormats.has(anime.format))                           card.style.display = 'none';
   if (hiddenEpRanges.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
+  if (excludedIds.has(anime.id))                                 card.style.display = 'none';
   return card;
 }
 
@@ -3472,6 +3620,8 @@ function showResults() {
   renderRankingList();
   show('results-screen');
   switchResultsTab('rankings');
+  // Check achievements on load so existing saves are retroactively credited
+  setTimeout(_checkAchievements, 500);
   // Start polling for new anime if logged in (deferred so ranking renders first)
   if (authToken && authUser) setTimeout(_startNewAnimePolling, 2000);
 }
@@ -3642,11 +3792,10 @@ async function importBackup(event) {
   const count    = payload.animeList.length;
   const battles  = payload.battleCount || 0;
   const exported = payload._exportedAt ? new Date(payload._exportedAt).toLocaleDateString() : 'unknown date';
-  const ok = confirm(
-    `Import backup from ${exported}?\n\n` +
-    `• ${count} anime\n• ${battles} battles\n\n` +
-    `This will REPLACE your current rankings for "${payload.saveKey.replace(/^anime_elo_(mal_)?/, '')}". ` +
-    `Your existing data will be lost.`
+  const ok = await _confirmAsync(
+    '📦 Import backup?',
+    `Backup from ${exported} — ${count} anime, ${battles} battles.\n\nThis will replace your current rankings for "${payload.saveKey.replace(/^anime_elo_(mal_)?/, '')}". Your existing data will be lost.`,
+    'Import'
   );
   if (!ok) {
     msgEl.style.display = 'none';
@@ -3676,14 +3825,49 @@ async function importBackup(event) {
   }
 }
 
+let _confirmCancelCb = null;
+function _showConfirm(title, body, okLabel, onOk, onCancel) {
+  document.getElementById('confirm-modal-title').textContent = title;
+  document.getElementById('confirm-modal-body').textContent  = body;
+  const okBtn = document.getElementById('confirm-modal-ok');
+  okBtn.textContent = okLabel;
+  okBtn.onclick = () => { _confirmCancel(); onOk(); };
+  _confirmCancelCb = onCancel || null;
+  document.getElementById('confirm-modal').classList.add('open');
+}
+function _confirmCancel() {
+  document.getElementById('confirm-modal').classList.remove('open');
+  if (_confirmCancelCb) { const cb = _confirmCancelCb; _confirmCancelCb = null; cb(); }
+}
+// Promise-based wrapper — lets async functions await the user's choice
+function _confirmAsync(title, body, okLabel) {
+  return new Promise(resolve => {
+    _showConfirm(title, body, okLabel, () => resolve(true), () => resolve(false));
+  });
+}
+
 function resetAll() {
-  if (!confirm('Reset all progress? This cannot be undone.')) return;
-  if (saveKey) localStorage.removeItem(saveKey);
-  location.reload();
+  _showConfirm(
+    '🔄 Reset everything?',
+    'This will permanently delete all your battle history, rankings, and achievements for this account. There is no undo.',
+    'Yes, reset',
+    () => { if (saveKey) localStorage.removeItem(saveKey); location.reload(); }
+  );
 }
 
 function changeUser() {
-  if (battleCount > 0 && !confirm('Switch user? Your progress for the current user is saved and will resume next time you enter their username.')) return;
+  if (battleCount > 0) {
+    _showConfirm(
+      'Switch user?',
+      'Your progress is saved and will resume next time you enter this username.',
+      'Switch',
+      () => _doChangeUser()
+    );
+    return;
+  }
+  _doChangeUser();
+}
+function _doChangeUser() {
   hide('battle-screen');
   hide('results-screen');
   document.getElementById('change-user-btn').style.display = 'none';
@@ -3715,10 +3899,10 @@ async function startMALLoading() {
   const existingSaveKey = 'anime_elo_mal_' + username.toLowerCase();
 
   if (seedFromScores && localStorage.getItem(existingSaveKey)) {
-    const ok = confirm(
-      'You have a saved session for ' + username + '.\n\n' +
-      '"Warm start" will re-seed all ELO from your MAL scores and reset battle progress.\n\n' +
-      'Continue? (Cancel to restore saved session instead)'
+    const ok = await _confirmAsync(
+      '🔥 Warm start?',
+      `You have a saved session for ${username}. Warm start will re-seed all ELO scores from your MAL ratings and reset battle progress.\n\nCancel to restore your saved session instead.`,
+      'Yes, warm start'
     );
     if (!ok) {
       hide('username-screen');
@@ -3801,7 +3985,19 @@ async function startMALLoading() {
   } catch (err) {
     hide('loading-screen');
     showFlex('username-screen');
-    errEl.textContent = err.message;
+    let msg = err.message || '';
+    if (!navigator.onLine) {
+      msg = '⚠️ No internet connection — check your network and try again.';
+    } else if (msg.includes('No completed anime')) {
+      msg = '📭 No completed anime found. Make sure your MAL list is public and has entries with "Completed" status.';
+    } else if (msg.includes('404') || msg.includes('not found') || msg.includes('Invalid username')) {
+      msg = '🔍 MAL username not found — double-check the spelling and try again.';
+    } else if (msg.includes('429') || msg.includes('rate limit')) {
+      msg = '⏳ MAL / Jikan is rate-limiting requests right now. Wait a minute and try again.';
+    } else if (!msg) {
+      msg = 'Could not load MAL list — check the username and your connection, then try again.';
+    }
+    errEl.textContent = msg;
     errEl.style.display = 'block';
   }
 }
@@ -3867,6 +4063,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
             averageScore
             genres
             seasonYear
+            popularity
           }
         }
       }`;
@@ -3898,6 +4095,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
         globalScore: m.averageScore || 0,
         genres: m.genres || [],
         seasonYear: m.seasonYear || null,
+        popularity: m.popularity || 0,
         elo: startElo, wins: 0, losses: 0, comparisons: 0,
         fuzzy: false, eloHistory: [startElo],
         anilistScore: 0, malScore: userScore,
@@ -3923,6 +4121,16 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
 
 // ─── RECOMMENDATIONS ─────────────────────────────────────────────────────────
 let recsTab = 'foryou'; // 'foryou' | 'seasonal'
+
+function refreshDiscover() {
+  const grid = document.getElementById('recs-grid');
+  const btn  = document.getElementById('discover-refresh-btn');
+  grid.innerHTML = '';
+  if (btn) { btn.textContent = '↻ Refreshing…'; btn.disabled = true; }
+  _loadRecsGrid().then(() => {
+    if (btn) { btn.textContent = '↻ Refresh'; btn.disabled = false; }
+  });
+}
 
 function setRecsTab(tab) {
   recsTab = tab;
@@ -3961,7 +4169,6 @@ async function fetchRecommendationsForYou() {
   const ownIds = new Set(animeList.map(a => a.id));
   const usedIds = new Set(); // dedup across groups
   const groups = [];
-  const grid = document.getElementById('recs-grid');
 
   const query = `
     query ($id: Int) {
@@ -3980,7 +4187,6 @@ async function fetchRecommendationsForYou() {
 
   for (let rank = 0; rank < seeds.length; rank++) {
     const anime = seeds[rank];
-    grid.innerHTML = `<p style="color:#8b949e;text-align:center">⏳ Finding recommendations… (${rank + 1}/${seeds.length})</p>`;
     try {
       const res = await fetch('https://graphql.anilist.co', {
         method: 'POST',
@@ -4005,7 +4211,6 @@ async function fetchRecommendationsForYou() {
   // Fallback: if recommendations are too sparse, return flat highly-rated list
   const totalRecs = groups.reduce((s, g) => s + g.recs.length, 0);
   if (totalRecs < 4) {
-    grid.innerHTML = `<p style="color:#8b949e;text-align:center">⏳ Expanding recommendations…</p>`;
     const items = await _fetchHighlyRatedUnseen(ownIds);
     return { grouped: false, items: items.slice(0, 10) };
   }
@@ -4174,14 +4379,12 @@ async function fetchSeasonalRecommendations() {
   const ownIds = new Set(animeList.map(a => a.id));
   const { season, year } = getCurrentSeason();
   const next = getNextSeason(season, year);
-  const grid = document.getElementById('recs-grid');
   const results = [];
 
   for (const { s, y, label } of [
     { s: season, y: year, label: `${season} ${year}` },
     { s: next.season, y: next.year, label: `${next.season} ${next.year}` }
   ]) {
-    grid.innerHTML = `<p style="color:#8b949e;text-align:center">⏳ Fetching ${label} anime…</p>`;
     const query = `
       query ($season: MediaSeason, $year: Int) {
         Page(perPage: 50) {
@@ -4216,12 +4419,26 @@ async function fetchSeasonalRecommendations() {
       if (a.watched !== b.watched) return a.watched ? 1 : -1;
       return (b.media.averageScore || 0) - (a.media.averageScore || 0);
     })
-    .slice(0, 10);
+    .slice(0, 8);
+}
+
+function _recsSkeletonHtml(count = 8) {
+  const card = `<div class="skeleton-card">
+    <div class="skeleton-img"></div>
+    <div class="skeleton-body">
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line shorter"></div>
+    </div>
+  </div>`;
+  // Cards placed directly so the grid's own column layout applies
+  return card.repeat(count);
 }
 
 async function _loadRecsGrid() {
   const grid = document.getElementById('recs-grid');
-  grid.innerHTML = '<p style="color:#8b949e;text-align:center">⏳ Fetching…</p>';
+  grid.style.display = 'grid';
+  grid.innerHTML = _recsSkeletonHtml();
 
   // ── Seasonal tab: flat grid ──────────────────────────────────────────────
   if (recsTab !== 'foryou') {
@@ -4242,8 +4459,8 @@ async function _loadRecsGrid() {
   }
 
   // ── For You tab: grouped recs + genre dive + hidden gems ─────────────────
-  grid.style.display = 'block';
-
+  // Note: grid stays as display:grid (skeleton layout) until data arrives,
+  // then switches to block for the grouped/sectioned real layout.
   let result;
   try { result = await fetchRecommendationsForYou(); }
   catch (e) {
@@ -4251,6 +4468,7 @@ async function _loadRecsGrid() {
     return;
   }
 
+  grid.style.display = 'block';
   let mainHtml;
   if (result.grouped && result.groups.length) {
     mainHtml = result.groups.map(({ seed, recs }) => `
@@ -4409,6 +4627,14 @@ async function runCompatibility() {
 
     const emojiFor = pct => pct >= 80 ? '💜' : pct >= 65 ? '🟢' : pct >= 50 ? '🟡' : pct >= 35 ? '🟠' : '🔴';
     const labelFor = pct => pct >= 80 ? 'Soulmates' : pct >= 65 ? 'Great Match' : pct >= 50 ? 'Good Compatibility' : pct >= 35 ? 'Some Common Ground' : 'Very Different Tastes';
+
+    // Social achievements
+    _tryUnlock('kindred-spirit', pct >= 80, '💜 Kindred Spirit');
+    _tryUnlock('contrarian',     pct <= 25, '⚡ Contrarian');
+    // Track unique friends for Social Butterfly
+    comparedFriends.add(username2.toLowerCase());
+    saveState();
+    _checkAchievements();
 
     // Store detail data for click-through panels
     _compatDetailMap = new Map(overlap.map(a => {
@@ -4675,10 +4901,10 @@ async function startLoading() {
 
   // If manually requesting warm-start on an existing save, confirm before wiping
   if (checkboxSeed && hasSave) {
-    const ok = confirm(
-      'You have a saved session for this user.\n\n' +
-      '"Warm start" will re-seed all ELO scores from your AniList ratings and reset battle progress.\n\n' +
-      'Continue? (Cancel to restore your saved session instead)'
+    const ok = await _confirmAsync(
+      '🔥 Warm start?',
+      'You have a saved session for this user. Warm start will re-seed all ELO scores from your AniList ratings and reset battle progress.\n\nCancel to restore your saved session instead.',
+      'Yes, warm start'
     );
     if (!ok) {
       // User declined — load saved session normally
@@ -4774,7 +5000,24 @@ async function startLoading() {
     hide('loading-screen');
     showFlex('username-screen');
     const errEl = document.getElementById('error-msg');
-    errEl.textContent = 'Could not load list: ' + err.message;
+    // Give users a meaningful message depending on what went wrong
+    let msg = err.message || '';
+    if (!navigator.onLine) {
+      msg = '⚠️ No internet connection — check your network and try again.';
+    } else if (msg.includes('No completed anime')) {
+      msg = '📭 No completed anime found for that username. Make sure you have anime marked as "Completed" on AniList and the list is public.';
+    } else if (msg.includes('Not Found') || msg.includes('404') || msg.includes('User not found')) {
+      msg = '🔍 Username not found — double-check the spelling and try again.';
+    } else if (msg.includes('429') || msg.includes('rate limit') || msg.toLowerCase().includes('too many')) {
+      msg = '⏳ AniList is rate-limiting requests right now. Wait a minute and try again.';
+    } else if (msg.includes('5') && /50[0-9]/.test(msg)) {
+      msg = '🔧 AniList is having server issues. Try again in a few minutes.';
+    } else if (msg) {
+      msg = 'Could not load list: ' + msg;
+    } else {
+      msg = 'Could not load list — check the username and your connection, then try again.';
+    }
+    errEl.textContent = msg;
     errEl.style.display = 'block';
   }
 }
@@ -5063,6 +5306,240 @@ function maybeShowHelp() {
   }
 }
 
+// ─── ACHIEVEMENTS ────────────────────────────────────────────────────────────
+let achievements    = {}; // id -> { unlockedAt: ISO string }
+let comparedFriends = new Set(); // AniList usernames we've run compatibility against
+
+const ACHIEVEMENT_DEFS = [
+  {
+    id: 'battle', name: 'Battle Hardened', emoji: '⚔️',
+    desc: 'Keep fighting battles to rank your anime',
+    tiers: [
+      { id: 'battle-bronze', tier: 'bronze', label: 'Bronze', req: '50 battles'   },
+      { id: 'battle-silver', tier: 'silver', label: 'Silver', req: '250 battles'  },
+      { id: 'battle-gold',   tier: 'gold',   label: 'Gold',   req: '1,000 battles' },
+    ]
+  },
+  {
+    id: 'collector', name: 'Collector', emoji: '📚',
+    desc: 'Build up your ranked library',
+    tiers: [
+      { id: 'collector-bronze', tier: 'bronze', label: 'Bronze', req: '50 anime'  },
+      { id: 'collector-silver', tier: 'silver', label: 'Silver', req: '150 anime' },
+      { id: 'collector-gold',   tier: 'gold',   label: 'Gold',   req: '300 anime' },
+    ]
+  },
+  {
+    id: 'decisive', name: 'Decisive', emoji: '🎯',
+    desc: 'Battle enough to reach Confident rankings',
+    tiers: [
+      { id: 'decisive-bronze', tier: 'bronze', label: 'Bronze', req: '10 Confident' },
+      { id: 'decisive-silver', tier: 'silver', label: 'Silver', req: '30 Confident' },
+      { id: 'decisive-gold',   tier: 'gold',   label: 'Gold',   req: '75 Confident' },
+    ]
+  },
+  {
+    id: 'explorer', name: 'Genre Explorer', emoji: '🎭',
+    desc: 'Diversify your list across genres',
+    tiers: [
+      { id: 'explorer-bronze', tier: 'bronze', label: 'Bronze', req: '5 genres'  },
+      { id: 'explorer-silver', tier: 'silver', label: 'Silver', req: '8 genres'  },
+      { id: 'explorer-gold',   tier: 'gold',   label: 'Gold',   req: '12 genres' },
+    ]
+  },
+  {
+    id: 'traveller', name: 'Time Traveller', emoji: '🕰️',
+    desc: 'Explore anime from different eras',
+    tiers: [
+      { id: 'traveller-bronze', tier: 'bronze', label: 'Bronze', req: '3 decades' },
+      { id: 'traveller-silver', tier: 'silver', label: 'Silver', req: '4 decades' },
+      { id: 'traveller-gold',   tier: 'gold',   label: 'Gold',   req: '5 decades' },
+    ]
+  },
+  {
+    id: 'undefeated', name: 'Undefeated', emoji: '🏆',
+    desc: 'Have an anime win 10+ battles without a single loss',
+    tiers: [{ id: 'undefeated', tier: 'gold', label: '', req: '10+ wins, 0 losses' }]
+  },
+  {
+    id: 'kindred', name: 'Kindred Spirit', emoji: '💜',
+    desc: 'Find someone who shares your taste',
+    tiers: [{ id: 'kindred-spirit', tier: 'gold', label: '', req: '80%+ compatibility' }]
+  },
+  {
+    id: 'contrarian', name: 'Contrarian', emoji: '⚡',
+    desc: 'Find someone with completely different taste',
+    tiers: [{ id: 'contrarian', tier: 'silver', label: '', req: '25% or less compatibility' }]
+  },
+  {
+    id: 'settled', name: 'Settled', emoji: '⚖️',
+    desc: 'Battle enough for Confident rankings across your list',
+    tiers: [
+      { id: 'settled-bronze', tier: 'bronze', label: 'Bronze', req: '25 Confident' },
+      { id: 'settled-silver', tier: 'silver', label: 'Silver', req: '75 Confident' },
+      { id: 'settled-gold',   tier: 'gold',   label: 'Gold',   req: 'All Confident' },
+    ]
+  },
+  {
+    id: 'top-dog', name: 'Top Dog', emoji: '👑',
+    desc: 'Your #1 ranked anime dominates in battle',
+    tiers: [
+      { id: 'top-dog-bronze', tier: 'bronze', label: 'Bronze', req: '20 wins at #1'  },
+      { id: 'top-dog-silver', tier: 'silver', label: 'Silver', req: '75 wins at #1'  },
+      { id: 'top-dog-gold',   tier: 'gold',   label: 'Gold',   req: '250 wins at #1' },
+    ]
+  },
+  {
+    id: 'social-butterfly', name: 'Social Butterfly', emoji: '🦋',
+    desc: 'Compare your taste with other fans',
+    tiers: [
+      { id: 'social-bronze', tier: 'bronze', label: 'Bronze', req: '3 friends compared'  },
+      { id: 'social-silver', tier: 'silver', label: 'Silver', req: '5 friends compared'  },
+      { id: 'social-gold',   tier: 'gold',   label: 'Gold',   req: '10 friends compared' },
+    ]
+  },
+  {
+    id: 'hidden-gem-fan', name: 'Hidden Gem Fan', emoji: '💎',
+    desc: 'Appreciate an anime the masses overlooked',
+    tiers: [{ id: 'hidden-gem-fan', tier: 'gold', label: '', req: 'Sub-50k anime in your top 10' }]
+  },
+  {
+    id: 'old-soul', name: 'Old Soul', emoji: '📼',
+    desc: 'Appreciate the classics from before the modern era',
+    tiers: [{ id: 'old-soul', tier: 'gold', label: '', req: 'Pre-1990 anime in your top 10' }]
+  },
+];
+
+function _tryUnlock(id, condition, toastName) {
+  if (!condition || achievements[id]) return;
+  achievements[id] = { unlockedAt: new Date().toISOString() };
+  saveState();
+  showToast(`🏆 Achievement unlocked: ${toastName}`, 4000);
+  // Refresh tab if open
+  if (document.getElementById('tab-panel-achievements')?.style.display !== 'none') {
+    renderAchievementsTab();
+  }
+}
+
+function _checkAchievements() {
+  if (!animeList.length) return;
+
+  // Battle Hardened
+  _tryUnlock('battle-bronze', battleCount >= 50,   '⚔️ Battle Hardened (Bronze)');
+  _tryUnlock('battle-silver', battleCount >= 250,  '⚔️ Battle Hardened (Silver)');
+  _tryUnlock('battle-gold',   battleCount >= 1000, '⚔️ Battle Hardened (Gold)');
+
+  // Collector
+  _tryUnlock('collector-bronze', animeList.length >= 50,  '📚 Collector (Bronze)');
+  _tryUnlock('collector-silver', animeList.length >= 150, '📚 Collector (Silver)');
+  _tryUnlock('collector-gold',   animeList.length >= 300, '📚 Collector (Gold)');
+
+  // Decisive (Confident = 15+ comparisons)
+  const confidentCount = animeList.filter(a => a.comparisons >= 15).length;
+  _tryUnlock('decisive-bronze', confidentCount >= 10, '🎯 Decisive (Bronze)');
+  _tryUnlock('decisive-silver', confidentCount >= 30, '🎯 Decisive (Silver)');
+  _tryUnlock('decisive-gold',   confidentCount >= 75, '🎯 Decisive (Gold)');
+
+  // Genre Explorer
+  const genreCount = new Set(animeList.flatMap(a => a.genres || [])).size;
+  _tryUnlock('explorer-bronze', genreCount >= 5,  '🎭 Genre Explorer (Bronze)');
+  _tryUnlock('explorer-silver', genreCount >= 8,  '🎭 Genre Explorer (Silver)');
+  _tryUnlock('explorer-gold',   genreCount >= 12, '🎭 Genre Explorer (Gold)');
+
+  // Time Traveller
+  const decadeCount = new Set(animeList.filter(a => a.seasonYear).map(a => Math.floor(a.seasonYear / 10) * 10)).size;
+  _tryUnlock('traveller-bronze', decadeCount >= 3, '🕰️ Time Traveller (Bronze)');
+  _tryUnlock('traveller-silver', decadeCount >= 4, '🕰️ Time Traveller (Silver)');
+  _tryUnlock('traveller-gold',   decadeCount >= 5, '🕰️ Time Traveller (Gold)');
+
+  // Undefeated
+  const hasUndefeated = animeList.some(a => a.wins >= 10 && a.losses === 0);
+  _tryUnlock('undefeated', hasUndefeated, '🏆 Undefeated');
+
+  // Settled — anime with Confident rankings (15+ comparisons)
+  const settledCount = animeList.filter(a => a.comparisons >= 15).length;
+  const allSettled   = animeList.length >= 10 && settledCount === animeList.length;
+  _tryUnlock('settled-bronze', settledCount >= 25, '⚖️ Settled (Bronze)');
+  _tryUnlock('settled-silver', settledCount >= 75, '⚖️ Settled (Silver)');
+  _tryUnlock('settled-gold',   allSettled,          '⚖️ Settled (Gold)');
+
+  // Top Dog — wins of the current #1 ranked anime
+  const byElo  = [...animeList].sort((a, b) => b.elo - a.elo);
+  const topWins = byElo[0]?.wins || 0;
+  _tryUnlock('top-dog-bronze', topWins >= 20,  '👑 Top Dog (Bronze)');
+  _tryUnlock('top-dog-silver', topWins >= 75,  '👑 Top Dog (Silver)');
+  _tryUnlock('top-dog-gold',   topWins >= 250, '👑 Top Dog (Gold)');
+
+  // Social Butterfly — unique friends compared
+  const friendCount = comparedFriends.size;
+  _tryUnlock('social-bronze', friendCount >= 3,  '🦋 Social Butterfly (Bronze)');
+  _tryUnlock('social-silver', friendCount >= 5,  '🦋 Social Butterfly (Silver)');
+  _tryUnlock('social-gold',   friendCount >= 10, '🦋 Social Butterfly (Gold)');
+
+  // Hidden Gem Fan — sub-50k popularity anime in top 10
+  const top10 = byElo.slice(0, 10);
+  const hasHiddenGem = top10.some(a => a.popularity > 0 && a.popularity < 50000);
+  _tryUnlock('hidden-gem-fan', hasHiddenGem, '💎 Hidden Gem Fan');
+
+  // Old Soul — pre-1990 anime in top 10
+  const hasOldSoul = top10.some(a => a.seasonYear && a.seasonYear < 1990);
+  _tryUnlock('old-soul', hasOldSoul, '📼 Old Soul');
+}
+
+function renderAchievementsTab() {
+  const el = document.getElementById('achievements-content');
+  if (!el) return;
+
+  const totalTiers  = ACHIEVEMENT_DEFS.reduce((s, d) => s + d.tiers.length, 0);
+  const unlockedCount = Object.keys(achievements).length;
+
+  const tierIcons = { bronze: '🥉', silver: '🥈', gold: '🥇' };
+  const tierOrder = ['bronze', 'silver', 'gold'];
+
+  el.innerHTML = `
+    <div class="achievements-summary">
+      ${unlockedCount} / ${totalTiers} unlocked
+      <div style="height:6px;background:#21262d;border-radius:4px;margin:8px auto;max-width:200px">
+        <div style="height:100%;border-radius:4px;background:#3fb950;width:${Math.round((unlockedCount/totalTiers)*100)}%"></div>
+      </div>
+    </div>
+    <div class="achievements-grid">
+      ${ACHIEVEMENT_DEFS.map(def => {
+        // Find the highest unlocked tier for this achievement
+        let highestTier = null;
+        for (const tier of tierOrder) {
+          const match = def.tiers.find(t => t.tier === tier);
+          if (match && achievements[match.id]) highestTier = tier;
+        }
+        const cardCls = highestTier ? `has-${highestTier}` : '';
+        return `
+          <div class="achievement-card ${cardCls}">
+            <div class="achievement-header">
+              <span class="achievement-emoji">${def.emoji}</span>
+              <div>
+                <div class="achievement-name">${def.name}</div>
+                <p class="achievement-desc">${def.desc}</p>
+              </div>
+            </div>
+            <div class="achievement-tiers">
+              ${def.tiers.map(t => {
+                const unlock = achievements[t.id];
+                const date = unlock ? new Date(unlock.unlockedAt).toLocaleDateString() : null;
+                const tierCls = unlock ? `unlocked ${t.tier}` : '';
+                return `
+                  <div class="ach-tier ${tierCls}">
+                    <span class="ach-icon">${unlock ? tierIcons[t.tier] : '🔒'}</span>
+                    <span class="ach-label">${t.tier.charAt(0).toUpperCase() + t.tier.slice(1)}</span>
+                    <span class="ach-req">${t.req}</span>
+                    ${date ? `<span class="achievement-unlock-date">${date}</span>` : ''}
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
 // ─── RESULTS TABS ─────────────────────────────────────────────────────────────
 let activeResultsTab = 'rankings';
 
@@ -5074,11 +5551,12 @@ function switchResultsTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => {
     p.style.display = p.id === 'tab-panel-' + tab ? '' : 'none';
   });
-  if (tab === 'rankings') renderExcluded();
-  if (tab === 'stats')    renderStatsTab();
-  if (tab === 'history')  renderHistoryTab();
-  if (tab === 'discover') renderDiscoverTab();
-  if (tab === 'social')   renderSocialTab();
+  if (tab === 'rankings')     renderExcluded();
+  if (tab === 'stats')        renderStatsTab();
+  if (tab === 'history')      renderHistoryTab();
+  if (tab === 'discover')     renderDiscoverTab();
+  if (tab === 'social')       renderSocialTab();
+  if (tab === 'achievements') renderAchievementsTab();
 }
 
 async function renderDiscoverTab() {
@@ -5273,10 +5751,12 @@ function filterRankings() {
     const isFuzzy = card.querySelector('.fuzzy-tag') !== null;
     const fmt     = card.dataset.format  || '';
     const epRng   = card.dataset.epRange || 'unknown';
+    const animeId = parseInt(card.dataset.animeId) || 0;
     const show = (!q || title.includes(q))
       && (!showFuzzyOnly || isFuzzy)
       && !hiddenFormats.has(fmt)
-      && !hiddenEpRanges.has(epRng);
+      && !hiddenEpRanges.has(epRng)
+      && !excludedIds.has(animeId);
     card.style.display = show ? '' : 'none';
   });
   if (rankingView === 'list') renderRankingTable();
@@ -5991,7 +6471,8 @@ function renderRankingTable() {
     const hidden = (q && !title.toLowerCase().includes(q)) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
                    hiddenFormats.has(fmt) ||
-                   hiddenEpRanges.has(epRange(anime.episodes, fmt));
+                   hiddenEpRanges.has(epRange(anime.episodes, fmt)) ||
+                   excludedIds.has(anime.id);
     if (hidden) return;
     const wr      = (anime.wins + anime.losses) > 0
       ? Math.round(anime.wins / (anime.wins + anime.losses) * 100) + '%' : '–';
@@ -6299,6 +6780,14 @@ function _startNewAnimePolling() {
 }
 
 // Auto-load if username is pre-filled, or show shared view if URL has a share hash
+// Global image error handler — catches broken covers in dynamically rendered cards
+// Guard: ignore errors from empty src (e.g. before renderPair has set a real URL)
+document.addEventListener('error', e => {
+  if (e.target.tagName === 'IMG' && e.target.src && !e.target.src.endsWith('/')) {
+    e.target.classList.add('img-broken');
+  }
+}, true);
+
 window.addEventListener('load', () => {
   if (tryLoadSharedView()) {
     hide('username-screen');
@@ -6336,5 +6825,17 @@ window.addEventListener('beforeunload', () => {
   }
 </script>
 <div id="toast"></div>
+
+<!-- Confirm modal (replaces browser confirm() dialogs) -->
+<div id="confirm-modal" onclick="if(event.target===this)_confirmCancel()">
+  <div class="confirm-modal-box">
+    <h3 id="confirm-modal-title"></h3>
+    <p  id="confirm-modal-body"></p>
+    <div class="confirm-modal-actions">
+      <button class="confirm-btn-cancel" onclick="_confirmCancel()">Cancel</button>
+      <button class="confirm-btn-danger" id="confirm-modal-ok">Confirm</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
