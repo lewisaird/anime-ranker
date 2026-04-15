@@ -1136,6 +1136,43 @@
     .format-btn.hidden-fmt { background: #21262d; border-color: #30363d; color: #484f58; text-decoration: line-through; }
 
     /* DISAGREEMENTS SECTION */
+    /* PREDICTOR */
+    .predictor-result {
+      display: flex; gap: 14px; align-items: flex-start;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 16px;
+    }
+    .predictor-cover { width: 64px; min-width: 64px; border-radius: 6px; aspect-ratio: 2/3; object-fit: cover; }
+    .predictor-body { flex: 1; min-width: 0; }
+    .predictor-title { font-size: 0.95rem; font-weight: 700; color: #e6edf3; margin-bottom: 6px; }
+    .predictor-tier-badge {
+      display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 1rem;
+      font-weight: 800; letter-spacing: 1px; margin-bottom: 8px;
+    }
+    .predictor-tier-badge.t-s { background:#2d1b69; color:#b388ff; border:1px solid #7c4dff; }
+    .predictor-tier-badge.t-a { background:#1a2d1a; color:#69f0ae; border:1px solid #00e676; }
+    .predictor-tier-badge.t-b { background:#1a2237; color:#82b1ff; border:1px solid #448aff; }
+    .predictor-tier-badge.t-c { background:#2d2200; color:#ffd54f; border:1px solid #ffc107; }
+    .predictor-tier-badge.t-d { background:#2d1a1a; color:#ff8a80; border:1px solid #ff5252; }
+    .predictor-reasons { font-size: 0.78rem; color: #8b949e; line-height: 1.6; }
+    .predictor-reasons span { color: #c9d1d9; }
+    .predictor-already { color: #3fb950; font-size: 0.88rem; padding: 8px 0; }
+    .predictor-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0;
+      width: calc(100% - 90px); /* align under input, not button */
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      z-index: 200; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .predictor-dropdown-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; cursor: pointer; transition: background 0.1s;
+    }
+    .predictor-dropdown-item:hover,
+    .predictor-dropdown-item.focused { background: #21262d; }
+    .predictor-dropdown-item img { width: 32px; height: 46px; object-fit: cover; border-radius: 3px; flex-shrink: 0; }
+    .predictor-dropdown-item-info { min-width: 0; }
+    .predictor-dropdown-item-title { font-size: 0.82rem; color: #e6edf3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .predictor-dropdown-item-meta  { font-size: 0.7rem; color: #8b949e; }
+
     #disagree-section { margin-top: 28px; overflow: hidden; }
     #disagree-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 16px; }
     .disagree-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -1633,6 +1670,19 @@
       margin-top: 3px;
     }
 
+    .rec-relation-note {
+      font-size: 0.68rem;
+      color: #79c0ff;
+      background: #112030;
+      border: 1px solid #1f3a52;
+      border-radius: 5px;
+      padding: 4px 7px;
+      margin-top: 5px;
+      line-height: 1.35;
+      display: block;
+    }
+    .rec-relation-note strong { color: #a5d6ff; }
+
     /* GROUPED RECOMMENDATIONS */
     .recs-group { margin-bottom: 28px; }
     .recs-group-heading { font-size: 0.88rem; color: #c9d1d9; margin: 0 0 12px; font-weight: 600; }
@@ -2066,7 +2116,7 @@
   </div>
 
   <div id="battle-screen">
-    <div id="progress-bar-wrap"><div id="progress-bar" style="width:0%"></div></div>
+    <div id="progress-bar-wrap" title="Ranking confidence — based on how many battles each anime has averaged. Fills faster with a small list, slower with a large one."><div id="progress-bar" style="width:0%"></div></div>
     <div id="tower-progress-wrap"><div id="tower-progress-bar" style="width:0%"></div></div>
     <div id="tower-status" style="text-align:center;font-size:0.82rem;color:#e3a000;margin-bottom:8px"></div>
 
@@ -2125,7 +2175,7 @@
     </div>
 
     <div class="battle-actions">
-      <button class="btn-secondary" id="undo-btn" onclick="undoLast()" disabled>↩ Undo</button>
+      <button class="btn-secondary" id="undo-btn" onclick="undoLast()" disabled title="Undo last battle (up to 5 levels)">↩ Undo</button>
       <button class="btn-secondary" id="skip-btn" onclick="skipBattle()">⏭ Skip</button>
       <button class="btn-secondary" onclick="showResults()">📊 Rankings</button>
       <button class="btn-secondary" id="settle-btn" onclick="toggleSettleMode()" title="Target low-confidence matchups">🎯 Settle</button>
@@ -2271,6 +2321,23 @@
               <div id="disagree-score-higher"></div>
             </div>
           </div>
+        </div>
+
+        <div id="predictor-section" style="margin-top:36px;border-top:1px solid #21262d;padding-top:28px">
+          <h3>🔮 How Would I Rate This?</h3>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Enter any anime you haven't ranked and Kessen will predict your likely tier — based on your genre affinities, era preferences, and how you diverge from community scores.</p>
+          <div style="position:relative;margin-bottom:16px">
+            <div style="display:flex;gap:8px">
+              <input type="text" id="predictor-input" placeholder="Search an anime title…"
+                style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:0.88rem"
+                oninput="predictorOnInput(this.value)"
+                onkeydown="predictorOnKeydown(event)"
+                autocomplete="off" />
+              <button class="btn-primary" onclick="runPredictor()">Predict</button>
+            </div>
+            <div id="predictor-dropdown" class="predictor-dropdown" style="display:none"></div>
+          </div>
+          <div id="predictor-results"></div>
         </div>
       </div>
     </div>
@@ -2584,7 +2651,7 @@
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const K = 32;           // ELO K-factor
 const ELO_FLOOR = 400;  // minimum ELO — prevents outliers from being buried indefinitely
-const TARGET_BATTLES = 600; // soft target; user can always stop early
+const TARGET_BATTLES_PER_ANIME = 10; // battles each anime needs to be "confident" — used for progress bar & confidence labels
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 let animeList    = [];
@@ -2592,7 +2659,9 @@ let battleCount  = 0;
 let currentA     = null;
 let currentB     = null;
 let saveKey      = '';
-let prevState       = null;  // single-level undo snapshot
+let prevState       = null;  // kept for back-compat (skipBattle still uses this directly)
+let undoStack       = [];    // stack of up to MAX_UNDO_DEPTH snapshots (most recent last)
+const MAX_UNDO_DEPTH = 5;
 let nextPairOverride = null; // [idxA, idxB] — used once after an undo to restore the original "next" pair
 let battleHistory   = [];    // [{winnerTitle, loserTitle, winnerEloAfter, loserEloAfter, eloSwing}]
 const MAX_HISTORY   = 200;
@@ -2677,6 +2746,22 @@ function clearAuth() {
   authUser  = null;
   localStorage.removeItem('anime_elo_auth');
   _updateAuthUI();
+
+  // Reset all in-memory state so a different user can't see the previous user's data
+  animeList      = [];
+  battleCount    = 0;
+  currentA       = null;
+  currentB       = null;
+  battleHistory  = [];
+  excludedIds    = new Set();
+  saveKey        = '';
+  prevState      = null;
+  undoStack      = [];
+  achievements   = {};
+  comparedFriends = new Set();
+  _cloudSyncEnabled = false;
+  nextPairOverride  = null;
+
   // Return to the home screen
   hide('battle-screen');
   hide('results-screen');
@@ -2932,7 +3017,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
       popularity: e.media.popularity || 0,
       status: e.status || 'COMPLETED',
       elo: startElo,
-      wins: 0, losses: 0, comparisons: 0,
+      wins: 0, losses: 0, comparisons: 0, battles: 0,
       fuzzy: false,
       eloHistory: [startElo],
       anilistScore: e.score || 0,
@@ -3055,9 +3140,11 @@ function _applyCloudSaveToMemory(cloud) {
   rankingView    = cloud.rankingView    ?? 'grid';
   currentSort    = cloud.currentSort    ?? 'elo';
   sortAsc        = cloud.sortAsc        ?? false;
-  achievements   = cloud.achievements   ?? {};
+  achievements    = cloud.achievements   ?? {};
+  comparedFriends = new Set(cloud.comparedFriends ?? []);
 
   // Migrate old data fields
+  const _cloudAvgBattles = Math.round((cloud.battleCount || 0) * 2 / Math.max(cloud.animeList.length, 1));
   animeList.forEach(a => {
     if (!a.titleEn)                a.titleEn     = a.title || '';
     if (!a.titleRo)                a.titleRo     = a.title || '';
@@ -3066,6 +3153,7 @@ function _applyCloudSaveToMemory(cloud) {
     if (a.globalScore === undefined) a.globalScore = 0;
     if (a.episodes === undefined)  a.episodes    = 0;
     if (a.status === undefined)    a.status      = 'COMPLETED';
+    if (a.battles === undefined)   a.battles     = _cloudAvgBattles;
   });
 
   if (cloud.saveKey) saveKey = cloud.saveKey;
@@ -3252,6 +3340,7 @@ function loadState(username, source = 'anilist') {
     achievements    = s.achievements    ?? {};
     comparedFriends = new Set(s.comparedFriends ?? []);
     // Migrate old saves that predate titleEn/titleRo/description/format fields
+    const _avgBattles = Math.round((s.battleCount || 0) * 2 / Math.max(animeList.length, 1));
     animeList.forEach(a => {
       if (!a.titleEn) a.titleEn = a.title || '';
       if (!a.titleRo) a.titleRo = a.title || '';
@@ -3261,6 +3350,7 @@ function loadState(username, source = 'anilist') {
       if (a.episodes === undefined) a.episodes = 0;
       if (a.status     === undefined) a.status     = 'COMPLETED';
       if (a.popularity === undefined) a.popularity = 0;
+      if (a.battles    === undefined) a.battles    = _avgBattles; // estimated from average
     });
     return true;
   } catch { return false; }
@@ -3282,10 +3372,23 @@ function showToast(msg, duration = 3000) {
 }
 
 function updateProgress() {
-  const pct = Math.min(100, (battleCount / TARGET_BATTLES) * 100);
+  // Confidence = weighted average of per-anime settlement.
+  // Each anime contributes linearly from 0 → 1 as its battle count grows toward
+  // TARGET_BATTLES_PER_ANIME. This means adding unseen anime pulls the bar back down,
+  // and every battle nudges the two participants forward individually.
+  const active = animeList.filter(a => !excludedIds.has(a.id));
+  const n = active.length;
+  if (!n) {
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('progress-info').textContent = '0 battles';
+    return;
+  }
+  const totalConf = active.reduce((sum, a) =>
+    sum + Math.min(1, (a.battles || 0) / TARGET_BATTLES_PER_ANIME), 0);
+  const pct = Math.round(totalConf / n * 100);
   document.getElementById('progress-bar').style.width = pct + '%';
   document.getElementById('progress-info').textContent =
-    `${battleCount} battles · ${animeList.length} anime`;
+    `${battleCount} battles · ${n} anime`;
 }
 
 // ─── ELO ────────────────────────────────────────────────────────────────────
@@ -3473,6 +3576,8 @@ function pickWinner(side) {
   const loserEloBefore = animeList[loserIdx].elo;
   const eloDiffBefore = loserEloBefore - eloBefore; // positive = winner was underdog
   updateElo(animeList[winnerIdx], animeList[loserIdx]);
+  animeList[winnerIdx].battles = (animeList[winnerIdx].battles || 0) + 1;
+  animeList[loserIdx].battles  = (animeList[loserIdx].battles  || 0) + 1;
   battleHistory.unshift({
     winnerId:       animeList[winnerIdx].id,
     loserId:        animeList[loserIdx].id,
@@ -3492,16 +3597,29 @@ function pickWinner(side) {
   _checkAchievements();
   saveState();
 
-  // Pick and show the next pair FIRST — then record it in the undo snapshot
+  // Pick and show the next pair FIRST — then push a snapshot onto the undo stack
   renderBattle();
-  prevState = { ...snap, nextA: currentA, nextB: currentB };
-  document.getElementById('undo-btn').disabled = false;
+  _pushUndoSnapshot({ ...snap, nextA: currentA, nextB: currentB });
+}
+
+function _pushUndoSnapshot(snap) {
+  undoStack.push(snap);
+  if (undoStack.length > MAX_UNDO_DEPTH) undoStack.shift(); // evict oldest
+  prevState = undoStack[undoStack.length - 1]; // keep prevState in sync for any legacy reads
+  _updateUndoBtn();
+}
+
+function _updateUndoBtn() {
+  const btn = document.getElementById('undo-btn');
+  if (!btn) return;
+  btn.disabled = undoStack.length === 0;
+  btn.title    = undoStack.length > 1 ? `Undo (${undoStack.length} available)` : 'Undo last battle';
 }
 
 function undoLast() {
-  if (!prevState) return;
+  if (undoStack.length === 0) return;
 
-  const { winnerIdx, loserIdx, winnerSnap, loserSnap, battleCount: savedCount, pairA, pairB, nextA, nextB } = prevState;
+  const { winnerIdx, loserIdx, winnerSnap, loserSnap, battleCount: savedCount, pairA, pairB, nextA, nextB } = undoStack.pop();
 
   // Restore anime ELO/stats
   animeList[winnerIdx] = { ...winnerSnap };
@@ -3514,12 +3632,12 @@ function undoLast() {
   // After undo, if the user re-picks from pairA/pairB, restore the same next pair
   nextPairOverride = [nextA, nextB];
 
-  // Clear undo state
-  prevState = null;
-  document.getElementById('undo-btn').disabled = true;
+  prevState = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
+  _updateUndoBtn();
 
   // Show the original pair
   renderPair(pairA, pairB);
+  updateProgress();
   saveState();
 }
 
@@ -3539,8 +3657,7 @@ function skipBattle() {
 
   renderBattle(); // sets currentA/currentB to next pair
 
-  prevState = { ...snap, nextA: currentA, nextB: currentB };
-  document.getElementById('undo-btn').disabled = false;
+  _pushUndoSnapshot({ ...snap, nextA: currentA, nextB: currentB });
 }
 
 // ─── RESULTS ────────────────────────────────────────────────────────────────
@@ -3553,7 +3670,7 @@ function getSortedList() {
         const rb = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
         return (ra - rb) * dir;
       });
-    case 'battles':  return [...animeList].sort((a, b) => (a.comparisons - b.comparisons) * dir);
+    case 'battles':  return [...animeList].sort((a, b) => ((a.battles || 0) - (b.battles || 0)) * dir);
     case 'score':    return [...animeList].sort((a, b) => ((a.globalScore || 0) - (b.globalScore || 0)) * dir);
     case 'title':    return [...animeList].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b)) * dir);
     case 'tier': {
@@ -3569,8 +3686,8 @@ function getSortedList() {
     case 'confidence': {
       const confOrder = { confident: 0, settling: 1, uncertain: 2 };
       return [...animeList].sort((a, b) => {
-        const ca = confOrder[confidenceLabel(a.comparisons).cls] ?? 3;
-        const cb = confOrder[confidenceLabel(b.comparisons).cls] ?? 3;
+        const ca = confOrder[confidenceLabel(a.battles || 0).cls] ?? 3;
+        const cb = confOrder[confidenceLabel(b.battles || 0).cls] ?? 3;
         return ca !== cb ? (ca - cb) * dir : (b.elo - a.elo); // within confidence, sort by ELO
       });
     }
@@ -3582,7 +3699,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const eloRank = eloRankMap.get(anime.id) ?? i;
   const displayRank = eloRank + 1; // always show true ELO rank, regardless of current sort
   const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
-  const conf = confidenceLabel(anime.comparisons);
+  const conf = confidenceLabel(anime.battles || 0);
   const tier = getTier(eloRank, totalLen);
 
   const card = document.createElement('div');
@@ -3685,10 +3802,12 @@ function showResults() {
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
-function confidenceLabel(comparisons) {
-  if (comparisons < 5)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${comparisons} battles — fewer than 5, ranking not reliable yet` };
-  if (comparisons < 15) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${comparisons} battles — ranking is stabilising` };
-  return                       { cls: 'confident', dot: '●', label: 'Confident', title: `${comparisons} battles — ranking is well established` };
+// Uses a.battles (actual picks only) so skips don't inflate confidence.
+// Thresholds are relative to TARGET_BATTLES_PER_ANIME (= 10).
+function confidenceLabel(battles) {
+  if (battles < 3)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${battles} battles — fewer than 3, ranking not reliable yet` };
+  if (battles < TARGET_BATTLES_PER_ANIME) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${battles} battles — ranking is stabilising` };
+  return                                         { cls: 'confident', dot: '●', label: 'Confident', title: `${battles} battles — ranking is well established` };
 }
 
 // ─── STREAKS ─────────────────────────────────────────────────────────────────
@@ -3780,8 +3899,8 @@ function exportCSV() {
   const headers = ['Rank','Title','ELO','Tier','Win Rate','Wins','Losses','Battles','AniList Avg','Format','Season Year'];
   const rows = sorted.map((a, i) => {
     const tier = getTier(i, sorted.length);
-    const battles = (a.wins || 0) + (a.losses || 0);
-    const winRate = battles > 0 ? Math.round((a.wins || 0) / battles * 100) + '%' : 'N/A';
+    const battles = a.battles || 0;
+    const winRate = (a.wins + a.losses) > 0 ? Math.round((a.wins || 0) / (a.wins + a.losses) * 100) + '%' : 'N/A';
     const avgScore = a.globalScore != null ? a.globalScore + '%' : '';
     const fmt = a.format || '';
     const year = a.seasonYear || '';
@@ -3807,7 +3926,7 @@ function downloadBackup() {
     return;
   }
   const payload = {
-    _version:     2,
+    _version:     3,
     _exportedAt:  new Date().toISOString(),
     saveKey,
     animeList,
@@ -3821,6 +3940,8 @@ function downloadBackup() {
     rankingView,
     currentSort,
     sortAsc,
+    achievements,
+    comparedFriends: [...comparedFriends],
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -3885,6 +4006,8 @@ async function importBackup(event) {
       rankingView:    payload.rankingView    ?? 'grid',
       currentSort:    payload.currentSort    ?? 'elo',
       sortAsc:        payload.sortAsc        ?? false,
+      achievements:    payload.achievements   ?? {},
+      comparedFriends: payload.comparedFriends ?? [],
     }));
     msgEl.style.color = '#3fb950';
     msgEl.textContent = `✓ Imported ${count} anime — reloading…`;
@@ -3901,7 +4024,7 @@ function _showConfirm(title, body, okLabel, onOk, onCancel) {
   document.getElementById('confirm-modal-body').textContent  = body;
   const okBtn = document.getElementById('confirm-modal-ok');
   okBtn.textContent = okLabel;
-  okBtn.onclick = () => { _confirmCancel(); onOk(); };
+  okBtn.onclick = () => { _confirmCancelCb = null; _confirmCancel(); onOk(); };
   _confirmCancelCb = onCancel || null;
   document.getElementById('confirm-modal').classList.add('open');
 }
@@ -4166,7 +4289,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
         genres: m.genres || [],
         seasonYear: m.seasonYear || null,
         popularity: m.popularity || 0,
-        elo: startElo, wins: 0, losses: 0, comparisons: 0,
+        elo: startElo, wins: 0, losses: 0, comparisons: 0, battles: 0,
         fuzzy: false, eloHistory: [startElo],
         anilistScore: 0, malScore: userScore,
       };
@@ -4288,14 +4411,72 @@ async function fetchRecommendationsForYou() {
   return { grouped: true, groups };
 }
 
+// ─── RELATION NOTE ────────────────────────────────────────────────────────────
+let _recRelationsCache = new Map(); // mediaId → relations object, populated by _fetchRecRelations
+
+async function _fetchRecRelations(ids) {
+  if (!ids.length) return;
+  const query = `
+    query($ids: [Int]) {
+      Page(perPage: 50) {
+        media(id_in: $ids, type: ANIME) {
+          id
+          relations { edges { relationType node { id title { romaji english } } } }
+        }
+      }
+    }`;
+  try {
+    const res  = await fetch('https://graphql.anilist.co', {
+      method: 'POST', headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { ids } })
+    });
+    const json = await res.json();
+    (json?.data?.Page?.media ?? []).forEach(m => _recRelationsCache.set(m.id, m.relations));
+  } catch { /* relations are decorative — silently skip */ }
+}
+
+function _getRelationNote(media) {
+  const relations = media.relations ?? _recRelationsCache.get(media.id);
+  const edges = relations?.edges;
+  if (!edges?.length) return '';
+  const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i + 1]));
+  const ownMap     = new Map(animeList.map(a => [a.id, a]));
+
+  // Priority: PREQUEL first (most actionable), then PARENT, SEQUEL, SIDE_STORY
+  const priority = ['PREQUEL', 'PARENT', 'SEQUEL', 'SIDE_STORY', 'ALTERNATIVE'];
+  const matches = edges
+    .filter(e => priority.includes(e.relationType) && ownMap.has(e.node.id))
+    .sort((a, b) => priority.indexOf(a.relationType) - priority.indexOf(b.relationType));
+
+  if (!matches.length) return '';
+
+  const { relationType, node } = matches[0];
+  const relTitle = node.title.english || node.title.romaji;
+  const rank = eloRankMap.get(node.id);
+
+  if (relationType === 'PREQUEL')
+    return `<div class="rec-relation-note">📺 Sequel to <strong>${relTitle}</strong> — you have it at <strong>#${rank}</strong></div>`;
+  if (relationType === 'SEQUEL')
+    return `<div class="rec-relation-note">⏮ Watch this before <strong>${relTitle}</strong> (your <strong>#${rank}</strong>)</div>`;
+  if (relationType === 'PARENT')
+    return `<div class="rec-relation-note">🔗 Part of <strong>${relTitle}</strong> — you have it at <strong>#${rank}</strong></div>`;
+  return `<div class="rec-relation-note">🔗 Related to <strong>${relTitle}</strong> (your <strong>#${rank}</strong>)</div>`;
+}
+
 // ─── REC CARD HTML HELPER ─────────────────────────────────────────────────────
 function recCardHtml(media, opts = {}) {
-  const { seasonLabel = '', watched = false } = opts;
-  const title = media.title.english || media.title.romaji;
-  const cover = media.coverImage?.large || media.coverImage?.medium;
-  const avg   = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
-  const watchedTag = watched
+  const { seasonLabel = '', watched = false, tasteScore = null } = opts;
+  const title        = media.title.english || media.title.romaji;
+  const cover        = media.coverImage?.large || media.coverImage?.medium;
+  const avg          = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
+  const relationNote = _getRelationNote(media);
+  const watchedTag   = watched
     ? '<span style="font-size:0.65rem;background:#21262d;color:#8b949e;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Watched</span>'
+    : '';
+  // Show a taste badge on seasonal cards that match the user's genres well
+  const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
+    ? '<span style="font-size:0.65rem;background:#1a2d1a;color:#3fb950;border:1px solid #238636;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Matches your taste</span>'
     : '';
   return `
     <a class="rec-card" href="https://anilist.co/anime/${media.id}" target="_blank"
@@ -4305,18 +4486,21 @@ function recCardHtml(media, opts = {}) {
         <div class="rec-card-title">${title}</div>
         <div class="rec-card-meta">${media.format || ''}${seasonLabel ? ' · ' + seasonLabel : ''}</div>
         <span class="rec-score-pill">⭐ ${avg}</span>
+        ${tasteTag}
+        ${relationNote}
         ${watchedTag}
       </div>
     </a>`;
 }
 
-// Fallback: top-rated anime on AniList that the user hasn't seen
+// Fallback: top-rated anime on AniList that the user hasn't seen.
+// Avoids id_not_in (hits AniList complexity limits for large lists) — fetches a pool
+// and filters client-side instead.
 async function _fetchHighlyRatedUnseen(ownIds) {
-  const excludeIds = [...ownIds];
   const query = `
-    query ($excludeIds: [Int]) {
-      Page(perPage: 10) {
-        media(type: ANIME, id_not_in: $excludeIds, sort: SCORE_DESC,
+    {
+      Page(perPage: 50) {
+        media(type: ANIME, sort: SCORE_DESC,
               status: FINISHED, averageScore_greater: 78, popularity_greater: 30000) {
           id title { romaji english } coverImage { large medium } averageScore format
         }
@@ -4326,7 +4510,7 @@ async function _fetchHighlyRatedUnseen(ownIds) {
     const res = await fetch('https://graphql.anilist.co', {
       method: 'POST',
       headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { excludeIds } })
+      body: JSON.stringify({ query })
     });
     const json = await res.json();
     return (json?.data?.Page?.media ?? [])
@@ -4335,7 +4519,8 @@ async function _fetchHighlyRatedUnseen(ownIds) {
   } catch { return []; }
 }
 
-// Genre deep-dive: top-rated unseen anime in the user's highest-ELO genre
+// Genre deep-dive: top-rated unseen anime in one of the user's top genres.
+// Rotates daily among the top 3 genres so repeated visits feel fresh.
 async function fetchGenreDeepDive() {
   const genreMap = {};
   animeList.forEach(a => {
@@ -4351,7 +4536,12 @@ async function fetchGenreDeepDive() {
     .sort((a, b) => b.avg - a.avg);
 
   if (!genres.length) return { genre: null, items: [] };
-  const topGenre = genres[0].name;
+
+  // Rotate among top 3 genres (or however many exist) using day-of-year as seed
+  // so it's stable within a day but changes daily
+  const pool = genres.slice(0, 3);
+  const dayOfYear = Math.floor(Date.now() / 86400000); // ms → days
+  const topGenre = pool[dayOfYear % pool.length].name;
   const ownIds = new Set(animeList.map(a => a.id));
   const query = `
     query ($genre: String) {
@@ -4449,22 +4639,30 @@ async function fetchSeasonalRecommendations() {
   const ownIds = new Set(animeList.map(a => a.id));
   const { season, year } = getCurrentSeason();
   const next = getNextSeason(season, year);
-  const results = [];
+  const genreAffinityMap = _buildGenreAffinity();
+  const eloValues = animeList.map(a => a.elo);
+  const eloMin = eloValues.length ? Math.min(...eloValues) : 0;
+  const eloMax = (eloValues.length ? Math.max(...eloValues) : 1) - eloMin || 1;
 
-  for (const { s, y, label } of [
-    { s: season, y: year, label: `${season} ${year}` },
+  const seasons = [
+    { s: season,      y: year,      label: `${season} ${year}` },
     { s: next.season, y: next.year, label: `${next.season} ${next.year}` }
-  ]) {
+  ];
+
+  const buckets = {};   // label → scored items array
+
+  for (const { s, y, label } of seasons) {
     const query = `
       query ($season: MediaSeason, $year: Int) {
         Page(perPage: 50) {
           media(season: $season, seasonYear: $year, type: ANIME,
                 sort: POPULARITY_DESC, status_not: CANCELLED) {
             id title { romaji english } coverImage { large medium }
-            averageScore format status
+            averageScore format status genres
           }
         }
       }`;
+    let items = [];
     try {
       const res = await fetch('https://graphql.anilist.co', {
         method: 'POST',
@@ -4474,22 +4672,65 @@ async function fetchSeasonalRecommendations() {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
       if (json.errors) throw new Error(json.errors[0].message);
-      (json?.data?.Page?.media ?? []).forEach(m => {
-        results.push({ media: m, seasonLabel: label, watched: ownIds.has(m.id) });
-      });
+      items = (json?.data?.Page?.media ?? []).map(m => ({
+        media: m, seasonLabel: label, watched: ownIds.has(m.id)
+      }));
     } catch (e) {
-      results.push({ _error: `Failed to load ${label}: ${e.message}` });
+      console.warn(`Seasonal fetch failed for ${label}:`, e);
     }
+
+    // Score each item by taste + community
+    items.forEach(r => {
+      if (genreAffinityMap.size > 0) {
+        const hits = (r.media.genres || [])
+          .map(g => genreAffinityMap.get(g))
+          .filter(v => v !== undefined);
+        r._tasteScore = hits.length
+          ? (hits.reduce((s, v) => s + v, 0) / hits.length - eloMin) / eloMax
+          : 0.5;
+      } else {
+        r._tasteScore = 0.5;
+      }
+      const commNorm = (r.media.averageScore || 60) / 100;
+      r._score = r._tasteScore * 0.65 + commNorm * 0.35;
+    });
+
+    // Sort: unwatched first, then by taste+community score, cap at 8
+    buckets[label] = items
+      .sort((a, b) => {
+        if (a.watched !== b.watched) return a.watched ? 1 : -1;
+        return b._score - a._score;
+      })
+      .slice(0, 8);
+
     await new Promise(r => setTimeout(r, 500));
   }
-  // Sort: unwatched first, then by popularity within each group
-  return results
-    .filter(r => !r._error)
-    .sort((a, b) => {
-      if (a.watched !== b.watched) return a.watched ? 1 : -1;
-      return (b.media.averageScore || 0) - (a.media.averageScore || 0);
-    })
-    .slice(0, 8);
+
+  // Return as two named buckets so the renderer can show separate sections
+  return {
+    current:      buckets[seasons[0].label] ?? [],
+    next:         buckets[seasons[1].label] ?? [],
+    currentLabel: seasons[0].label,
+    nextLabel:    seasons[1].label,
+  };
+}
+
+// Build a Map of genre → user's average ELO for anime with that genre
+function _buildGenreAffinity() {
+  const map = new Map();
+  const genreMap = {};
+  animeList.forEach(a => {
+    if (!Array.isArray(a.genres)) return;
+    a.genres.forEach(g => {
+      if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
+      genreMap[g].sum   += a.elo;
+      genreMap[g].count += 1;
+    });
+  });
+  Object.entries(genreMap).forEach(([g, v]) => {
+    if (v.count >= 2) map.set(g, v.sum / v.count);
+  });
+  return map;
 }
 
 function _recsSkeletonHtml(count = 8) {
@@ -4510,21 +4751,38 @@ async function _loadRecsGrid() {
   grid.style.display = 'grid';
   grid.innerHTML = _recsSkeletonHtml();
 
-  // ── Seasonal tab: flat grid ──────────────────────────────────────────────
+  // ── Seasonal tab: split into current / next season sections ─────────────
   if (recsTab !== 'foryou') {
-    let items;
-    try { items = await fetchSeasonalRecommendations(); }
+    let seasonal;
+    try { seasonal = await fetchSeasonalRecommendations(); }
     catch (e) {
       grid.innerHTML = `<p style="color:#f85149;text-align:center">Error: ${e.message}</p>`;
       return;
     }
-    if (!items.length) {
+    const { current, next, currentLabel, nextLabel } = seasonal;
+    if (!current.length && !next.length) {
       grid.innerHTML = '<p style="color:#8b949e;text-align:center">No seasonal results — try "For You".</p>';
       return;
     }
-    grid.style.display = 'grid';
-    grid.innerHTML = items.map(({ media, seasonLabel, watched }) =>
-      recCardHtml(media, { seasonLabel, watched })).join('');
+    // Pre-fetch relation data for all cards in one batch
+    _recRelationsCache.clear();
+    const allIds = [...current, ...next].map(i => i.media.id);
+    await _fetchRecRelations(allIds);
+
+    grid.style.display = 'block';
+
+    const renderSection = (items, label) => {
+      if (!items.length) return '';
+      const cards = items.map(({ media, watched, _tasteScore }) =>
+        recCardHtml(media, { watched, tasteScore: _tasteScore ?? null })).join('');
+      return `
+        <div class="recs-extra-section">
+          <h4 class="recs-extra-heading">📅 ${label}</h4>
+          <div class="recs-subgrid">${cards}</div>
+        </div>`;
+    };
+
+    grid.innerHTML = renderSection(current, currentLabel) + renderSection(next, nextLabel);
     return;
   }
 
@@ -4539,6 +4797,14 @@ async function _loadRecsGrid() {
   }
 
   grid.style.display = 'block';
+
+  // Fetch relations for all final rec IDs in one lightweight batch query
+  _recRelationsCache.clear();
+  const allRecIds = result.grouped
+    ? result.groups.flatMap(g => g.recs.map(r => r.media.id))
+    : (result.items || []).map(r => r.media.id);
+  await _fetchRecRelations(allRecIds);
+
   let mainHtml;
   if (result.grouped && result.groups.length) {
     mainHtml = result.groups.map(({ seed, recs }) => `
@@ -5224,7 +5490,8 @@ function excludeAnime(event, side) {
 
   excludedIds.add(animeList[excludedIdx].id);
   prevState = null;
-  document.getElementById('undo-btn').disabled = true;
+  undoStack = [];
+  _updateUndoBtn();
 
   // Keep the surviving anime in its position; replace only the excluded slot
   const newIdx = pickOneOpponent(keepIdx);
@@ -6059,9 +6326,9 @@ function showAnimeDetail(id) {
   document.getElementById('modal-winrate-val').textContent =
     total > 0 ? Math.round((anime.wins / total) * 100) + '%' : '–';
 
-  const conf = confidenceLabel(anime.comparisons);
+  const conf = confidenceLabel(anime.battles || 0);
   document.getElementById('modal-confidence-wrap').innerHTML =
-    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${anime.comparisons} battles</span>`;
+    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${anime.battles || 0} battles</span>`;
 
   document.getElementById('modal-anilist-btn').href = `https://anilist.co/anime/${anime.id}`;
   const descEl = document.getElementById('modal-description');
@@ -6327,6 +6594,249 @@ function renderDisagreements() {
   else scoreEl.innerHTML = '<p style="color:#8b949e;font-size:0.82rem">No significant divergence found.</p>';
 }
 
+// ─── RATING PREDICTOR ────────────────────────────────────────────────────────
+let _predictorDebounce = null;
+let _predictorFocusIdx = -1;
+
+function predictorOnInput(val) {
+  _predictorFocusIdx = -1;
+  clearTimeout(_predictorDebounce);
+  const dd = document.getElementById('predictor-dropdown');
+  if (val.trim().length < 2) { dd.style.display = 'none'; return; }
+  dd.style.display = 'none';
+  _predictorDebounce = setTimeout(() => _predictorSearch(val.trim()), 320);
+}
+
+async function _predictorSearch(q) {
+  const dd = document.getElementById('predictor-dropdown');
+  dd.innerHTML = '<div style="padding:10px 12px;color:#8b949e;font-size:0.8rem">⏳ Searching…</div>';
+  dd.style.display = 'block';
+  const query = `
+    query($search: String) {
+      Page(perPage: 6) {
+        media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+          id title { romaji english } coverImage { medium }
+          format seasonYear averageScore genres
+        }
+      }
+    }`;
+  try {
+    const res  = await fetch('https://graphql.anilist.co', {
+      method: 'POST', headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { search: q } })
+    });
+    const json = await res.json();
+    const items = json?.data?.Page?.media ?? [];
+    if (!items.length) { dd.innerHTML = '<div style="padding:10px 12px;color:#8b949e;font-size:0.8rem">No results</div>'; return; }
+    dd.innerHTML = items.map((m, i) => {
+      const title = m.title.english || m.title.romaji;
+      const year  = m.seasonYear || '';
+      const fmt   = m.format || '';
+      const cover = m.coverImage?.medium || '';
+      return `<div class="predictor-dropdown-item" data-idx="${i}"
+                   onmousedown="predictorPick(${m.id})"
+                   onmouseover="predictorHover(${i})">
+        <img src="${cover}" alt="" />
+        <div class="predictor-dropdown-item-info">
+          <div class="predictor-dropdown-item-title">${title}</div>
+          <div class="predictor-dropdown-item-meta">${[fmt, year].filter(Boolean).join(' · ')}</div>
+        </div>
+      </div>`;
+    }).join('');
+    // Store items on the dropdown for keyboard nav
+    dd._items = items;
+  } catch { dd.style.display = 'none'; }
+}
+
+function predictorHover(idx) {
+  _predictorFocusIdx = idx;
+  document.querySelectorAll('.predictor-dropdown-item').forEach((el, i) =>
+    el.classList.toggle('focused', i === idx));
+}
+
+function predictorOnKeydown(e) {
+  const dd = document.getElementById('predictor-dropdown');
+  if (dd.style.display === 'none' || !dd._items) {
+    if (e.key === 'Enter') runPredictor();
+    return;
+  }
+  const count = dd._items.length;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _predictorFocusIdx = (_predictorFocusIdx + 1) % count;
+    predictorHover(_predictorFocusIdx);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _predictorFocusIdx = (_predictorFocusIdx - 1 + count) % count;
+    predictorHover(_predictorFocusIdx);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_predictorFocusIdx >= 0) predictorPick(dd._items[_predictorFocusIdx].id);
+    else runPredictor();
+  } else if (e.key === 'Escape') {
+    dd.style.display = 'none';
+  }
+}
+
+function predictorPick(mediaId) {
+  const dd = document.getElementById('predictor-dropdown');
+  const item = dd._items?.find(m => m.id === mediaId);
+  if (!item) return;
+  dd.style.display = 'none';
+  const title = item.title.english || item.title.romaji;
+  document.getElementById('predictor-input').value = title;
+  runPredictor(item); // pass the full media object — skip the extra lookup
+}
+
+async function runPredictor(prefetched = null) {
+  const q = document.getElementById('predictor-input').value.trim();
+  if (!q) return;
+  document.getElementById('predictor-dropdown').style.display = 'none';
+  const resultsEl = document.getElementById('predictor-results');
+  resultsEl.innerHTML = '<p style="color:#8b949e;font-size:0.85rem">⏳ Predicting…</p>';
+
+  let media = prefetched;
+  if (!media) {
+    const searchQuery = `
+      query($search: String) {
+        Media(search: $search, type: ANIME) {
+          id title { romaji english }
+          coverImage { large medium }
+          genres averageScore seasonYear format
+        }
+      }`;
+    try {
+      const res  = await fetch('https://graphql.anilist.co', {
+        method: 'POST', headers: anilistHeaders(),
+        body: JSON.stringify({ query: searchQuery, variables: { search: q } })
+      });
+      const json = await res.json();
+      media = json?.data?.Media;
+    } catch (e) {
+      resultsEl.innerHTML = `<p style="color:#f85149;font-size:0.85rem">Error: ${e.message}</p>`; return;
+    }
+  }
+  // Ensure large cover is available
+  if (media && !media.coverImage?.large && media.coverImage?.medium)
+    media.coverImage.large = media.coverImage.medium;
+
+  if (!media) { resultsEl.innerHTML = '<p style="color:#f85149;font-size:0.85rem">No anime found — try a different title.</p>'; return; }
+
+  // Already ranked?
+  const existing = animeList.find(a => a.id === media.id);
+  if (existing) {
+    const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+    const rank   = sorted.findIndex(a => a.id === existing.id) + 1;
+    const tier   = getTier(rank - 1, sorted.length);
+    resultsEl.innerHTML = `<p class="predictor-already">You've already ranked <strong>${media.title.english || media.title.romaji}</strong> — it's at <strong>#${rank} (${tier} tier, ELO ${existing.elo})</strong>.</p>`;
+    return;
+  }
+
+  const prediction = _predictElo(media);
+  if (!prediction) {
+    resultsEl.innerHTML = '<p style="color:#8b949e;font-size:0.85rem">Not enough taste data yet — keep ranking to improve predictions!</p>';
+    return;
+  }
+  _renderPrediction(media, prediction, resultsEl);
+}
+
+function _predictElo(media) {
+  const genres          = media.genres || [];
+  const year            = media.seasonYear;
+  const communityScore  = media.averageScore; // 0–100
+  const active          = animeList.filter(a => !excludedIds.has(a.id));
+  if (active.length < 5) return null;
+
+  const components = [];
+
+  // ── Genre affinity ──────────────────────────────────────────────────────
+  const genreHits = [];
+  for (const g of genres) {
+    const matches = active.filter(a => Array.isArray(a.genres) && a.genres.includes(g));
+    if (matches.length >= 2) {
+      const avg = matches.reduce((s, a) => s + a.elo, 0) / matches.length;
+      genreHits.push({ genre: g, avg, count: matches.length });
+    }
+  }
+  if (genreHits.length) {
+    // Weight genres by how many anime the user has in them
+    const totalCount = genreHits.reduce((s, g) => s + g.count, 0);
+    const weightedAvg = genreHits.reduce((s, g) => s + g.avg * g.count, 0) / totalCount;
+    components.push({ label: 'Genre affinity', value: weightedAvg, weight: 0.50, detail: genreHits });
+  }
+
+  // ── Era affinity ────────────────────────────────────────────────────────
+  if (year) {
+    const decade = Math.floor(year / 10) * 10;
+    const eraMatches = active.filter(a => a.seasonYear && Math.floor(a.seasonYear / 10) * 10 === decade);
+    if (eraMatches.length >= 2) {
+      const avg = eraMatches.reduce((s, a) => s + a.elo, 0) / eraMatches.length;
+      components.push({ label: `${decade}s era`, value: avg, weight: 0.25, count: eraMatches.length });
+    }
+  }
+
+  // ── Community score regression ──────────────────────────────────────────
+  if (communityScore) {
+    const withScores = active.filter(a => a.globalScore > 0);
+    if (withScores.length >= 5) {
+      const n   = withScores.length;
+      const sumX = withScores.reduce((s, a) => s + a.globalScore, 0);
+      const sumY = withScores.reduce((s, a) => s + a.elo, 0);
+      const sumXY = withScores.reduce((s, a) => s + a.globalScore * a.elo, 0);
+      const sumX2 = withScores.reduce((s, a) => s + a.globalScore ** 2, 0);
+      const denom = n * sumX2 - sumX ** 2;
+      if (denom !== 0) {
+        const slope     = (n * sumXY - sumX * sumY) / denom;
+        const intercept = (sumY - slope * sumX) / n;
+        const pred      = slope * communityScore + intercept;
+        components.push({ label: `Community score (${(communityScore / 10).toFixed(1)}/10)`, value: pred, weight: 0.25 });
+      }
+    }
+  }
+
+  if (!components.length) return null;
+
+  // Normalise weights to 1.0 (some components may be absent)
+  const totalW = components.reduce((s, c) => s + c.weight, 0);
+  const rawElo = components.reduce((s, c) => s + c.value * (c.weight / totalW), 0);
+  const predictedElo = Math.max(ELO_FLOOR, Math.min(2200, Math.round(rawElo)));
+
+  // Where would this sit in the ranking?
+  const sorted   = [...animeList].sort((a, b) => b.elo - a.elo);
+  const insertAt = sorted.findIndex(a => a.elo < predictedElo);
+  const rankPos  = insertAt === -1 ? sorted.length : insertAt; // 0-based
+  const tier     = getTier(rankPos, sorted.length + 1);
+
+  return { predictedElo, tier, rankPos: rankPos + 1, totalAnime: sorted.length + 1, components };
+}
+
+function _renderPrediction(media, pred, container) {
+  const title = media.title.english || media.title.romaji;
+  const cover = media.coverImage?.large || media.coverImage?.medium;
+  const tierClass = 't-' + pred.tier.toLowerCase();
+
+  const reasons = pred.components.map(c => {
+    const detail = c.detail
+      ? ' (' + c.detail.slice(0, 3).map(g => g.genre).join(', ') + ')'
+      : '';
+    return `<div>• <span>${c.label}${detail}</span>: avg ELO ${Math.round(c.value)}</div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="predictor-result">
+      <img class="predictor-cover" src="${cover}" alt="${title}" />
+      <div class="predictor-body">
+        <div class="predictor-title">${title}</div>
+        <div class="predictor-tier-badge ${tierClass}">${pred.tier} tier</div>
+        <div class="predictor-reasons">
+          Predicted <strong>#${pred.rankPos}</strong> of ${pred.totalAnime} · ELO ~${pred.predictedElo}<br>
+          ${reasons}
+          <div style="margin-top:6px;color:#6e7681;font-size:0.72rem">Prediction is based on your existing rankings — more battles = better accuracy.</div>
+        </div>
+      </div>
+    </div>`;
+}
+
 // ─── SETTLE MODE ─────────────────────────────────────────────────────────────
 function toggleSettleMode() {
   settleMode = !settleMode;
@@ -6500,6 +7010,8 @@ function pickWinnerTower(side) {
   const winner = championWon ? animeList[towerChampIdx] : animeList[oppIdx];
   const loser  = championWon ? animeList[oppIdx] : animeList[towerChampIdx];
   updateElo(winner, loser);
+  winner.battles = (winner.battles || 0) + 1;
+  loser.battles  = (loser.battles  || 0) + 1;
 
   towerResults.push({ opponentIdx: oppIdx, championWon });
   towerRound++;
@@ -6583,7 +7095,7 @@ function renderRankingTable() {
     const fmt    = anime.format || 'TV';
     const eloRank = eloRankMap.get(anime.id) ?? i;
     const tier    = getTier(eloRank, sorted.length);
-    const conf    = confidenceLabel(anime.comparisons);
+    const conf    = confidenceLabel(anime.battles || 0);
     const hidden = (q && !title.toLowerCase().includes(q)) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
                    hiddenFormats.has(fmt) ||
@@ -6637,7 +7149,7 @@ function _vsRenderTableSlice() {
       <td class="tbl-title" onclick="showAnimeDetail(${anime.id})">${title}${sb ? ' ' + sb : ''}</td>
       <td>${anime.elo}</td>
       <td>${wr}</td>
-      <td>${anime.comparisons}</td>
+      <td>${anime.battles || 0}</td>
       <td>${anime.globalScore ? anime.globalScore + '%' : '–'}</td>
       <td><span class="tier-badge t-${tier.toLowerCase()}">${tier}</span></td>
       <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
@@ -6898,6 +7410,13 @@ function _startNewAnimePolling() {
 // Auto-load if username is pre-filled, or show shared view if URL has a share hash
 // Global image error handler — catches broken covers in dynamically rendered cards
 // Guard: ignore errors from empty src (e.g. before renderPair has set a real URL)
+document.addEventListener('click', e => {
+  const dd = document.getElementById('predictor-dropdown');
+  if (dd && !dd.contains(e.target) && e.target.id !== 'predictor-input') {
+    dd.style.display = 'none';
+  }
+});
+
 document.addEventListener('error', e => {
   if (e.target.tagName === 'IMG' && e.target.src && !e.target.src.endsWith('/')) {
     e.target.classList.add('img-broken');
