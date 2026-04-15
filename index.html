@@ -2991,15 +2991,21 @@ async function fetchAllAnime(username, seedFromScores = false) {
   const data = await res.json();
   if (data.errors) throw new Error(data.errors[0].message);
 
-  const lists = data.data.MediaListCollection.lists;
+  const collection = data.data?.MediaListCollection;
+  if (!collection) throw new Error('Could not read your AniList — the list may be private or the account may not exist.');
+
+  const lists = collection.lists ?? [];
   // Use status field so custom-named lists are handled correctly.
   // Include Completed, Currently Watching, and Rewatching only — skip Dropped, Paused, Planning.
   const WATCHED_STATUSES = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
-  const entries = lists
-    .flatMap(l => l.entries)
-    .filter(e => WATCHED_STATUSES.has(e.status));
+  const allEntries = lists.flatMap(l => l.entries ?? []).filter(e => WATCHED_STATUSES.has(e.status));
 
-  return entries.map(e => {
+  // AniList occasionally returns null media for delisted/removed shows — skip those silently
+  // but surface the count to the caller so they can warn the user.
+  const skipped = allEntries.filter(e => !e.media).length;
+  const entries = allEntries.filter(e => e.media);
+
+  const mapped = entries.map(e => {
     const startElo = seedFromScores ? scoreToElo(e.score) : 1200;
     const titleEn  = e.media.title.english || e.media.title.romaji;
     const titleRo  = e.media.title.romaji  || e.media.title.english;
@@ -3023,6 +3029,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
       anilistScore: e.score || 0,
     };
   });
+  return { entries: mapped, skipped };
 }
 
 // ─── STORAGE ────────────────────────────────────────────────────────────────
@@ -5302,7 +5309,11 @@ async function startLoading() {
 
   try {
     document.getElementById('loading-msg').textContent = 'Fetching your anime list from AniList…';
-    animeList = await fetchAllAnime(username, seedFromScores);
+    const _fetchResult = await fetchAllAnime(username, seedFromScores);
+    animeList = _fetchResult.entries;
+    if (_fetchResult.skipped > 0) {
+      showToast(`⚠️ ${_fetchResult.skipped} show${_fetchResult.skipped === 1 ? '' : 's'} skipped — AniList returned no data for them (likely delisted).`);
+    }
 
     if (animeList.length === 0) throw new Error('No completed anime found on this account. Make sure you have anime marked as "Completed" on AniList.');
 
@@ -6807,7 +6818,36 @@ function _predictElo(media) {
   const rankPos  = insertAt === -1 ? sorted.length : insertAt; // 0-based
   const tier     = getTier(rankPos, sorted.length + 1);
 
-  return { predictedElo, tier, rankPos: rankPos + 1, totalAnime: sorted.length + 1, components };
+  // ── Confidence ────────────────────────────────────────────────────────────
+  // Based on: number of genre-matched anime (more = stronger signal),
+  // number of signal components available, and total ranked anime.
+  const genreMatchCount = genreHits.reduce((s, g) => s + g.count, 0);
+  const hasGenre        = genreHits.length > 0;
+  const hasEra          = components.some(c => c.label.includes('era'));
+  const signalCount     = components.length;
+
+  let confidenceLevel, confidenceText, confidenceNote;
+  if (genreMatchCount >= 10 && signalCount >= 2) {
+    confidenceLevel = 'high';
+    confidenceText  = '● High confidence';
+    confidenceNote  = `${genreMatchCount} genre-matched anime across ${signalCount} signals`;
+  } else if (genreMatchCount >= 3 || (signalCount >= 2 && active.length >= 30)) {
+    confidenceLevel = 'medium';
+    confidenceText  = '● Medium confidence';
+    confidenceNote  = genreMatchCount > 0
+      ? `Only ${genreMatchCount} genre-matched anime — rank more in these genres for a better estimate`
+      : `No genre overlap found — prediction based on era/community score only`;
+  } else {
+    confidenceLevel = 'low';
+    confidenceText  = '● Low confidence';
+    confidenceNote  = genreMatchCount > 0
+      ? `Very few comparable anime ranked (${genreMatchCount}) — keep ranking for better predictions`
+      : `No genre or era overlap with your ranked anime — community score only`;
+  }
+
+  const confidence = { level: confidenceLevel, text: confidenceText, note: confidenceNote, genreMatchCount };
+
+  return { predictedElo, tier, rankPos: rankPos + 1, totalAnime: sorted.length + 1, components, confidence };
 }
 
 function _renderPrediction(media, pred, container) {
@@ -6822,16 +6862,22 @@ function _renderPrediction(media, pred, container) {
     return `<div>• <span>${c.label}${detail}</span>: avg ELO ${Math.round(c.value)}</div>`;
   }).join('');
 
+  const conf = pred.confidence;
+  const confColour = conf.level === 'high' ? '#3fb950' : conf.level === 'medium' ? '#d29922' : '#f85149';
+
   container.innerHTML = `
     <div class="predictor-result">
       <img class="predictor-cover" src="${cover}" alt="${title}" />
       <div class="predictor-body">
         <div class="predictor-title">${title}</div>
         <div class="predictor-tier-badge ${tierClass}">${pred.tier} tier</div>
+        <div style="margin:6px 0 8px">
+          <span style="font-size:0.78rem;color:${confColour};font-weight:600">${conf.text}</span>
+          <span style="font-size:0.74rem;color:#6e7681;margin-left:6px">${conf.note}</span>
+        </div>
         <div class="predictor-reasons">
           Predicted <strong>#${pred.rankPos}</strong> of ${pred.totalAnime} · ELO ~${pred.predictedElo}<br>
           ${reasons}
-          <div style="margin-top:6px;color:#6e7681;font-size:0.72rem">Prediction is based on your existing rankings — more battles = better accuracy.</div>
         </div>
       </div>
     </div>`;
@@ -7372,7 +7418,7 @@ async function reseedFromAniList() {
 async function checkForNewAnime() {
   if (!authToken || !authUser || !animeList.length) return;
   try {
-    const entries = await fetchAllAnime(authUser.name, false);
+    const { entries } = await fetchAllAnime(authUser.name, false);
     const ownIds = new Set(animeList.map(a => a.id));
     _pendingNewAnime = entries.filter(e => !ownIds.has(e.id));
     if (_pendingNewAnime.length > 0) {
