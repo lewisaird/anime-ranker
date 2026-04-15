@@ -3266,7 +3266,12 @@ async function _handleMALOAuthCode(code) {
     malRefreshToken = data.refresh_token || null;
 
     // User profile is returned by the Netlify function (MAL API has no CORS headers)
-    if (!data.user?.name) throw new Error('Could not fetch MAL user profile');
+    if (!data.user?.name) {
+      const detail = data.profile_error
+        ? ` (HTTP ${data.profile_error.status}: ${JSON.stringify(data.profile_error.body).slice(0, 150)})`
+        : '';
+      throw new Error('Could not fetch MAL user profile' + detail);
+    }
     malAuthUser = { id: data.user.id, name: data.user.name, picture: data.user.picture || '' };
     saveMALAuth();
     _updateMALAuthUI();

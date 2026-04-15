@@ -134,11 +134,25 @@ exports.handler = async (event) => {
       console.error('MAL profile error body:', JSON.stringify(profileRes.body));
     }
 
-    const user = profileRes.status === 200 ? {
+    if (profileRes.status !== 200) {
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token,
+          refresh_token: refresh_token || null,
+          expires_in:    expires_in    || 2678400,
+          user: null,
+          profile_error: { status: profileRes.status, body: profileRes.body },
+        }),
+      };
+    }
+
+    const user = {
       id:      profileRes.body.id      || null,
       name:    profileRes.body.name    || '',
       picture: profileRes.body.picture || '',
-    } : null;
+    };
 
     return {
       statusCode: 200,
