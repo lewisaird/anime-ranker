@@ -123,10 +123,16 @@ exports.handler = async (event) => {
     const { access_token, refresh_token, expires_in } = tokenRes.body;
 
     // 2. Fetch user profile server-side (MAL API has no CORS headers for browsers)
+    // No fields param — MAL returns id and name by default for @me
     const profileRes = await httpsGet(
-      'https://api.myanimelist.net/v2/users/@me?fields=name,picture',
+      'https://api.myanimelist.net/v2/users/@me',
       { 'Authorization': 'Bearer ' + access_token, 'Accept': 'application/json' }
     );
+
+    console.log('MAL profile status:', profileRes.status);
+    if (profileRes.status !== 200) {
+      console.error('MAL profile error body:', JSON.stringify(profileRes.body));
+    }
 
     const user = profileRes.status === 200 ? {
       id:      profileRes.body.id      || null,
