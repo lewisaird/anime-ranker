@@ -3145,8 +3145,6 @@ async function _refreshMALToken(refreshToken) {
     if (!data.access_token) return false;
     malAuthToken    = data.access_token;
     malRefreshToken = data.refresh_token || refreshToken;
-    // Update user if returned (profile may have changed)
-    if (data.user?.name) malAuthUser = data.user;
     return true;
   } catch { return false; }
 }
@@ -3265,14 +3263,16 @@ async function _handleMALOAuthCode(code) {
     malAuthToken    = data.access_token;
     malRefreshToken = data.refresh_token || null;
 
-    // User profile is returned by the Netlify function (MAL API has no CORS headers)
-    if (!data.user?.name) {
-      const detail = data.profile_error
-        ? ` (HTTP ${data.profile_error.status}: ${JSON.stringify(data.profile_error.body).slice(0, 150)})`
-        : '';
-      throw new Error('Could not fetch MAL user profile' + detail);
-    }
-    malAuthUser = { id: data.user.id, name: data.user.name, picture: data.user.picture || '' };
+    // Fetch user profile via the mal-api proxy (MAL API has no CORS headers for browsers)
+    const profileRes = await fetch('/.netlify/functions/mal-api', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ path: '/users/@me', token: malAuthToken }),
+    });
+    const profileData = await profileRes.json();
+    if (!profileData.name) throw new Error(`Could not fetch MAL user profile (HTTP ${profileRes.status}: ${JSON.stringify(profileData).slice(0, 120)})`);
+
+    malAuthUser = { id: profileData.id || null, name: profileData.name, picture: profileData.picture || '' };
     saveMALAuth();
     _updateMALAuthUI();
 

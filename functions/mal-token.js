@@ -18,29 +18,6 @@
 
 const https = require('https');
 
-// Simple HTTPS GET helper (MAL API doesn't support CORS, so we call it from here)
-function httpsGet(url, headers) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const options = {
-      hostname: parsed.hostname,
-      path:     parsed.pathname + parsed.search,
-      method:   'GET',
-      headers,
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch { resolve({ status: res.statusCode, body: {} }); }
-      });
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
 // HTTPS POST helper for the token endpoint
 function httpsPost(hostname, path, body, headers) {
   return new Promise((resolve, reject) => {
@@ -122,18 +99,6 @@ exports.handler = async (event) => {
 
     const { access_token, refresh_token, expires_in } = tokenRes.body;
 
-    // 2. Fetch user profile server-side (MAL API has no CORS headers for browsers)
-    const profileRes = await httpsGet(
-      'https://api.myanimelist.net/v2/users/@me?fields=name,picture',
-      { 'Authorization': 'Bearer ' + access_token, 'Accept': 'application/json' }
-    );
-
-    const user = profileRes.status === 200 ? {
-      id:      profileRes.body.id      || null,
-      name:    profileRes.body.name    || '',
-      picture: profileRes.body.picture || '',
-    } : null;
-
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -141,7 +106,6 @@ exports.handler = async (event) => {
         access_token,
         refresh_token: refresh_token || null,
         expires_in:    expires_in    || 2678400,
-        user,
       }),
     };
 
