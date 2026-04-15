@@ -3145,6 +3145,8 @@ async function _refreshMALToken(refreshToken) {
     if (!data.access_token) return false;
     malAuthToken    = data.access_token;
     malRefreshToken = data.refresh_token || refreshToken;
+    // Update user if returned (profile may have changed)
+    if (data.user?.name) malAuthUser = data.user;
     return true;
   } catch { return false; }
 }
@@ -3241,26 +3243,31 @@ async function _handleMALOAuthCode(code) {
 
   try {
     // 1. Exchange code for tokens via Netlify function
-    const res = await fetch('/.netlify/functions/mal-token', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ code, code_verifier: codeVerifier, redirect_uri: _getRedirectUri() }),
-    });
-    const data = await res.json();
+    let res;
+    try {
+      res = await fetch('/.netlify/functions/mal-token', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ code, code_verifier: codeVerifier, redirect_uri: _getRedirectUri() }),
+      });
+    } catch (netErr) {
+      throw new Error('Could not reach token function — check network or Netlify deployment. (' + netErr.message + ')');
+    }
+    if (!res.ok) {
+      const raw = await res.text().catch(() => '');
+      throw new Error('Token function returned HTTP ' + res.status + (raw ? ': ' + raw.slice(0, 120) : ''));
+    }
+    let data;
+    try { data = await res.json(); }
+    catch { throw new Error('Token function returned non-JSON (HTTP ' + res.status + ')'); }
     if (!data.access_token) throw new Error(data.error_description || data.error || data.message || 'No access token in response');
 
     malAuthToken    = data.access_token;
     malRefreshToken = data.refresh_token || null;
 
-    // 2. Fetch MAL user profile (direct — MAL API supports CORS with Bearer token)
-    const userRes = await fetch('https://api.myanimelist.net/v2/users/@me?fields=name,picture', {
-      headers: { 'Authorization': 'Bearer ' + malAuthToken },
-    });
-    if (!userRes.ok) throw new Error('Could not fetch MAL profile (HTTP ' + userRes.status + ')');
-    const userData = await userRes.json();
-    if (!userData.name) throw new Error('Could not fetch MAL user profile');
-
-    malAuthUser = { id: userData.id, name: userData.name, picture: userData.picture || '' };
+    // User profile is returned by the Netlify function (MAL API has no CORS headers)
+    if (!data.user?.name) throw new Error('Could not fetch MAL user profile');
+    malAuthUser = { id: data.user.id, name: data.user.name, picture: data.user.picture || '' };
     saveMALAuth();
     _updateMALAuthUI();
 
@@ -3284,29 +3291,39 @@ window.addEventListener('message', async event => {
   await _handleMALOAuthCode(event.data.code);
 });
 
-// Fetch the user's completed + watching list directly from MAL's API
+// Fetch the user's completed + watching list via the mal-api.js proxy
+// (api.myanimelist.net has no CORS headers — all calls go through Netlify)
 async function _fetchMALAnimeListViaAPI() {
   const entries  = [];
   const fields   = 'list_status,num_episodes,mean,genres,media_type,start_season,main_picture,synopsis';
   const statuses = ['completed', 'watching'];
 
   for (const status of statuses) {
-    let url = `https://api.myanimelist.net/v2/users/@me/animelist?status=${status}`
-            + `&fields=${encodeURIComponent(fields)}&limit=1000&nsfw=true&sort=list_score`;
+    // Start path — the proxy prepends /v2 automatically
+    let path = `/users/@me/animelist?status=${status}`
+             + `&fields=${encodeURIComponent(fields)}&limit=1000&nsfw=true&sort=list_score`;
     let page = 1;
-    while (url) {
+
+    while (path) {
       document.getElementById('loading-msg').textContent =
         `Fetching MAL list… (${status}, page ${page})`;
-      const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + malAuthToken } });
+
+      const res = await fetch('/.netlify/functions/mal-api', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ path, token: malAuthToken }),
+      });
+
       if (res.status === 401) {
-        // Token may have expired mid-session — try refresh once
+        // Token may have expired — try refresh once then retry
         if (malRefreshToken) {
           const ok = await _refreshMALToken(malRefreshToken);
           if (ok) { saveMALAuth(); continue; }
         }
         throw new Error('MAL session expired. Please log in again.');
       }
-      if (!res.ok) throw new Error(`MAL API error (HTTP ${res.status})`);
+      if (!res.ok) throw new Error(`MAL API proxy error (HTTP ${res.status})`);
+
       const data = await res.json();
       (data.data || []).forEach(item => {
         const node = item.node;
@@ -3314,9 +3331,18 @@ async function _fetchMALAnimeListViaAPI() {
           entries.push({ malId: node.id, score: item.list_status?.score || 0, title: node.title || '' });
         }
       });
-      url = data.paging?.next || null;
+
+      // MAL pagination: next URL contains the full path+query
+      const nextUrl = data.paging?.next || null;
+      if (nextUrl) {
+        // Extract just the path+query from the full URL for the proxy
+        try { path = new URL(nextUrl).pathname + new URL(nextUrl).search; }
+        catch { path = null; }
+      } else {
+        path = null;
+      }
       page++;
-      if (url) await new Promise(r => setTimeout(r, 250));
+      if (path) await new Promise(r => setTimeout(r, 250));
     }
   }
   return entries;
