@@ -87,7 +87,7 @@
     }
 
     #username-screen h2 { font-size: 1.5rem; color: #58a6ff; }
-    #username-screen p { color: #8b949e; }
+    #username-screen > p { color: #8b949e; }
 
     .onboarding-tagline {
       font-size: 0.97rem;
@@ -142,6 +142,7 @@
       padding: 10px 16px;
       font-size: 1rem;
       width: 240px;
+      min-width: 0;
       outline: none;
       transition: border-color 0.2s;
     }
@@ -1660,31 +1661,50 @@
       border-left: 2px solid #30363d; padding-left: 10px;
     }
 
-    /* MAL IMPORT */
-    .source-tabs {
+    /* LOGIN CARDS */
+    .login-cards {
       display: flex;
-      gap: 0;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      overflow: hidden;
-      margin-bottom: 4px;
+      gap: 14px;
+      width: 100%;
+      max-width: 560px;
     }
-    .source-tab {
+    .login-card {
       flex: 1;
-      padding: 9px 20px;
       background: #161b22;
-      color: #8b949e;
-      font-size: 0.88rem;
-      font-weight: 500;
-      cursor: pointer;
-      border: none;
-      transition: all 0.15s;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 20px 16px 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
     }
-    .source-tab.active { background: #21262d; color: #e6edf3; }
-    .source-tab:hover:not(.active) { background: #1c2128; color: #c9d1d9; }
+    .login-card-heading {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #8b949e;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .login-card .btn-anilist-login,
+    .login-card .btn-mal-login { width: 100%; }
+    .login-card .auth-logged-in-row { width: 100%; }
+    .login-card-divider {
+      display: flex; align-items: center; gap: 8px;
+      color: #6e7681; font-size: 0.75rem; width: 100%;
+    }
+    .login-card-divider::before, .login-card-divider::after {
+      content: ''; flex: 1; height: 1px; background: #30363d;
+    }
+    @media (max-width: 520px) {
+      .login-cards { flex-direction: column; }
+    }
 
+    /* MAL IMPORT */
     #mal-upload-wrap {
-      display: none;
+      display: flex;
       flex-direction: column;
       align-items: center;
       gap: 10px;
@@ -2122,78 +2142,78 @@
 
     <hr class="onboarding-divider" />
 
-    <!-- AniList OAuth login -->
-    <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
-    <p style="font-size:0.75rem;color:#8b949e;margin:4px 0 0" id="anilist-new-hint">New to AniList? <a href="https://anilist.co/register" target="_blank" rel="noopener" style="color:#58a6ff">Create a free account ↗</a> — it's where you track anime you've watched.</p>
-    <p id="auth-error-msg"></p>
+    <!-- Two service cards -->
+    <div class="login-cards">
 
-    <!-- Logged-in badge (shown when token exists) -->
-    <div class="auth-logged-in-row" id="auth-username-badge" style="display:none">
-      <img id="auth-badge-avatar" src="" alt="" />
-      <span class="auth-logged-in-name" id="auth-badge-name"></span>
-      <button class="auth-logout-btn" onclick="clearAuth()">Logout</button>
-    </div>
+      <!-- AniList card -->
+      <div class="login-card">
+        <p class="login-card-heading">🔵 AniList</p>
 
-    <div style="display:flex;align-items:center;gap:8px;color:#8b949e;font-size:0.8rem;margin:2px 0 4px">
-      <hr style="flex:1;border:none;border-top:1px solid #21262d;max-width:80px">
-      <span>or continue without logging in</span>
-      <hr style="flex:1;border:none;border-top:1px solid #21262d;max-width:80px">
-    </div>
+        <!-- OAuth login (hidden when logged in) -->
+        <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
+        <p style="font-size:0.72rem;color:#8b949e;margin:-4px 0 0;text-align:center" id="anilist-new-hint">New? <a href="https://anilist.co/register" target="_blank" rel="noopener" style="color:#58a6ff">Create a free AniList account ↗</a></p>
+        <p id="auth-error-msg" style="font-size:0.8rem;color:#f85149;margin:0"></p>
 
-    <!-- Source tabs -->
-    <div class="source-tabs" style="width:280px;margin-top:4px">
-      <button class="source-tab active" id="tab-anilist" onclick="setSource('anilist')">🔵 AniList</button>
-      <button class="source-tab"        id="tab-mal"     onclick="setSource('mal')">📋 MyAnimeList</button>
-    </div>
+        <!-- Logged-in badge -->
+        <div class="auth-logged-in-row" id="auth-username-badge" style="display:none">
+          <img id="auth-badge-avatar" src="" alt="" />
+          <span class="auth-logged-in-name" id="auth-badge-name"></span>
+          <button class="auth-logout-btn" onclick="clearAuth()">Logout</button>
+        </div>
 
-    <!-- AniList login -->
-    <div id="anilist-wrap" style="display:flex;flex-direction:column;align-items:center;gap:10px;width:100%">
-      <div class="input-row">
-        <input type="text" id="username-input" placeholder="e.g. Xinil" />
-        <button class="btn-primary" onclick="startLoading()">Load List</button>
-      </div>
-      <label class="warm-start-row" id="warm-start-row">
-        <input type="checkbox" id="warm-start-chk" />
-        Warm start — seed ELO from my AniList scores
-      </label>
-      <p class="warm-start-info" id="warm-start-info">Only applies when starting fresh. Scores map 10→1500 · 7→1200 · 4→900.</p>
-      <p class="warm-start-info" id="oauth-seed-note" style="display:none;color:#58a6ff">✓ Your AniList scores will be used as starting ELO values on a fresh load.</p>
-    </div>
-
-    <!-- MAL OAuth section -->
-    <div id="mal-upload-wrap">
-      <!-- OAuth login button (hidden when logged in) -->
-      <button class="btn-mal-login" id="mal-oauth-btn" onclick="startMALOAuthFlow()">🔐 Login with MyAnimeList</button>
-      <p style="font-size:0.75rem;color:#8b949e;margin:4px 0 0" id="mal-new-hint">New to MyAnimeList? <a href="https://myanimelist.net/register.php" target="_blank" rel="noopener" style="color:#58a6ff">Create a free account ↗</a></p>
-
-      <!-- Logged-in badge (shown when MAL token exists) -->
-      <div class="auth-logged-in-row" id="mal-auth-badge" style="display:none">
-        <img id="mal-badge-avatar" src="" alt="" style="display:none;border-radius:50%;width:28px;height:28px;object-fit:cover" />
-        <span class="auth-logged-in-name" id="mal-badge-name"></span>
-        <button class="auth-logout-btn" onclick="logoutMAL()">Logout</button>
+        <!-- Username fallback -->
+        <div id="anilist-wrap" style="display:flex;flex-direction:column;align-items:center;gap:8px;width:100%">
+          <div class="login-card-divider">or use username</div>
+          <div class="input-row" style="margin-top:0;width:100%">
+            <input type="text" id="username-input" placeholder="e.g. Xinil" style="flex:1;width:auto" />
+            <button class="btn-primary" onclick="startLoading()">Go</button>
+          </div>
+          <label class="warm-start-row" id="warm-start-row">
+            <input type="checkbox" id="warm-start-chk" />
+            Warm start from scores
+          </label>
+          <p class="warm-start-info" id="warm-start-info">Scores map 10→1500 · 7→1200 · 4→900</p>
+          <p class="warm-start-info" id="oauth-seed-note" style="display:none;color:#58a6ff">✓ Scores will seed starting ELO on fresh load</p>
+        </div>
       </div>
 
-      <label class="warm-start-row" style="margin-top:6px" id="mal-warm-start-row">
-        <input type="checkbox" id="mal-warm-start-chk" checked />
-        Warm start — seed ELO from my MAL scores
-      </label>
-      <p class="warm-start-info" id="mal-warm-start-info">Only applies when starting fresh. Scores map 10→1500 · 7→1200 · 4→900.</p>
-      <p class="warm-start-info" id="mal-oauth-seed-note" style="display:none;color:#58a6ff">✓ Your MAL scores will be used as starting ELO values on a fresh load.</p>
+      <!-- MAL card -->
+      <div class="login-card">
+        <p class="login-card-heading">📋 MyAnimeList</p>
 
-      <!-- XML fallback -->
-      <p class="mal-instructions" id="mal-xml-fallback">
-        Having trouble?
-        <label style="cursor:pointer;color:#58a6ff;text-decoration:underline" onclick="document.getElementById('mal-file-input').click()">Upload MAL XML export</label> as a fallback.
-        <input type="file" id="mal-file-input" accept=".xml" onchange="handleMalFile(this.files[0])" style="display:none" />
-      </p>
-    </div>
+        <div id="mal-upload-wrap">
+          <button class="btn-mal-login" id="mal-oauth-btn" onclick="startMALOAuthFlow()">🔐 Login with MyAnimeList</button>
+          <p style="font-size:0.72rem;color:#8b949e;margin:-4px 0 0;text-align:center" id="mal-new-hint">New? <a href="https://myanimelist.net/register.php" target="_blank" rel="noopener" style="color:#58a6ff">Create a free MAL account ↗</a></p>
 
-    <p id="error-msg">Could not load list. Check your username and try again.</p>
+          <!-- Logged-in badge -->
+          <div class="auth-logged-in-row" id="mal-auth-badge" style="display:none">
+            <img id="mal-badge-avatar" src="" alt="" style="display:none;border-radius:50%;width:28px;height:28px;object-fit:cover" />
+            <span class="auth-logged-in-name" id="mal-badge-name"></span>
+            <button class="auth-logout-btn" onclick="logoutMAL()">Logout</button>
+          </div>
+
+          <label class="warm-start-row" id="mal-warm-start-row">
+            <input type="checkbox" id="mal-warm-start-chk" checked />
+            Warm start from scores
+          </label>
+          <p class="warm-start-info" id="mal-warm-start-info">Scores map 10→1500 · 7→1200 · 4→900</p>
+          <p class="warm-start-info" id="mal-oauth-seed-note" style="display:none;color:#58a6ff">✓ Scores will seed starting ELO on fresh load</p>
+
+          <p class="mal-instructions" id="mal-xml-fallback" style="margin-top:4px">
+            Having trouble? <label style="cursor:pointer;color:#58a6ff;text-decoration:underline" onclick="document.getElementById('mal-file-input').click()">Upload MAL XML export</label>
+            <input type="file" id="mal-file-input" accept=".xml" onchange="handleMalFile(this.files[0])" style="display:none" />
+          </p>
+        </div>
+      </div>
+
+    </div><!-- /.login-cards -->
+
+    <p id="error-msg" style="color:#f85149;font-size:0.85rem;margin:4px 0 0">Could not load list. Check your username and try again.</p>
     <div class="or-divider">or</div>
     <button class="btn-secondary" onclick="startGuestMode()" style="width:240px">
       🎲 Guest Mode — top popular anime
     </button>
-    <p class="warm-start-info" style="margin-top:4px">No AniList account needed · 250 popular shows</p>
+    <p class="warm-start-info" style="margin-top:4px">No account needed · 250 popular shows</p>
   </div>
 
   <!-- LOADING SCREEN -->
@@ -2945,6 +2965,23 @@ function clearAuth() {
   showFlex('username-screen');
 }
 
+// Update the "AniList Avg" sort button and table header to reflect the active service.
+function _updateScoreLabel() {
+  const label = _isMalCloudSession() ? 'MAL Avg' : 'AniList Avg';
+  const btn = document.querySelector('.sort-btn[data-sort="score"]');
+  if (btn) {
+    btn.dataset.label = label;
+    // If this button is currently active it will have an arrow appended — preserve that.
+    const arrow = btn.textContent.match(/ [↑↓]$/)?.[0] ?? '';
+    btn.textContent = label + arrow;
+  }
+  const th = document.getElementById('th-sc');
+  if (th) {
+    const arrow = th.textContent.match(/ [▾▴]$/)?.[0] ?? '';
+    th.textContent = label + arrow;
+  }
+}
+
 function _updateAuthUI() {
   const loggedIn = !!(authToken && authUser);
 
@@ -3017,6 +3054,8 @@ function _updateAuthUI() {
   // Show cloud push/pull buttons when any auth is active
   const cloudBtns = document.getElementById('cloud-sync-btns');
   if (cloudBtns) cloudBtns.style.display = (loggedIn || malLoggedIn) ? '' : 'none';
+
+  _updateScoreLabel();
 }
 
 const ANILIST_CLIENT_ID = '37947';
@@ -3294,6 +3333,8 @@ function _updateMALAuthUI() {
     _newAnimePollingTimer = null;
     document.getElementById('new-anime-banner')?.classList.remove('active');
   }
+
+  _updateScoreLabel();
 }
 
 let _malOAuthPopup     = null;
@@ -4832,10 +4873,7 @@ let importSource = 'anilist'; // 'anilist' | 'mal'
 
 function setSource(src) {
   importSource = src;
-  document.getElementById('tab-anilist').classList.toggle('active', src === 'anilist');
-  document.getElementById('tab-mal').classList.toggle('active', src === 'mal');
-  document.getElementById('anilist-wrap').style.display = src === 'anilist' ? 'flex' : 'none';
-  document.getElementById('mal-upload-wrap').style.display = src === 'mal' ? 'flex' : 'none';
+  // Both service cards are always visible — no toggling needed.
   document.getElementById('error-msg').style.display = 'none';
 }
 
@@ -5170,7 +5208,7 @@ async function fetchRecommendationsForYou() {
           nodes {
             rating
             mediaRecommendation {
-              id title { romaji english } coverImage { large medium }
+              id idMal title { romaji english } coverImage { large medium }
               averageScore format status
             }
           }
@@ -5278,8 +5316,11 @@ function recCardHtml(media, opts = {}) {
   const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
     ? '<span style="font-size:0.65rem;background:#1a2d1a;color:#3fb950;border:1px solid #238636;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Matches your taste</span>'
     : '';
+  const recUrl = (_isMalCloudSession() && media.idMal)
+    ? `https://myanimelist.net/anime/${media.idMal}`
+    : `https://anilist.co/anime/${media.id}`;
   return `
-    <a class="rec-card" href="https://anilist.co/anime/${media.id}" target="_blank"
+    <a class="rec-card" href="${recUrl}" target="_blank"
        style="${watched ? 'opacity:0.45' : ''}">
       <img src="${cover}" alt="" loading="lazy" />
       <div class="rec-card-body">
@@ -5302,7 +5343,7 @@ async function _fetchHighlyRatedUnseen(ownIds) {
       Page(perPage: 50) {
         media(type: ANIME, sort: SCORE_DESC,
               status: FINISHED, averageScore_greater: 78, popularity_greater: 30000) {
-          id title { romaji english } coverImage { large medium } averageScore format
+          id idMal title { romaji english } coverImage { large medium } averageScore format
         }
       }
     }`;
@@ -5348,7 +5389,7 @@ async function fetchGenreDeepDive() {
       Page(perPage: 20) {
         media(type: ANIME, genre_in: [$genre], sort: SCORE_DESC,
               averageScore_greater: 72, status_not_in: [NOT_YET_RELEASED, CANCELLED]) {
-          id title { romaji english } coverImage { large medium } averageScore format
+          id idMal title { romaji english } coverImage { large medium } averageScore format
         }
       }
     }`;
@@ -5380,7 +5421,7 @@ async function fetchHiddenGems() {
               averageScore_greater: 70,
               popularity_lesser: 150000,
               status_in: [FINISHED, RELEASING]) {
-          id title { romaji english } coverImage { large medium } averageScore format
+          id idMal title { romaji english } coverImage { large medium } averageScore format
         }
       }
     }`;
@@ -5457,7 +5498,7 @@ async function fetchSeasonalRecommendations() {
         Page(perPage: 50) {
           media(season: $season, seasonYear: $year, type: ANIME,
                 sort: POPULARITY_DESC, status_not: CANCELLED) {
-            id title { romaji english } coverImage { large medium }
+            id idMal title { romaji english } coverImage { large medium }
             averageScore format status genres
           }
         }
@@ -7178,8 +7219,10 @@ function showAnimeDetail(id) {
   const rank = sorted.findIndex(a => a.id === id) + 1;
   const tier = getTier(rank - 1, sorted.length);
 
-  document.getElementById('modal-cover').src = anime.cover;
-  document.getElementById('modal-cover').alt = displayTitle(anime);
+  const coverEl = document.getElementById('modal-cover');
+  coverEl.classList.remove('img-broken'); // clear any stale failure state from a previous modal open
+  coverEl.src = anime.cover;
+  coverEl.alt = displayTitle(anime);
   document.getElementById('modal-title').textContent = displayTitle(anime);
   const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
   const scoreStr = anime.globalScore ? `· Community ${anime.globalScore}%` : '';
