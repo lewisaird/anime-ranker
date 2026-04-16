@@ -4844,6 +4844,31 @@ function exportCSV() {
 }
 
 // ─── TIER LIST IMAGE EXPORT ──────────────────────────────────────────────────
+// Load a cover image for canvas drawing by fetching it fresh as a blob URL.
+// This bypasses any cached non-CORS version (which would taint the canvas),
+// and works regardless of whether the user is on AniList, MAL, or guest mode.
+async function _loadCoverForCanvas(url, timeoutMs = 8000) {
+  if (!url) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { mode: 'cors', cache: 'no-cache', signal: controller.signal });
+    clearTimeout(timer);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    return new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(null); };
+      img.src = objectUrl;
+    });
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
 async function exportTierListImage() {
   const btns = [
     document.getElementById('export-image-btn'),
@@ -4878,19 +4903,14 @@ async function exportTierListImage() {
     const HEADER_H = 72, FOOTER_H = 32, DIVIDER = 1;
     const totalH = HEADER_H + TIER_ORDER.reduce((s, t) => s + (groups[t].length ? tierH(t) + DIVIDER : 0), 0) + FOOTER_H;
 
-    // Load all covers concurrently (5s timeout per image)
+    // Load all covers fresh via fetch → blob URL so canvas is never tainted.
+    // Works for AniList, MAL, and guest mode — no crossOrigin cache conflicts.
     const imgCache = new Map();
-    await Promise.all(sorted.map(a => new Promise(resolve => {
-      if (!a.cover) { resolve(null); return; }
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      const done = () => resolve(img);
-      const fail = () => resolve(null);
-      img.onload  = () => { imgCache.set(a.cover, img); done(); };
-      img.onerror = fail;
-      setTimeout(fail, 5000);
-      img.src = a.cover;
-    })));
+    await Promise.all(sorted.map(async a => {
+      if (!a.cover) return;
+      const img = await _loadCoverForCanvas(a.cover);
+      if (img) imgCache.set(a.cover, img);
+    }));
 
     const canvas = document.createElement('canvas');
     canvas.width  = CANVAS_W;
@@ -7042,7 +7062,7 @@ function shareMilestone() {
 // ─── SHARE LINK ───────────────────────────────────────────────────────────────
 function shareRankings() {
   const top20 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 20);
-  const user  = saveKey.replace('anime_elo_', '');
+  const user  = (saveKey || '').replace(/^anime_elo_(mal_)?/, '');
   const payload = {
     u: user,
     b: battleCount,
