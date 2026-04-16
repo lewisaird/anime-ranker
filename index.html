@@ -3864,6 +3864,8 @@ function _applyCloudSaveToMemory(cloud) {
   rankingView    = cloud.rankingView    ?? 'grid';
   currentSort    = cloud.currentSort    ?? 'elo';
   sortAsc        = cloud.sortAsc        ?? false;
+  // Normalise: Title/Tier/Confidence sort naturally ascending — correct stale saved state
+  if (_ascFirstSorts.has(currentSort) && !sortAsc) sortAsc = true;
   achievements    = cloud.achievements   ?? {};
   comparedFriends = new Set(cloud.comparedFriends ?? []);
   matchupStats    = cloud.matchupStats   ?? {};
@@ -4062,6 +4064,8 @@ function loadState(username, source = 'anilist') {
     rankingView    = s.rankingView  ?? 'grid';
     currentSort    = s.currentSort  ?? 'elo';
     sortAsc        = s.sortAsc      ?? false;
+    // Normalise: Title/Tier/Confidence sort naturally ascending — correct stale saved state
+    if (_ascFirstSorts.has(currentSort) && !sortAsc) sortAsc = true;
     achievements    = s.achievements    ?? {};
     comparedFriends = new Set(s.comparedFriends ?? []);
     matchupStats    = s.matchupStats    ?? {};
@@ -4651,7 +4655,7 @@ function getStreak(anime) {
 }
 
 function _statusBadge(status) {
-  if (status === 'CURRENT')   return '<span class="status-badge watching">👁 Watching</span>';
+  if (status === 'CURRENT')   return '<span class="status-badge watching">👁️ Watching</span>';
   if (status === 'REPEATING') return '<span class="status-badge rewatching">🔄 Rewatching</span>';
   return '';
 }
@@ -6541,9 +6545,10 @@ function maybeShowHelp() {
 
 // ─── WELCOME MODAL ────────────────────────────────────────────────────────────
 function maybeShowWelcome() {
-  // Show only on a genuinely fresh first load: no battles yet, never seen before.
-  // Returning users are not shown the help modal automatically — the ? button exists for that.
-  if (!localStorage.getItem('kessen_welcome_seen') && battleCount === 0) {
+  // Show once per device — guarded solely by kessen_welcome_seen.
+  // The battleCount check was removed: users loading a cloud save on a new device
+  // have battles already but still need the welcome orientation.
+  if (!localStorage.getItem('kessen_welcome_seen')) {
     document.getElementById('welcome-modal').style.display = 'flex';
   }
 }
@@ -8267,9 +8272,9 @@ function openSyncModal() {
   const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
   const total = sorted.length;
 
-  // Build sync queue — skip excluded anime (they're in the pool but excluded)
+  // Build sync queue — skip excluded anime and any with missing/invalid AniList IDs
   _syncQueue = sorted
-    .filter(a => !excludedIds.has(a.id))
+    .filter(a => !excludedIds.has(a.id) && a.id && Number.isFinite(a.id))
     .map((a, i) => {
       const score10 = _eloToScore10(i, total);
       return { mediaId: a.id, title: a.title, cover: a.cover, score10, apiScore: _formatScoreForAniList(score10, format) };
@@ -8366,16 +8371,19 @@ async function executeSyncToAniList() {
     }
     if (!itemOk) errors++; // all 3 attempts failed
     done++;
-    // 1100ms spacing — comfortably under AniList's 90 req/min ceiling even with background calls
-    await new Promise(r => setTimeout(r, 1100));
+    // 1500ms spacing — ~40 req/min, well under AniList's 90 req/min ceiling
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   barFill.style.width = '100%';
   progressWrap.style.display = 'none';
   doneMsg.style.display = '';
+  const succeeded = done - errors;
   doneMsg.textContent = errors === 0
     ? `✅ Done! Synced ${done} scores to AniList.`
-    : `⚠️ Synced ${done - errors}/${done} scores. ${errors} failed — try again.`;
+    : succeeded === 0
+      ? `❌ All ${errors} syncs failed — your AniList token may have expired. Try logging out and back in.`
+      : `⚠️ Synced ${succeeded}/${done} scores. ${errors} failed — these may not be on your AniList. Try again to retry.`;
 
   // Replace Cancel with a Close button
   actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
