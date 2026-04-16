@@ -3196,6 +3196,30 @@ function clearMALAuth() {
 function logoutMAL() {
   clearMALAuth();
   _updateMALAuthUI();
+
+  // Reset all in-memory state and return to home screen
+  animeList      = [];
+  battleCount    = 0;
+  currentA       = null;
+  currentB       = null;
+  battleHistory  = [];
+  excludedIds    = new Set();
+  saveKey        = '';
+  prevState      = null;
+  undoStack      = [];
+  achievements   = {};
+  comparedFriends = new Set();
+  _cloudSyncEnabled = false;
+  nextPairOverride  = null;
+  matchupStats      = {};
+  Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
+  _recsLoadedTab = null;
+
+  hide('battle-screen');
+  hide('results-screen');
+  document.getElementById('change-user-btn').style.display = 'none';
+  document.getElementById('progress-info').textContent = '';
+  showFlex('username-screen');
 }
 
 function _updateMALAuthUI() {
@@ -3205,9 +3229,9 @@ function _updateMALAuthUI() {
   const hint      = document.getElementById('mal-new-hint');
   const warmRow   = document.getElementById('mal-warm-start-row');
   const warmInfo  = document.getElementById('mal-warm-start-info');
-  if (btn)    btn.style.display    = loggedIn ? 'none' : '';
-  if (hint)   hint.style.display   = loggedIn ? 'none' : '';
-  if (warmRow)  warmRow.style.display  = loggedIn ? '' : '';  // always show
+  if (btn)      btn.style.display      = loggedIn ? 'none' : '';
+  if (hint)     hint.style.display     = loggedIn ? 'none' : '';
+  if (warmRow)  warmRow.style.display  = loggedIn ? 'none' : '';
   if (warmInfo) warmInfo.style.display = loggedIn ? 'none' : '';
   if (badge) {
     badge.style.display = loggedIn ? 'flex' : 'none';
@@ -3441,9 +3465,12 @@ async function _fetchMALAnimeListViaAPI() {
 
 // Start a full MAL OAuth session: fetch list → build anime list → start battles
 async function _startMALOAuthSession() {
-  const username       = malAuthUser.name;
-  const seedFromScores = document.getElementById('mal-warm-start-chk')?.checked ?? true;
+  const username        = malAuthUser.name;
   const existingSaveKey = 'anime_elo_mal_' + username.toLowerCase();
+  // Seed from scores on a fresh load only — same behaviour as AniList OAuth.
+  // Existing saves are restored as-is; re-seeding is done via Manage → Re-seed.
+  const hasSave        = !!localStorage.getItem(existingSaveKey);
+  const seedFromScores = !hasSave;
 
   hide('username-screen');
   showFlex('loading-screen');
@@ -4119,6 +4146,18 @@ function pickOpponents() {
 // ─── BATTLE RENDERING ────────────────────────────────────────────────────────
 
 // Single shared render — always sets globals AND updates DOM together
+// Returns the appropriate external URL for an anime — MAL for MAL sessions, AniList otherwise.
+// Falls back to AniList if the anime doesn't have an idMal stored (e.g. old saves).
+function _animeExternalUrl(anime) {
+  if (_isMalCloudSession() && anime.idMal) {
+    return `https://myanimelist.net/anime/${anime.idMal}`;
+  }
+  return `https://anilist.co/anime/${anime.id}`;
+}
+function _animeExternalLabel(anime) {
+  return (_isMalCloudSession() && anime.idMal) ? 'MAL' : 'AniList';
+}
+
 function renderPair(ia, ib) {
   currentA = ia;
   currentB = ib;
@@ -4145,9 +4184,13 @@ function renderPair(ia, ib) {
       : b.episodes ? `<span class="ep-badge">${b.episodes} ep</span>` : '') +
     _statusBadge(b.status);
 
-  // AniList links
-  document.getElementById('anilist-a').href = `https://anilist.co/anime/${a.id}`;
-  document.getElementById('anilist-b').href = `https://anilist.co/anime/${b.id}`;
+  // External links — AniList or MAL depending on session type
+  const linkA = document.getElementById('anilist-a');
+  const linkB = document.getElementById('anilist-b');
+  linkA.href        = _animeExternalUrl(a);
+  linkA.textContent = `↗ ${_animeExternalLabel(a)}`;
+  linkB.href        = _animeExternalUrl(b);
+  linkB.textContent = `↗ ${_animeExternalLabel(b)}`;
 
   // Fuzzy button states
   const fuzzyBtnA = document.getElementById('fuzzy-a');
@@ -4960,6 +5003,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
         elo: startElo, wins: 0, losses: 0, comparisons: 0, battles: 0,
         fuzzy: false, eloHistory: [startElo],
         anilistScore: 0, malScore: userScore,
+        idMal: m.idMal || null,
       };
     });
 
@@ -7116,7 +7160,9 @@ function showAnimeDetail(id) {
   document.getElementById('modal-confidence-wrap').innerHTML =
     `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${anime.battles || 0} battles</span>`;
 
-  document.getElementById('modal-anilist-btn').href = `https://anilist.co/anime/${anime.id}`;
+  const modalBtn = document.getElementById('modal-anilist-btn');
+  modalBtn.href        = _animeExternalUrl(anime);
+  modalBtn.textContent = `View on ${_animeExternalLabel(anime)} ↗`;
   const descEl = document.getElementById('modal-description');
   const cleanDesc = stripHtml(anime.description);
   if (cleanDesc) {
@@ -8459,6 +8505,7 @@ async function checkForNewAnimeMAL() {
             elo: 1200, wins: 0, losses: 0, comparisons: 0, battles: 0,
             fuzzy: false, eloHistory: [1200],
             anilistScore: 0, malScore: userScore,
+            idMal: m.idMal || null,
           });
         }
       });
