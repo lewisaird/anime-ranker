@@ -1733,6 +1733,29 @@
     .mal-instructions a { color: #58a6ff; text-decoration: none; }
     .mal-instructions a:hover { text-decoration: underline; }
 
+    /* DISCOVER SUB-TABS (For You / This Season / Predict) */
+    #tab-panel-discover .source-tabs {
+      display: flex;
+      gap: 0;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+    #tab-panel-discover .source-tab {
+      flex: 1;
+      padding: 9px 20px;
+      background: #161b22;
+      color: #8b949e;
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+    #tab-panel-discover .source-tab.active { background: #21262d; color: #e6edf3; }
+    #tab-panel-discover .source-tab:hover:not(.active) { background: #1c2128; color: #c9d1d9; }
+
     /* RECOMMENDATIONS SECTION */
     #recs-section { margin: 24px 0; }
     #recs-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 6px; text-align: center; }
@@ -5994,9 +6017,12 @@ async function runFriendRecs() {
     const maxScore = Math.max(...allEntries.map(e => e.score).filter(s => s > 0), 0);
     const scoreThreshold = maxScore > 10 ? 60 : 6;
 
-    // Candidate pool: friend watched + rated above threshold, user hasn't seen
+    // Candidate pool: friend watched + rated above threshold, user hasn't seen.
+    // Dedup by media.id — rewatched anime appear in both COMPLETED and REPEATING lists.
+    const seenMediaIds = new Set();
     const candidates = allEntries
-      .filter(e => WATCHED.has(e.status) && e.score >= scoreThreshold && !ownIds.has(e.media.id));
+      .filter(e => WATCHED.has(e.status) && e.score >= scoreThreshold && !ownIds.has(e.media.id))
+      .filter(e => { if (seenMediaIds.has(e.media.id)) return false; seenMediaIds.add(e.media.id); return true; });
 
     if (!candidates.length) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
@@ -6515,12 +6541,10 @@ function maybeShowHelp() {
 
 // ─── WELCOME MODAL ────────────────────────────────────────────────────────────
 function maybeShowWelcome() {
-  // Show only on a genuinely fresh first load: no battles yet, never seen before
+  // Show only on a genuinely fresh first load: no battles yet, never seen before.
+  // Returning users are not shown the help modal automatically — the ? button exists for that.
   if (!localStorage.getItem('kessen_welcome_seen') && battleCount === 0) {
     document.getElementById('welcome-modal').style.display = 'flex';
-  } else {
-    // Not a first-timer — fall through to the regular help modal check
-    maybeShowHelp();
   }
 }
 function dismissWelcome() {
@@ -7030,12 +7054,15 @@ function flagFuzzy(event, side) {
 // ─── SEARCH / FILTER ──────────────────────────────────────────────────────────
 function filterRankings() {
   const q = document.getElementById('search-input').value.toLowerCase().trim();
+  // Build a quick id→fuzzy lookup from the data model (not DOM) so that
+  // unfuzzying an anime is reflected immediately without a full re-render.
+  const fuzzyById = new Map(animeList.map(a => [a.id, !!a.fuzzy]));
   document.querySelectorAll('#ranking-list .rank-card').forEach(card => {
     const title   = card.querySelector('.rank-title').textContent.toLowerCase();
-    const isFuzzy = card.querySelector('.fuzzy-tag') !== null;
+    const animeId = parseInt(card.dataset.animeId) || 0;
+    const isFuzzy = fuzzyById.get(animeId) ?? (card.querySelector('.fuzzy-tag') !== null);
     const fmt     = card.dataset.format  || '';
     const epRng   = card.dataset.epRange || 'unknown';
-    const animeId = parseInt(card.dataset.animeId) || 0;
     const show = (!q || title.includes(q))
       && (!showFuzzyOnly || isFuzzy)
       && !hiddenFormats.has(fmt)
@@ -7318,6 +7345,8 @@ function unflagFuzzy() {
   const anime = animeList.find(a => a.id === id);
   if (anime) { anime.fuzzy = false; saveState(); }
   document.getElementById('modal-unfuzzy-btn').style.display = 'none';
+  closeDetail();
+  filterRankings(); // immediately remove card from fuzzy-only view without full re-render
 }
 
 // ─── TITLE LANGUAGE ──────────────────────────────────────────────────────────
@@ -7374,12 +7403,17 @@ function _syncSortUI() {
   });
 }
 
+// Sort types where ascending is the natural first direction
+const _ascFirstSorts = new Set(['title', 'tier', 'confidence']);
+
 function setSort(type) {
   if (currentSort === type) {
     sortAsc = !sortAsc;
   } else {
     currentSort = type;
-    sortAsc = false;
+    // Title → A–Z first; Tier → S first (index 0); Confidence → most confident first (index 0)
+    // Everything else (ELO, win rate, battles, score) → highest first (descending)
+    sortAsc = _ascFirstSorts.has(type);
   }
   _syncSortUI();
   saveState();
@@ -8303,18 +8337,37 @@ async function executeSyncToAniList() {
   for (const item of _syncQueue) {
     progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
     barFill.style.width = Math.round((done / total) * 100) + '%';
-    try {
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
-      });
-      const json = await res.json();
-      if (json.errors) errors++;
-    } catch { errors++; }
+    let itemOk = false;
+    for (let attempt = 1; attempt <= 3 && !itemOk; attempt++) {
+      try {
+        const res = await fetch('https://graphql.anilist.co', {
+          method: 'POST',
+          headers: anilistHeaders(),
+          body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
+        });
+        if (res.status === 429) {
+          // Hard rate-limit header — back off and retry
+          progressText.textContent = `Rate limited — pausing… (${done + 1}/${total})`;
+          await new Promise(r => setTimeout(r, 8000));
+          continue;
+        }
+        const json = await res.json();
+        const isRateLimit = json.errors?.some(e =>
+          /rate.?limit|too many/i.test(e.message || '') || e.status === 429
+        );
+        if (isRateLimit) {
+          progressText.textContent = `Rate limited — pausing… (${done + 1}/${total})`;
+          await new Promise(r => setTimeout(r, 8000));
+          continue;
+        }
+        if (json.errors) { errors++; itemOk = true; /* failed but not retriable */ break; }
+        itemOk = true; // success
+      } catch { /* network blip — try again */ }
+    }
+    if (!itemOk) errors++; // all 3 attempts failed
     done++;
-    // Respect AniList rate limit — 90 req/min → ~700ms spacing
-    await new Promise(r => setTimeout(r, 700));
+    // 1100ms spacing — comfortably under AniList's 90 req/min ceiling even with background calls
+    await new Promise(r => setTimeout(r, 1100));
   }
 
   barFill.style.width = '100%';
