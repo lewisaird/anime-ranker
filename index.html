@@ -1937,6 +1937,23 @@
     .saved-comp-card .scc-name { font-size: 0.85rem; color: #c9d1d9; font-weight: 600; }
     .saved-comp-card .scc-meta { font-size: 0.72rem; color: #8b949e; }
 
+    /* SOCIAL PLATFORM TOGGLE */
+    .social-platform-row {
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; margin-bottom: 24px;
+    }
+    .sp-btn {
+      padding: 7px 20px; border-radius: 20px; font-size: 0.82rem;
+      font-weight: 600; border: 2px solid transparent;
+      transition: all 0.18s; cursor: pointer; background: #0d1117;
+    }
+    #sp-anilist          { border-color: #1a6ef5; color: #58a6ff; }
+    #sp-anilist.active   { background: linear-gradient(135deg, #1a6ef5, #0ea5e9); color: #fff; border-color: transparent; box-shadow: 0 3px 12px rgba(26,110,245,0.35); }
+    #sp-anilist:hover:not(.active) { background: rgba(26,110,245,0.12); }
+    #sp-mal              { border-color: #2e51a2; color: #4a74d8; }
+    #sp-mal.active       { background: linear-gradient(135deg, #2e51a2, #4a74d8); color: #fff; border-color: transparent; box-shadow: 0 3px 12px rgba(46,81,162,0.35); }
+    #sp-mal:hover:not(.active) { background: rgba(46,81,162,0.12); }
+
     /* COMPATIBILITY SECTION */
     #compat-section { margin: 24px 0; }
     #compat-section h3 { font-size: 1rem; color: #8b949e; margin-bottom: 16px; text-align: center; }
@@ -2640,11 +2657,10 @@
     <!-- ── SOCIAL panel ───────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-social" style="display:none">
 
-      <!-- Platform selector — shared by both social features -->
-      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:20px">
-        <span style="font-size:0.8rem;color:#8b949e">Friend's platform:</span>
-        <button id="sp-anilist" class="source-tab active" onclick="setSocialPlatform('anilist')" style="padding:4px 14px;font-size:0.8rem">AniList</button>
-        <button id="sp-mal"     class="source-tab"        onclick="setSocialPlatform('mal')"     style="padding:4px 14px;font-size:0.8rem">MAL</button>
+      <!-- Platform selector — hidden for AniList-only users (no MAL token) -->
+      <div class="social-platform-row" id="social-platform-row" style="display:none">
+        <button id="sp-anilist" class="sp-btn active" onclick="setSocialPlatform('anilist')">🔵 AniList</button>
+        <button id="sp-mal"     class="sp-btn"        onclick="setSocialPlatform('mal')">📋 MAL</button>
       </div>
 
       <div id="friend-recs-section">
@@ -6345,34 +6361,9 @@ async function _fetchMalUserList(username, setProgress) {
     return entries;
   }
 
-  // Fallback: Jikan v4 (no auth token available)
-  for (const status of ['completed', 'watching', 'rewatching']) {
-    let page = 1, hasMore = true;
-    while (hasMore) {
-      if (setProgress) setProgress(`⏳ Fetching ${username}'s ${status} list (page ${page})…`);
-      const res = await fetch(
-        `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&page=${page}`
-      );
-      if (res.status === 404) throw new Error(`MAL user "${username}" not found.`);
-      if (!res.ok) break;
-      const json = await res.json();
-      (json.data || []).forEach(e => {
-        if (e.mal_id && !entries.some(x => x.malId === e.mal_id)) {
-          entries.push({
-            malId: e.mal_id,
-            title: e.title || '',
-            score: e.score || 0,
-            cover: e.images?.jpg?.large_image_url || e.images?.jpg?.image_url || '',
-          });
-        }
-      });
-      hasMore = json.pagination?.has_next_page ?? false;
-      page++;
-      if (hasMore) await new Promise(r => setTimeout(r, 600));
-    }
-    await new Promise(r => setTimeout(r, 600));
-  }
-  return entries;
+  // No MAL token — can't fetch MAL user lists without authentication.
+  // The public Jikan endpoint for user lists has been removed by MAL.
+  throw new Error('Looking up MAL users requires a MAL login. Log out and sign in with MAL to use this feature.');
 }
 
 // Batch-resolve AniList metadata (genres, title, cover, format) for a list of MAL IDs
@@ -7401,7 +7392,10 @@ function renderHistoryTab() {
 }
 
 function renderSocialTab() {
-  // Default to MAL platform for MAL users, AniList for AniList users
+  // Show the platform toggle only when both AniList and MAL tokens are present.
+  // Single-service users don't need it — there's only one valid choice.
+  const row = document.getElementById('social-platform-row');
+  if (row) row.style.display = malAuthToken ? 'flex' : 'none';
   setSocialPlatform(_isMalCloudSession() ? 'mal' : 'anilist');
   _renderSavedComparisons();
 }
