@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Kessen</title>
+  <meta name="theme-color" content="#161b22" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.7;
+      padding: 48px 20px 80px;
+    }
+    .wrap { max-width: 680px; margin: 0 auto; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1 { font-size: 1.6rem; font-weight: 700; color: #e6edf3; margin-bottom: 6px; }
+    .subtitle { font-size: 0.9rem; color: #8b949e; margin-bottom: 40px; }
+    h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 32px 0 10px; }
+    p  { color: #8b949e; margin-bottom: 14px; }
+    ul { color: #8b949e; padding-left: 20px; margin-bottom: 14px; }
+    li { margin-bottom: 6px; }
+    .back { display: inline-block; margin-bottom: 36px; font-size: 0.85rem; color: #8b949e; }
+    .back:hover { color: #c9d1d9; }
+    hr { border: none; border-top: 1px solid #21262d; margin: 40px 0; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="/">← Back to Kessen</a>
+
+  <h1>Privacy Policy</h1>
+  <p class="subtitle">Last updated: April 2026</p>
+
+  <p>Kessen is a personal anime ranking tool. This page explains what data is stored when you use it, and how to have it removed.</p>
+
+  <h2>What we store</h2>
+  <p>Kessen stores the following data, and nothing else:</p>
+  <ul>
+    <li><strong>Your rankings and battle history</strong> — your ELO scores, wins/losses, and battle history for each anime you have ranked.</li>
+    <li><strong>Your account identifier</strong> — your numeric AniList user ID or MyAnimeList user ID, used as a storage key to link your rankings to your account. We do not store your email address, password, or any personal information beyond this ID.</li>
+    <li><strong>Your display name and avatar URL</strong> — fetched from AniList or MyAnimeList at login and stored locally in your browser to display your profile badge. These are not sent to our servers.</li>
+  </ul>
+
+  <h2>Where it's stored</h2>
+  <ul>
+    <li><strong>In your browser</strong> — your session data (rankings, battle history) is saved to <code>localStorage</code> on your device. Clearing your browser data removes it.</li>
+    <li><strong>In Netlify Blob Storage</strong> — if you are logged in via AniList or MAL OAuth, your session is also backed up to Netlify's hosted blob storage, keyed by your account ID. This enables your rankings to sync across devices. Netlify's privacy policy applies to this storage: <a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">netlify.com/privacy</a>.</li>
+  </ul>
+
+  <h2>Authentication tokens</h2>
+  <p>OAuth access tokens from AniList and MyAnimeList are stored only in your browser's <code>localStorage</code>. They are sent to our Netlify Functions solely to verify your identity when reading or writing your saved rankings — they are never logged, shared, or stored on our servers.</p>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>We do not sell or share your data with third parties.</li>
+    <li>We do not use analytics, advertising trackers, or cookies.</li>
+    <li>We do not store your watch history or scores from AniList or MyAnimeList — only the ELO rankings you build within Kessen.</li>
+  </ul>
+
+  <h2>Third-party services</h2>
+  <p>Kessen connects to the following external services, each with their own privacy policies:</p>
+  <ul>
+    <li><a href="https://anilist.co/terms" target="_blank" rel="noopener">AniList</a> — for login, fetching your anime list, and metadata.</li>
+    <li><a href="https://myanimelist.net/about/privacy_policy" target="_blank" rel="noopener">MyAnimeList</a> — for login and fetching your anime list.</li>
+    <li><a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">Netlify</a> — for hosting and cloud save storage.</li>
+  </ul>
+
+  <h2>Deleting your data</h2>
+  <p>You can delete all your data directly from within the app. Open your rankings, go to the <strong>Manage</strong> tab, scroll to the Danger Zone, and press <strong>Delete all my data</strong>. This removes your rankings from your device and from cloud storage immediately.</p>
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes in a meaningful way, a notice will be posted on the site. The date at the top of this page will always reflect the most recent update.</p>
+
+</div>
+</body>
+</html>
