@@ -3488,6 +3488,7 @@ async function _startMALOAuthSession() {
       snapshotSessionStart();
       maybeShowKbTip();
       if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      _migrateMalIds(); // background — populate idMal on old saves so links go to MAL
       return;
     }
   }
@@ -3502,6 +3503,7 @@ async function _startMALOAuthSession() {
     snapshotSessionStart();
     maybeShowKbTip();
     if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+    _migrateMalIds(); // background — populate idMal on old saves so links go to MAL
     return;
   }
 
@@ -3744,7 +3746,7 @@ async function _doCloudSave() {
       savedAt: new Date().toISOString(),
     };
     const body = _isMalCloudSession()
-      ? { malToken: malAuthToken, session }
+      ? { malToken: malAuthToken, malUserId: malAuthUser?.id, session }
       : { token: authToken, session };
     const res = await fetch('/.netlify/functions/save-session', {
       method:  'POST',
@@ -3766,7 +3768,7 @@ async function _loadCloudSave() {
   if (!_activeCloudUser()) return null;
   try {
     const body = _isMalCloudSession()
-      ? { malToken: malAuthToken }
+      ? { malToken: malAuthToken, malUserId: malAuthUser?.id }
       : { token: authToken };
     const res = await fetch('/.netlify/functions/load-session', {
       method:  'POST',
@@ -4144,6 +4146,51 @@ function pickOpponents() {
 }
 
 // ─── BATTLE RENDERING ────────────────────────────────────────────────────────
+
+// Background migration: fetch idMal (MAL ID) from AniList for any anime in the list
+// that were saved before idMal was stored (older saves). Runs silently after session restore.
+async function _migrateMalIds() {
+  if (!_isMalCloudSession()) return;
+  const missing = animeList.filter(a => !a.idMal);
+  if (missing.length === 0) return;
+
+  try {
+    const ids = missing.map(a => a.id);
+    const PAGE_SIZE = 50;
+    const idMalMap = {};
+
+    for (let i = 0; i < ids.length; i += PAGE_SIZE) {
+      const chunk = ids.slice(i, i + PAGE_SIZE);
+      const query = `query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(id_in: $ids, type: ANIME) { id idMal }
+        }
+      }`;
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ query, variables: { ids: chunk } }),
+      });
+      const data = await res.json();
+      (data?.data?.Page?.media ?? []).forEach(m => { if (m.idMal) idMalMap[m.id] = m.idMal; });
+      if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 250));
+    }
+
+    let migrated = 0;
+    animeList.forEach(a => {
+      if (!a.idMal && idMalMap[a.id]) { a.idMal = idMalMap[a.id]; migrated++; }
+    });
+
+    if (migrated > 0) {
+      saveState();
+      schedulCloudSave();
+      // Re-render current pair so links immediately show MAL
+      if (currentA !== null && currentB !== null) renderCurrentPair();
+    }
+  } catch (err) {
+    console.warn('[kessen] idMal migration failed:', err);
+  }
+}
 
 // Single shared render — always sets globals AND updates DOM together
 // Returns the appropriate external URL for an anime — MAL for MAL sessions, AniList otherwise.
