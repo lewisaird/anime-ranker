@@ -216,13 +216,23 @@
       transition: all 0.18s;
       text-align: center;
     }
-    .anime-card:hover {
-      border-color: #58a6ff;
-      background: #1c2128;
-      transform: translateY(-3px);
-      box-shadow: 0 8px 24px rgba(88, 166, 255, 0.15);
+    @media (hover: hover) {
+      .anime-card:hover {
+        border-color: #58a6ff;
+        background: #1c2128;
+        transform: translateY(-3px);
+        box-shadow: 0 8px 24px rgba(88, 166, 255, 0.15);
+      }
     }
-    .anime-card:active { transform: translateY(0); }
+    .anime-card:active { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(88,166,255,0.2); }
+
+    /* Fast tap — no 300ms delay on touch */
+    .anime-card, .btn-primary, .btn-secondary, .btn-danger,
+    .res-tab, .rank-card, .battle-actions button, .util-btn,
+    .fuzzy-btn, .synopsis-btn, .exclude-btn, .card-anilist-link {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
 
     .anime-card img {
       width: 160px;
@@ -1646,6 +1656,7 @@
     #ranking-table-wrap {
       max-height: 70vh;
       overflow-y: auto;
+      overflow-x: auto;
       border: 1px solid #30363d;
       border-radius: 8px;
     }
@@ -2096,7 +2107,52 @@
       .compat-input-row .btn-primary { width: 100%; }
       .compat-ranks { white-space: normal; max-width: 80px; text-align: right; }
       .compat-anime-row { flex-wrap: wrap; }
+
+      /* ── Battle prompt ── */
+      .battle-prompt { margin-bottom: 16px; }
+      .battle-prompt h2 { font-size: 1.1rem; }
+      .battle-prompt p  { font-size: 0.82rem; }
+
+      /* ── Minimum touch target for in-card utility buttons ── */
+      .card-actions button, .card-actions a {
+        min-height: 32px;
+        display: inline-flex;
+        align-items: center;
+      }
+
+      /* ── Header: compress badge to just avatar + logout ── */
+      header { padding: 10px 14px; }
+      .auth-hdr-name {
+        max-width: 70px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #progress-info { font-size: 0.75rem; }
+
+      /* ── Manage tab ── */
+      .manage-btn { width: 100%; }
     }
+
+    /* ── Very small screens (≤ 400px) ─────────────────────────────────────── */
+    @media (max-width: 400px) {
+      /* Tighter battle action buttons */
+      .battle-actions .btn-secondary { font-size: 0.72rem; padding: 6px 8px; }
+      .battle-actions { gap: 4px; }
+
+      /* Ranking grid: force 2 columns even at narrow width */
+      .ranking-list { grid-template-columns: repeat(2, 1fr) !important; gap: 8px; }
+
+      /* Slightly smaller battle-card image to give text more room */
+      .anime-card img { width: 68px; height: 96px; }
+
+      /* Header: hide username entirely, keep avatar + logout */
+      .auth-hdr-name { display: none; }
+
+      /* Stats grid 1-col */
+      .stats-grid { grid-template-columns: 1fr !important; }
+    }
+
   /* ── Toast notification ───────────────────────────────────────────────── */
   #toast {
     position: fixed;
@@ -2572,6 +2628,14 @@
 
     <!-- ── SOCIAL panel ───────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-social" style="display:none">
+
+      <!-- Platform selector — shared by both social features -->
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:20px">
+        <span style="font-size:0.8rem;color:#8b949e">Friend's platform:</span>
+        <button id="sp-anilist" class="source-tab active" onclick="setSocialPlatform('anilist')" style="padding:4px 14px;font-size:0.8rem">AniList</button>
+        <button id="sp-mal"     class="source-tab"        onclick="setSocialPlatform('mal')"     style="padding:4px 14px;font-size:0.8rem">MAL</button>
+      </div>
+
       <div id="friend-recs-section">
         <h3>👀 What Should I Watch Next?</h3>
         <p class="recs-sub">Anime your friend loved that fit your taste profile — ordered by how well they match your genres</p>
@@ -2617,6 +2681,7 @@
           <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
           <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
+          <button class="manage-btn" id="export-image-btn" onclick="exportTierListImage()">🖼️ Download tier list image</button>
         </div>
 
         <div class="manage-section" id="manage-anilist-section" style="display:none">
@@ -2830,8 +2895,9 @@
     <h3>🔗 Share Your Rankings</h3>
     <p>This link encodes your current top 20. Anyone with it can view your ranking snapshot.</p>
     <textarea id="share-url" readonly></textarea>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn-primary" onclick="copyShareLink()" id="copy-btn">📋 Copy Link</button>
+      <button class="btn-secondary" id="share-modal-img-btn" onclick="exportTierListImage()">🖼️ Download Image</button>
       <button class="btn-secondary" onclick="closeShare()">Close</button>
     </div>
   </div>
@@ -4777,6 +4843,152 @@ function exportCSV() {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// ─── TIER LIST IMAGE EXPORT ──────────────────────────────────────────────────
+async function exportTierListImage() {
+  const btns = [
+    document.getElementById('export-image-btn'),
+    document.getElementById('share-modal-img-btn'),
+  ].filter(Boolean);
+  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ Generating…'; });
+
+  try {
+    const COVER_W = 65, COVER_H = 92;
+    const LABEL_W = 58, GAP = 4, H_PAD = 10, V_PAD = 8;
+    const CANVAS_W = 900;
+    const PER_ROW = Math.floor((CANVAS_W - LABEL_W - H_PAD * 2 + GAP) / (COVER_W + GAP));
+
+    const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+    const TIER_ORDER  = ['S', 'A', 'B', 'C', 'D'];
+    const TIER_COLORS = { S: '#ff9b00', A: '#3fb950', B: '#58a6ff', C: '#d29922', D: '#f85149' };
+    const TIER_BG     = { S: '#2d1f00', A: '#0d2016', B: '#0d1b2e', C: '#1e1600', D: '#200d0d' };
+
+    // Group by tier
+    const groups = {};
+    TIER_ORDER.forEach(t => groups[t] = []);
+    sorted.forEach((a, i) => groups[getTier(i, sorted.length)].push(a));
+
+    // Row height for a tier (covers + padding)
+    const tierH = t => {
+      const n = groups[t].length;
+      if (!n) return 0;
+      const rows = Math.ceil(n / PER_ROW);
+      return V_PAD + rows * COVER_H + (rows - 1) * GAP + V_PAD;
+    };
+
+    const HEADER_H = 72, FOOTER_H = 32, DIVIDER = 1;
+    const totalH = HEADER_H + TIER_ORDER.reduce((s, t) => s + (groups[t].length ? tierH(t) + DIVIDER : 0), 0) + FOOTER_H;
+
+    // Load all covers concurrently (5s timeout per image)
+    const imgCache = new Map();
+    await Promise.all(sorted.map(a => new Promise(resolve => {
+      if (!a.cover) { resolve(null); return; }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const done = () => resolve(img);
+      const fail = () => resolve(null);
+      img.onload  = () => { imgCache.set(a.cover, img); done(); };
+      img.onerror = fail;
+      setTimeout(fail, 5000);
+      img.src = a.cover;
+    })));
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = CANVAS_W;
+    canvas.height = totalH;
+    const ctx = canvas.getContext('2d');
+
+    // ── Background ──────────────────────────────────────────────────────────
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, CANVAS_W, totalH);
+
+    // ── Header ───────────────────────────────────────────────────────────────
+    const user = (saveKey || '').replace(/^anime_elo_(mal_)?/, '');
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = 'bold 26px ui-sans-serif, system-ui, Arial, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText('⚔️  Kessen Tier List', 20, 30);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '14px ui-sans-serif, system-ui, Arial, sans-serif';
+    ctx.fillText(`${user}  ·  ${sorted.length} anime  ·  ${battleCount} battles`, 22, 56);
+
+    // ── Tiers ────────────────────────────────────────────────────────────────
+    let y = HEADER_H;
+    for (const t of TIER_ORDER) {
+      const anime = groups[t];
+      if (!anime.length) continue;
+      const rh = tierH(t);
+
+      // Tier tinted background
+      ctx.fillStyle = TIER_BG[t];
+      ctx.fillRect(0, y, CANVAS_W, rh);
+
+      // Tier colour strip on the left
+      ctx.fillStyle = TIER_COLORS[t];
+      ctx.fillRect(0, y, LABEL_W, rh);
+
+      // Tier letter
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 30px ui-sans-serif, system-ui, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t, LABEL_W / 2, y + rh / 2);
+      ctx.textAlign = 'left';
+
+      // Covers
+      anime.forEach((a, idx) => {
+        const row = Math.floor(idx / PER_ROW);
+        const col = idx % PER_ROW;
+        const cx  = LABEL_W + H_PAD + col * (COVER_W + GAP);
+        const cy  = y + V_PAD + row * (COVER_H + GAP);
+        const img = imgCache.get(a.cover);
+        if (img) {
+          ctx.drawImage(img, cx, cy, COVER_W, COVER_H);
+        } else {
+          // Placeholder: tinted block + title initials
+          ctx.fillStyle = '#21262d';
+          ctx.fillRect(cx, cy, COVER_W, COVER_H);
+          ctx.fillStyle = TIER_COLORS[t] + '88';
+          ctx.font = '9px ui-sans-serif, system-ui, Arial, sans-serif';
+          ctx.textBaseline = 'top';
+          const words = (a.title || '').replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean).slice(0, 5);
+          words.forEach((w, wi) => ctx.fillText(w.slice(0, 10), cx + 3, cy + 4 + wi * 13));
+          ctx.textBaseline = 'middle';
+        }
+      });
+
+      // Divider
+      y += rh;
+      ctx.fillStyle = '#21262d';
+      ctx.fillRect(0, y, CANVAS_W, DIVIDER);
+      y += DIVIDER;
+    }
+
+    // ── Footer ───────────────────────────────────────────────────────────────
+    ctx.fillStyle = '#30363d';
+    ctx.font = '12px ui-sans-serif, system-ui, Arial, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    ctx.fillText('kessen.co.uk', CANVAS_W - 16, y + FOOTER_H / 2);
+
+    // ── Download ─────────────────────────────────────────────────────────────
+    canvas.toBlob(blob => {
+      if (!blob) { showToast('⚠️ Could not generate image.'); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `kessen-tierlist${user ? '-' + user : ''}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }, 'image/png');
+
+  } catch (e) {
+    showToast('⚠️ Image export failed: ' + e.message);
+  } finally {
+    btns.forEach(b => { b.disabled = false; b.textContent = b.id === 'export-image-btn' ? '🖼️ Download tier list image' : '🖼️ Download Image'; });
+  }
+}
+
 // ─── BACKUP / RESTORE ────────────────────────────────────────────────────────
 function downloadBackup() {
   if (!animeList || !animeList.length) {
@@ -5770,6 +5982,7 @@ async function toggleRecommendations() { switchResultsTab('discover'); }
 async function runCompatibility() {
   const username2 = document.getElementById('compat-username-input').value.trim();
   if (!username2) return;
+  if (_socialPlatform === 'mal') return _runCompatibilityMal(username2);
 
   const resultsEl = document.getElementById('compat-results');
   resultsEl.innerHTML = '<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ' + username2 + '\'s list…</p>';
@@ -5948,6 +6161,128 @@ async function runCompatibility() {
   }
 }
 
+async function _runCompatibilityMal(username2) {
+  const resultsEl = document.getElementById('compat-results');
+  const setProgress = t => { resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">${t}</p>`; };
+  setProgress(`⏳ Fetching ${username2}'s MAL list…`);
+
+  try {
+    const malEntries = await _fetchMalUserList(username2, setProgress);
+    const otherByMalId = new Map(malEntries.map(e => [e.malId, e]));
+
+    // Overlap: user's ranked anime that the friend also has on MAL
+    const overlap = animeList.filter(a => a.idMal && otherByMalId.has(a.idMal));
+    if (overlap.length < 5) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
+        Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
+      return;
+    }
+
+    // My rank map (full list, for display)
+    const myRanked    = [...animeList].sort((a, b) => b.elo - a.elo);
+    const myRankMap   = new Map(myRanked.map((a, i) => [a.id, i + 1]));
+
+    // Re-rank within overlap for Spearman fairness
+    const myOverlapRanked  = [...overlap].sort((a, b) => b.elo - a.elo);
+    const myOverlapRankMap = new Map(myOverlapRanked.map((a, i) => [a.id, i + 1]));
+    const othOverlapRanked = [...overlap].sort((a, b) => {
+      const sa = otherByMalId.get(a.idMal)?.score ?? 0;
+      const sb = otherByMalId.get(b.idMal)?.score ?? 0;
+      return sb - sa;
+    });
+    const othOverlapRankMap = new Map(othOverlapRanked.map((a, i) => [a.id, i + 1]));
+
+    const n = overlap.length;
+    const dSqSum = overlap.reduce((sum, a) => {
+      const d = myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id);
+      return sum + d * d;
+    }, 0);
+    const rho = 1 - (6 * dSqSum) / (n * (n * n - 1));
+    const pct = Math.round(((rho + 1) / 2) * 100);
+
+    const diffs = overlap.map(a => ({
+      anime: a,
+      cover: a.cover,
+      title: a.title,
+      myRank:    myOverlapRankMap.get(a.id),
+      othRank:   othOverlapRankMap.get(a.id),
+      diff:      Math.abs(myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id)),
+      agreement: (myOverlapRankMap.get(a.id) + othOverlapRankMap.get(a.id)) / 2,
+    }));
+
+    const topAgreements = [...diffs].sort((a, b) => a.agreement - b.agreement).slice(0, 5);
+    const topBothLow    = [...diffs].sort((a, b) => b.agreement - a.agreement).slice(0, 5);
+    const topDisagree   = [...diffs].sort((a, b) => b.diff - a.diff).slice(0, 5);
+    const emojiFor = p => p >= 80 ? '💜' : p >= 65 ? '🟢' : p >= 50 ? '🟡' : p >= 35 ? '🟠' : '🔴';
+    const labelFor = p => p >= 80 ? 'Soulmates' : p >= 65 ? 'Great Match' : p >= 50 ? 'Good Compatibility' : p >= 35 ? 'Some Common Ground' : 'Very Different Tastes';
+
+    _tryUnlock('kindred-spirit', pct >= 80, '💜 Kindred Spirit');
+    _tryUnlock('contrarian',     pct <= 25, '⚡ Contrarian');
+    comparedFriends.add(username2.toLowerCase());
+    saveState();
+    _checkAchievements();
+
+    // Store detail data (keyed by AniList ID, same as AniList path)
+    _compatDetailMap = new Map(overlap.map(a => {
+      const rawScore = otherByMalId.get(a.idMal)?.score ?? 0;
+      return [a.id, {
+        myOverallRank:  myRankMap.get(a.id),
+        myOverlapRank:  myOverlapRankMap.get(a.id),
+        othOverlapRank: othOverlapRankMap.get(a.id),
+        theirScore:     rawScore > 0 ? rawScore.toFixed(1) : null,
+        totalAnime:     animeList.length,
+        overlapSize:    n,
+      }];
+    }));
+
+    const animeRowHtml = (item, desc) => `
+      <div class="compat-anime-row" onclick="_toggleCompatDetail(${item.anime.id})">
+        <img src="${item.cover}" alt="" />
+        <span class="compat-anime-title">${item.title}</span>
+        <span class="compat-ranks">${desc} ›</span>
+      </div>
+      <div class="compat-detail-row" id="compat-detail-${item.anime.id}"></div>`;
+
+    resultsEl.innerHTML = `
+      <div class="compat-score-box">
+        <div class="compat-pct" style="color:${pct >= 65 ? '#3fb950' : pct >= 40 ? '#e3a000' : '#f85149'}">${emojiFor(pct)} ${pct}%</div>
+        <div class="compat-label">${labelFor(pct)}</div>
+        <div class="compat-sub">${n} shared anime · Spearman ρ = ${rho.toFixed(2)}</div>
+        <div class="compat-sub" style="margin-top:4px">Your ELO rank vs ${username2}'s MAL scores</div>
+      </div>
+      <div class="compat-cols">
+        <div class="compat-col">
+          <h4>✅ You both rate highly</h4>
+          ${topAgreements.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+        </div>
+        <div class="compat-col">
+          <h4>📉 You both rate lowly</h4>
+          ${topBothLow.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+        </div>
+        <div class="compat-col compat-col-full">
+          <h4>⚡ Biggest disagreements</h4>
+          ${topDisagree.map(i => {
+            const youHigher = i.myRank < i.othRank;
+            return animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank} ${youHigher ? '(you love it)' : '(they love it)'}`);
+          }).join('')}
+        </div>
+      </div>`;
+
+    // Save comparison (with platform tag so re-run sets the right mode)
+    const savedComps = JSON.parse(localStorage.getItem('anime_elo_saved_comparisons') || '[]');
+    const storageKey = `${username2} [MAL]`;
+    const existingIdx = savedComps.findIndex(c => c.username.toLowerCase() === storageKey.toLowerCase());
+    const entry = { username: storageKey, platform: 'mal', score: pct, label: labelFor(pct), emoji: emojiFor(pct), date: new Date().toISOString().split('T')[0] };
+    if (existingIdx >= 0) savedComps[existingIdx] = entry;
+    else savedComps.unshift(entry);
+    localStorage.setItem('anime_elo_saved_comparisons', JSON.stringify(savedComps.slice(0, 10)));
+    _renderSavedComparisons();
+
+  } catch (err) {
+    resultsEl.innerHTML = `<p style="color:#f85149;text-align:center;padding:16px 0">Error: ${err.message}</p>`;
+  }
+}
+
 function _deleteComparison(username) {
   const savedComps = JSON.parse(localStorage.getItem('anime_elo_saved_comparisons') || '[]');
   const updated = savedComps.filter(c => c.username.toLowerCase() !== username.toLowerCase());
@@ -5963,17 +6298,35 @@ function _renderSavedComparisons() {
   container.innerHTML = `
     <p style="font-size:0.8rem;color:#8b949e;margin:0 0 8px">Recent comparisons</p>
     <div class="saved-comp-cards">
-      ${savedComps.map(c => `
+      ${savedComps.map(c => {
+        const platform   = c.platform || 'anilist';
+        const displayName = platform === 'mal'
+          ? c.username.replace(/ \[MAL\]$/i, '')  // strip suffix for display
+          : c.username;
+        const platBadge = platform === 'mal'
+          ? `<span style="font-size:0.68rem;background:#2a4a6e;color:#79c0ff;border-radius:4px;padding:1px 5px;margin-left:4px">MAL</span>`
+          : '';
+        const escapedUsername = c.username.replace(/'/g, "\\'");
+        return `
         <div class="saved-comp-card">
           <span style="font-size:1.2rem">${c.emoji}</span>
           <div>
-            <div class="scc-name">${c.username}</div>
+            <div class="scc-name">${displayName}${platBadge}</div>
             <div class="scc-meta">${c.score}% · ${c.label} · ${c.date}</div>
           </div>
-          <button class="btn-small" onclick="document.getElementById('compat-username-input').value='${c.username.replace(/'/g, "\\'")}';runCompatibility()">Re-run</button>
-          <button class="btn-small" onclick="_deleteComparison('${c.username.replace(/'/g, "\\'")}')">×</button>
-        </div>`).join('')}
+          <button class="btn-small" onclick="_rerunComparison('${escapedUsername}','${platform}')">Re-run</button>
+          <button class="btn-small" onclick="_deleteComparison('${escapedUsername}')">×</button>
+        </div>`;
+      }).join('')}
     </div>`;
+}
+
+function _rerunComparison(username, platform) {
+  setSocialPlatform(platform);
+  // Strip the [MAL] suffix before filling the input
+  const cleanName = username.replace(/ \[MAL\]$/i, '');
+  document.getElementById('compat-username-input').value = cleanName;
+  runCompatibility();
 }
 
 function toggleCompatibility() { switchResultsTab('social'); }
@@ -6016,9 +6369,75 @@ function _toggleCompatDetail(id) {
 }
 
 // ─── FRIEND RECS ─────────────────────────────────────────────────────────────
+// Fetch a MAL user's completed/watching/rewatching list via Jikan v4 (paginated)
+async function _fetchMalUserList(username, setProgress) {
+  const entries = [];
+  for (const status of ['completed', 'watching', 'rewatching']) {
+    let page = 1, hasMore = true;
+    while (hasMore) {
+      if (setProgress) setProgress(`⏳ Fetching ${username}'s ${status} list (page ${page})…`);
+      const res = await fetch(
+        `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&page=${page}`
+      );
+      if (res.status === 404) throw new Error(`MAL user "${username}" not found.`);
+      if (!res.ok) break;
+      const json = await res.json();
+      (json.data || []).forEach(e => {
+        if (e.mal_id && !entries.some(x => x.malId === e.mal_id)) {
+          entries.push({
+            malId: e.mal_id,
+            title: e.title || '',
+            score: e.score || 0,
+            cover: e.images?.jpg?.large_image_url || e.images?.jpg?.image_url || '',
+          });
+        }
+      });
+      hasMore = json.pagination?.has_next_page ?? false;
+      page++;
+      if (hasMore) await new Promise(r => setTimeout(r, 600));
+    }
+    await new Promise(r => setTimeout(r, 600)); // between status types
+  }
+  return entries;
+}
+
+// Batch-resolve AniList metadata (genres, title, cover, format) for a list of MAL IDs
+async function _fetchAniListMetaForMalIds(malIds) {
+  if (!malIds.length) return new Map();
+  const metaMap = new Map();
+  const PAGE_SIZE = 50;
+  for (let i = 0; i < malIds.length; i += PAGE_SIZE) {
+    const chunk = malIds.slice(i, i + PAGE_SIZE);
+    const query = `
+      query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(idMal_in: $ids, type: ANIME) {
+            id idMal
+            title { romaji english }
+            coverImage { large medium }
+            genres format averageScore
+          }
+        }
+      }`;
+    try {
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST', headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { ids: chunk } })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        (data?.data?.Page?.media || []).forEach(m => { if (m.idMal) metaMap.set(m.idMal, m); });
+      }
+    } catch { /* skip chunk */ }
+    if (i + PAGE_SIZE < malIds.length) await new Promise(r => setTimeout(r, 400));
+  }
+  return metaMap;
+}
+
 async function runFriendRecs() {
   const username = document.getElementById('friend-recs-input').value.trim();
   if (!username) return;
+  if (_socialPlatform === 'mal') return _runFriendRecsMal(username);
 
   const resultsEl = document.getElementById('friend-recs-results');
   resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ${username}'s list…</p>`;
@@ -6124,6 +6543,88 @@ async function runFriendRecs() {
               </div>
             </a>`;
         }).join('')}
+      </div>`;
+
+  } catch (err) {
+    resultsEl.innerHTML = `<p style="color:#f85149;text-align:center;padding:16px 0">Error: ${err.message}</p>`;
+  }
+}
+
+async function _runFriendRecsMal(username) {
+  const resultsEl = document.getElementById('friend-recs-results');
+  let progressText = '';
+  const setProgress = t => { progressText = t; resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">${t}</p>`; };
+  setProgress(`⏳ Fetching ${username}'s MAL list…`);
+
+  try {
+    const malEntries = await _fetchMalUserList(username, setProgress);
+    if (!malEntries.length) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">No entries found for ${username} on MAL.</p>`;
+      return;
+    }
+
+    const ownMalIds = new Set(animeList.map(a => a.idMal).filter(Boolean));
+    const seenMalIds = new Set();
+    const candidates = malEntries
+      .filter(e => e.score >= 7 && !ownMalIds.has(e.malId))
+      .filter(e => { if (seenMalIds.has(e.malId)) return false; seenMalIds.add(e.malId); return true; });
+
+    if (!candidates.length) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">No unwatched anime found that ${username} rated 7+ on MAL.</p>`;
+      return;
+    }
+
+    // Take top 20 by friend score, enrich with AniList metadata for genre affinity
+    const top20 = [...candidates].sort((a, b) => b.score - a.score).slice(0, 20);
+    setProgress('⏳ Fetching metadata for recommendations…');
+    const metaMap = await _fetchAniListMetaForMalIds(top20.map(e => e.malId));
+
+    // Genre affinity scoring (same logic as AniList path)
+    const genreMap = {};
+    animeList.forEach(a => {
+      (a.genres || []).forEach(g => {
+        if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
+        genreMap[g].sum += a.elo; genreMap[g].count++;
+      });
+    });
+    const genreAvg = {};
+    for (const [g, v] of Object.entries(genreMap)) { if (v.count >= 2) genreAvg[g] = v.sum / v.count; }
+    const globalAvgElo = animeList.reduce((s, a) => s + a.elo, 0) / animeList.length || 1200;
+
+    const scored = top20.map(e => {
+      const meta    = metaMap.get(e.malId);
+      const genres  = meta?.genres || [];
+      const affs    = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
+      const avgGenreElo = affs.length ? affs.reduce((s, v) => s + v, 0) / affs.length : globalAvgElo;
+      const genreBonus  = (avgGenreElo - globalAvgElo) / 400;
+      return {
+        malId:       e.malId,
+        title:       meta?.title?.english || meta?.title?.romaji || e.title,
+        cover:       meta?.coverImage?.large || meta?.coverImage?.medium || e.cover,
+        format:      meta?.format || '',
+        avg:         meta?.averageScore ? (meta.averageScore / 10).toFixed(1) : '–',
+        friendScore: e.score.toFixed(1),
+        totalScore:  (e.score / 10) * 0.6 + genreBonus * 0.4,
+      };
+    });
+    scored.sort((a, b) => b.totalScore - a.totalScore);
+    const topRecs = scored.slice(0, 8);
+
+    resultsEl.innerHTML = `
+      <p style="font-size:0.78rem;color:#6e7681;text-align:center;margin-bottom:14px">
+        ${candidates.length} unwatched titles ${username} rated 7+ on MAL · sorted by match to your taste profile
+      </p>
+      <div class="recs-subgrid">
+        ${topRecs.map(({ malId, title, cover, format, avg, friendScore }) => `
+          <a class="rec-card friend-rec-card" href="https://myanimelist.net/anime/${malId}" target="_blank">
+            <img src="${cover}" alt="" loading="lazy" />
+            <div class="friend-score-badge">${username.slice(0,8)}: ${friendScore}</div>
+            <div class="rec-card-body">
+              <div class="rec-card-title">${title}</div>
+              <div class="rec-card-meta">${format || ''}</div>
+              <span class="rec-score-pill">⭐ ${avg}</span>
+            </div>
+          </a>`).join('')}
       </div>`;
 
   } catch (err) {
@@ -6602,6 +7103,18 @@ function dismissWelcome() {
 // ─── ACHIEVEMENTS ────────────────────────────────────────────────────────────
 let achievements    = {}; // id -> { unlockedAt: ISO string }
 let comparedFriends = new Set(); // AniList usernames we've run compatibility against
+let _socialPlatform = 'anilist'; // 'anilist' | 'mal'
+
+function setSocialPlatform(p) {
+  _socialPlatform = p;
+  document.getElementById('sp-anilist')?.classList.toggle('active', p === 'anilist');
+  document.getElementById('sp-mal')?.classList.toggle('active', p === 'mal');
+  const ph = p === 'mal' ? 'MAL' : 'AniList';
+  const recsInput = document.getElementById('friend-recs-input');
+  const compatInput = document.getElementById('compat-username-input');
+  if (recsInput)  recsInput.placeholder  = `Enter a friend's ${ph} username…`;
+  if (compatInput) compatInput.placeholder = `Enter ${ph} username…`;
+}
 
 const ACHIEVEMENT_DEFS = [
   {
@@ -6914,6 +7427,8 @@ function renderHistoryTab() {
 }
 
 function renderSocialTab() {
+  // Default to MAL platform for MAL users, AniList for AniList users
+  setSocialPlatform(_isMalCloudSession() ? 'mal' : 'anilist');
   _renderSavedComparisons();
 }
 
