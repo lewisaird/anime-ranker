@@ -1722,6 +1722,23 @@
     .login-card-divider::before, .login-card-divider::after {
       content: ''; flex: 1; height: 1px; background: #30363d;
     }
+
+    /* "Having trouble signing in?" disclosure */
+    .login-trouble { width: 100%; margin-top: 4px; }
+    .login-trouble summary {
+      font-size: 0.75rem; color: #58a6ff; cursor: pointer;
+      list-style: none; text-align: center; padding: 4px 0;
+      user-select: none; opacity: 0.75; transition: opacity 0.15s;
+    }
+    .login-trouble summary::-webkit-details-marker { display: none; }
+    .login-trouble summary::after { content: ' ›'; }
+    .login-trouble[open] summary::after { content: ' ‹'; }
+    .login-trouble summary:hover { opacity: 1; }
+    .login-trouble-content {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 8px; padding: 10px; margin-top: 4px; width: 100%;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    }
     @media (max-width: 520px) {
       .login-cards { flex-direction: column; }
     }
@@ -2253,20 +2270,24 @@
           <button class="auth-logout-btn" onclick="clearAuth()">Logout</button>
         </div>
 
-        <!-- Username fallback -->
-        <div id="anilist-wrap" style="display:flex;flex-direction:column;align-items:center;gap:8px;width:100%">
-          <div class="login-card-divider">or use username</div>
-          <div class="input-row" style="margin-top:0;width:100%">
-            <input type="text" id="username-input" placeholder="e.g. Xinil" style="flex:1;width:auto" />
-            <button class="btn-primary" onclick="startLoading()">Go</button>
+        <!-- Seed note shown automatically after OAuth login -->
+        <p class="warm-start-info" id="oauth-seed-note" style="display:none;color:#58a6ff">✓ Scores will seed starting ELO on fresh load</p>
+
+        <!-- Username fallback + warm start hidden in disclosure -->
+        <details class="login-trouble">
+          <summary>Having trouble signing in?</summary>
+          <div class="login-trouble-content">
+            <div class="input-row" style="margin-top:0;width:100%">
+              <input type="text" id="username-input" placeholder="e.g. Xinil" style="flex:1;width:auto" />
+              <button class="btn-primary" onclick="startLoading()">Go</button>
+            </div>
+            <label class="warm-start-row" id="warm-start-row">
+              <input type="checkbox" id="warm-start-chk" />
+              Warm start from scores
+            </label>
+            <p class="warm-start-info" id="warm-start-info">Scores map 10→1500 · 7→1200 · 4→900</p>
           </div>
-          <label class="warm-start-row" id="warm-start-row">
-            <input type="checkbox" id="warm-start-chk" />
-            Warm start from scores
-          </label>
-          <p class="warm-start-info" id="warm-start-info">Scores map 10→1500 · 7→1200 · 4→900</p>
-          <p class="warm-start-info" id="oauth-seed-note" style="display:none;color:#58a6ff">✓ Scores will seed starting ELO on fresh load</p>
-        </div>
+        </details>
       </div>
 
       <!-- MAL card -->
@@ -2284,17 +2305,24 @@
             <button class="auth-logout-btn" onclick="logoutMAL()">Logout</button>
           </div>
 
-          <label class="warm-start-row" id="mal-warm-start-row">
-            <input type="checkbox" id="mal-warm-start-chk" checked />
-            Warm start from scores
-          </label>
-          <p class="warm-start-info" id="mal-warm-start-info">Scores map 10→1500 · 7→1200 · 4→900</p>
+          <!-- Seed note shown automatically after OAuth login -->
           <p class="warm-start-info" id="mal-oauth-seed-note" style="display:none;color:#58a6ff">✓ Scores will seed starting ELO on fresh load</p>
 
-          <p class="mal-instructions" id="mal-xml-fallback" style="margin-top:4px">
-            Having trouble? <label style="cursor:pointer;color:#58a6ff;text-decoration:underline" onclick="document.getElementById('mal-file-input').click()">Upload MAL XML export</label>
-            <input type="file" id="mal-file-input" accept=".xml" onchange="handleMalFile(this.files[0])" style="display:none" />
-          </p>
+          <!-- XML upload + warm start hidden in disclosure -->
+          <details class="login-trouble">
+            <summary>Having trouble signing in?</summary>
+            <div class="login-trouble-content">
+              <p style="font-size:0.78rem;color:#8b949e;margin:0;text-align:center">
+                <label style="cursor:pointer;color:#58a6ff;text-decoration:underline" onclick="document.getElementById('mal-file-input').click()">Upload MAL XML export</label>
+                <input type="file" id="mal-file-input" accept=".xml" onchange="handleMalFile(this.files[0])" style="display:none" />
+              </p>
+              <label class="warm-start-row" id="mal-warm-start-row">
+                <input type="checkbox" id="mal-warm-start-chk" checked />
+                Warm start from scores
+              </label>
+              <p class="warm-start-info" id="mal-warm-start-info">Scores map 10→1500 · 7→1200 · 4→900</p>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -3144,13 +3172,10 @@ function _updateAuthUI() {
   const manageAnilist = document.getElementById('manage-anilist-section');
   if (manageAnilist) manageAnilist.style.display = loggedIn ? '' : 'none';
 
-  // When OAuth-logged-in, hide the manual warm-start checkbox and show the auto-seed note
-  const warmRow  = document.getElementById('warm-start-row');
-  const warmInfo = document.getElementById('warm-start-info');
+  // Show the auto-seed note when OAuth-logged-in (warm-start checkbox is inside the
+  // "Having trouble?" disclosure so it doesn't need explicit hiding)
   const oauthNote = document.getElementById('oauth-seed-note');
-  if (warmRow)   warmRow.style.display   = loggedIn ? 'none' : '';
-  if (warmInfo)  warmInfo.style.display  = loggedIn ? 'none' : '';
-  if (oauthNote) oauthNote.style.display = loggedIn ? ''     : 'none';
+  if (oauthNote) oauthNote.style.display = loggedIn ? '' : 'none';
 
   // Show/hide help sections in the help modal
   const helpAnilist  = document.getElementById('help-anilist-section');
@@ -3389,12 +3414,8 @@ function _updateMALAuthUI() {
   const btn       = document.getElementById('mal-oauth-btn');
   const badge     = document.getElementById('mal-auth-badge');
   const hint      = document.getElementById('mal-new-hint');
-  const warmRow   = document.getElementById('mal-warm-start-row');
-  const warmInfo  = document.getElementById('mal-warm-start-info');
   if (btn)      btn.style.display      = loggedIn ? 'none' : '';
   if (hint)     hint.style.display     = loggedIn ? 'none' : '';
-  if (warmRow)  warmRow.style.display  = loggedIn ? 'none' : '';
-  if (warmInfo) warmInfo.style.display = loggedIn ? 'none' : '';
   if (badge) {
     badge.style.display = loggedIn ? 'flex' : 'none';
     if (loggedIn) {
@@ -3436,11 +3457,10 @@ function _updateMALAuthUI() {
   const cloudBtns = document.getElementById('cloud-sync-btns');
   if (cloudBtns) cloudBtns.style.display = (loggedIn || aniListLoggedIn) ? '' : 'none';
 
-  // Warm-start confirmation note
+  // Show the auto-seed note when OAuth-logged-in (warm-start checkbox is inside the
+  // "Having trouble?" disclosure so it doesn't need explicit hiding)
   const malSeedNote = document.getElementById('mal-oauth-seed-note');
-  const malWarmInfo = document.getElementById('mal-warm-start-info');
   if (malSeedNote) malSeedNote.style.display = loggedIn ? '' : 'none';
-  if (malWarmInfo) malWarmInfo.style.display  = loggedIn ? 'none' : '';
 
   // Help modal sections
   const helpCloud  = document.getElementById('help-anilist-section');
@@ -4815,7 +4835,8 @@ function exportRankings() {
 
   const area = document.getElementById('export-area');
   area.value = text;
-  area.style.display = area.style.display === 'none' ? 'block' : 'none';
+  const isHidden = window.getComputedStyle(area).display === 'none';
+  area.style.display = isHidden ? 'block' : 'none';
 }
 
 function exportCSV() {
