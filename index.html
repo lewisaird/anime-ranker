@@ -1446,7 +1446,7 @@
     .auth-manual-details p { font-size: 0.77rem; color: #8b949e; margin: 6px 0; line-height: 1.5; }
 
     /* ── SYNC TO ANILIST MODAL ───────────────────────────────────────────── */
-    #sync-modal {
+    #sync-modal, #mal-sync-modal {
       display: none;
       position: fixed; inset: 0;
       background: rgba(0,0,0,0.7);
@@ -9437,6 +9437,9 @@ async function executeSyncToMAL() {
           }),
         });
 
+        const resText = await res.text();
+        console.log(`[MAL Sync] ${item.title} → HTTP ${res.status}`, resText);
+
         if (res.status === 401) {
           // Token expired — try refresh once then retry
           if (malRefreshToken && attempt === 1) {
@@ -9454,6 +9457,18 @@ async function executeSyncToMAL() {
           return;
         }
 
+        if (res.status === 403) {
+          // App-level permission issue — write access not granted
+          errors += total - done;
+          barFill.style.width = '100%';
+          progressWrap.style.display = 'none';
+          doneMsg.style.display = '';
+          doneMsg.innerHTML = '❌ MAL denied write access (403). Check the browser console for details.';
+          actionBtns.innerHTML = '<button class="btn-primary" onclick="closeMALSyncModal()">Close</button>';
+          actionBtns.style.display = 'flex';
+          return;
+        }
+
         if (res.status === 429) {
           // Rate limited — back off and retry
           await new Promise(r => setTimeout(r, 10000));
@@ -9461,7 +9476,7 @@ async function executeSyncToMAL() {
         }
 
         if (!res.ok) {
-          console.warn(`[MAL Sync] HTTP ${res.status} for "${item.title}" (malId ${item.malId})`);
+          console.warn(`[MAL Sync] HTTP ${res.status} for "${item.title}" (malId ${item.malId}):`, resText);
           break;
         }
 
@@ -9491,7 +9506,7 @@ async function executeSyncToMAL() {
   if (errors === 0) {
     msg = `✅ Done! Synced all ${done} scores to MyAnimeList.`;
   } else if (succeeded === 0) {
-    msg = `❌ All ${errors} syncs failed — your MAL token may have expired. Try logging out and back in.`;
+    msg = `❌ All ${errors} syncs failed — check the browser console (F12) for the exact error from MAL.`;
   } else {
     msg += `✅ Synced ${succeeded}/${total} scores. `;
     if (errors > 0) {
