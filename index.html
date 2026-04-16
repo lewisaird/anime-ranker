@@ -3741,13 +3741,27 @@ if (loadAuthFromStorage()) {
   if (document.readyState !== 'loading') _updateAuthUI();
 }
 
-// On page load: restore MAL token from localStorage
+// On page load: restore MAL token from localStorage, then auto-resume session
 (async function _restoreMALAuth() {
   const ok = await loadMALAuthFromStorage();
-  if (ok) {
-    const update = () => _updateMALAuthUI();
-    document.addEventListener('DOMContentLoaded', update);
-    if (document.readyState !== 'loading') update();
+  if (!ok) return;
+
+  // Update login UI badges
+  if (document.readyState === 'loading') {
+    await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
+  }
+  _updateMALAuthUI();
+
+  // Auto-resume the MAL session on page reload — mirrors AniList's auto-start behaviour.
+  // Skip if a shared ranking is in the URL (tryLoadSharedView in window.load handles that).
+  // Skip if AniList is also active — it will take the lead via the username input trick.
+  if (location.hash.startsWith('#r=') || authToken) return;
+
+  const doStart = () => _startMALOAuthSession();
+  if (document.readyState === 'complete') {
+    doStart();
+  } else {
+    window.addEventListener('load', doStart, { once: true });
   }
 })();
 
@@ -6281,9 +6295,57 @@ function _toggleCompatDetail(id) {
 }
 
 // ─── FRIEND RECS ─────────────────────────────────────────────────────────────
-// Fetch a MAL user's completed/watching/rewatching list via Jikan v4 (paginated)
+// Fetch a MAL user's completed/watching list.
+// Prefers the official MAL API (via the mal-api proxy) when a token is available —
+// Jikan's user animelist endpoint is unreliable and frequently returns 404/503.
+// Falls back to Jikan only when no MAL token is present.
 async function _fetchMalUserList(username, setProgress) {
   const entries = [];
+
+  if (malAuthToken) {
+    // Use the official MAL API with the logged-in user's token.
+    // The API supports /v2/users/{username}/animelist for any public list.
+    for (const status of ['completed', 'watching']) {
+      let path = `/users/${encodeURIComponent(username)}/animelist?status=${status}`
+               + `&fields=list_status,main_picture&limit=1000`;
+      let page = 1;
+      while (path) {
+        if (setProgress) setProgress(`⏳ Fetching ${username}'s ${status} list (page ${page})…`);
+        const res = await fetch('/.netlify/functions/mal-api', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ path, token: malAuthToken }),
+        });
+        if (res.status === 404) throw new Error(`MAL user "${username}" not found.`);
+        if (res.status === 403) throw new Error(`${username}'s MAL list is set to private.`);
+        if (!res.ok) break;
+        const data = await res.json();
+        (data.data || []).forEach(item => {
+          const node = item.node;
+          if (!node?.id || entries.some(e => e.malId === node.id)) return;
+          entries.push({
+            malId: node.id,
+            title: node.title || '',
+            score: item.list_status?.score || 0,
+            cover: node.main_picture?.large || node.main_picture?.medium || '',
+          });
+        });
+        const nextUrl = data.paging?.next || null;
+        if (nextUrl) {
+          try { path = new URL(nextUrl).pathname + new URL(nextUrl).search; }
+          catch { path = null; }
+        } else {
+          path = null;
+        }
+        page++;
+        if (path) await new Promise(r => setTimeout(r, 250));
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+    return entries;
+  }
+
+  // Fallback: Jikan v4 (no auth token available)
   for (const status of ['completed', 'watching', 'rewatching']) {
     let page = 1, hasMore = true;
     while (hasMore) {
@@ -6308,7 +6370,7 @@ async function _fetchMalUserList(username, setProgress) {
       page++;
       if (hasMore) await new Promise(r => setTimeout(r, 600));
     }
-    await new Promise(r => setTimeout(r, 600)); // between status types
+    await new Promise(r => setTimeout(r, 600));
   }
   return entries;
 }
