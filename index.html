@@ -8340,9 +8340,17 @@ async function executeSyncToAniList() {
       }
     }`;
 
-  // Process one item, with retry on rate-limit
-  async function syncOne(item) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+  // Serial sync: one request at a time, 1500ms between each.
+  // AniList limit is 90 req/min; 1500ms spacing = ~40 req/min.
+  // On ANY error (HTTP 429, GraphQL rate-limit, or other) we retry up to 3×.
+  // GraphQL-level rate limits come back as json.errors, NOT HTTP 429,
+  // so we must retry those too rather than treating them as permanent failures.
+  for (const item of _syncQueue) {
+    progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
+    barFill.style.width = Math.round((done / total) * 100) + '%';
+
+    let itemOk = false;
+    for (let attempt = 1; attempt <= 3 && !itemOk; attempt++) {
       try {
         const res = await fetch('https://graphql.anilist.co', {
           method: 'POST',
@@ -8350,51 +8358,34 @@ async function executeSyncToAniList() {
           body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
         });
         if (res.status === 429) {
-          await new Promise(r => setTimeout(r, 8000));
+          progressText.textContent = `Rate limited — pausing 12s… (${done + 1}/${total})`;
+          await new Promise(r => setTimeout(r, 12000));
           continue;
         }
         const json = await res.json();
-        const isRateLimit = json.errors?.some(e =>
-          /rate.?limit|too many/i.test(e.message || '') || e.status === 429
-        );
-        if (isRateLimit) {
-          await new Promise(r => setTimeout(r, 8000));
-          continue;
-        }
         if (json.errors) {
-          const msg = json.errors[0]?.message || 'unknown error';
-          console.warn(`[Sync] Failed "${item.title}" (id ${item.mediaId}): ${msg}`);
-          return false; // API error, not retriable
+          const msg = json.errors[0]?.message || '';
+          const isRateLimit = /rate.?limit|too many|throttl/i.test(msg) || json.errors[0]?.status === 429;
+          console.warn(`[Sync] attempt ${attempt} "${item.title}" (id ${item.mediaId}): ${msg}`);
+          if (isRateLimit) {
+            progressText.textContent = `Rate limited — pausing 12s… (${done + 1}/${total})`;
+            await new Promise(r => setTimeout(r, 12000));
+          } else {
+            // Other GraphQL error — brief pause then retry in case it's transient
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          continue; // retry
         }
-        return true; // success
+        itemOk = true; // success
       } catch { /* network blip — retry */ }
     }
-    return false; // all attempts failed
-  }
 
-  // Parallel batches: 3 concurrent requests, 2s between batches
-  // = ~90 req/min max, well within AniList's limit, ~3x faster than serial
-  const BATCH_SIZE = 3;
-  const BATCH_DELAY = 2000;
-
-  for (let i = 0; i < total; i += BATCH_SIZE) {
-    const batch = _syncQueue.slice(i, i + BATCH_SIZE);
-    progressText.textContent = `Syncing ${Math.min(i + BATCH_SIZE, total)} / ${total}…`;
-    barFill.style.width = Math.round((i / total) * 100) + '%';
-
-    const results = await Promise.all(batch.map(item => syncOne(item)));
-    results.forEach((ok, idx) => {
-      done++;
-      if (!ok) { errors++; failedTitles.push(batch[idx].title); }
-    });
-
-    // Update progress after batch
-    barFill.style.width = Math.round((done / total) * 100) + '%';
-
-    // Pause between batches (skip delay after the last batch)
-    if (i + BATCH_SIZE < total) {
-      await new Promise(r => setTimeout(r, BATCH_DELAY));
+    if (!itemOk) {
+      errors++;
+      failedTitles.push(item.title);
     }
+    done++;
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   barFill.style.width = '100%';
