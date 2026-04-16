@@ -867,6 +867,19 @@
     .genre-chart-fill.era-fill {
       background: linear-gradient(90deg, #2ea043, #3fb950);
     }
+    .genre-chart-fill.format-fill {
+      background: linear-gradient(90deg, #6e40c9, #a371f7);
+    }
+    .score-dist-row .genre-chart-fill {
+      border-radius: 4px;
+      opacity: 0.85;
+    }
+    .studio-affinity-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) { .studio-affinity-grid { grid-template-columns: 1fr; } }
     .genre-chart-value {
       width: 100px;
       flex-shrink: 0;
@@ -2463,6 +2476,27 @@
             <div id="stat-era-chart"></div>
           </div>
         </div>
+        <!-- Format split + Score distribution -->
+        <div class="stats-breakdown" style="margin-top:24px">
+          <div class="stats-list-section">
+            <h4>📺 Format Split</h4>
+            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Count and average ELO by format</p>
+            <div id="stat-format-chart"></div>
+          </div>
+          <div class="stats-list-section">
+            <h4>📊 Your Score Spread</h4>
+            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">How many anime land at each score level, based on their ELO rank position</p>
+            <div id="stat-score-dist"></div>
+          </div>
+        </div>
+
+        <!-- Studio affinity -->
+        <div class="stats-list-section" style="margin-top:24px;grid-column:1/-1">
+          <h4>🎬 Studio Affinity</h4>
+          <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Studios you consistently rate above or below your average · 3+ anime minimum</p>
+          <div id="stat-studio-affinity"></div>
+        </div>
+
         <div id="disagree-section" style="margin-top:32px">
           <h3>⚖️ Your Taste vs the Community</h3>
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Compares your ELO rank to AniList's global community score — showing where your taste diverges from the crowd.</p>
@@ -3752,7 +3786,7 @@ function saveState() {
     comparedFriends: [...comparedFriends],
     matchupStats,
   }));
-  schedulCloudSave();
+  scheduleCloudSave();
 }
 
 // ─── CLOUD SYNC ──────────────────────────────────────────────────────────────
@@ -3781,7 +3815,7 @@ function _activeCloudToken() { return authToken || malAuthToken || null; }
 function _activeCloudUser()  { return authUser  || malAuthUser  || null; }
 function _isMalCloudSession() { return !authToken && !!malAuthToken; }
 
-function schedulCloudSave() {
+function scheduleCloudSave() {
   if (_suppressCloudSave || !_cloudSyncEnabled || !_activeCloudUser()) return;
   clearTimeout(_cloudSaveTimer);
   _setSyncIndicator('saving');
@@ -4251,7 +4285,7 @@ async function _migrateMalIds() {
 
     if (migrated > 0) {
       saveState();
-      schedulCloudSave();
+      scheduleCloudSave();
       // Re-render current pair so links immediately show MAL
       if (currentA !== null && currentB !== null) renderCurrentPair();
     }
@@ -4971,7 +5005,7 @@ async function startMALLoading() {
       if (!res.ok) throw new Error('Jikan API error (HTTP ' + res.status + '). Try the XML export fallback.');
       const json = await res.json();
       (json.data || []).forEach(e => {
-        if (!WATCHED.has(e.watching_status === 2 ? 'Completed' : e.status || 'Completed')) return;
+        if (!WATCHED.has(e.status)) return; // Jikan v4: e.status is a string e.g. "Completed"
         if (e.mal_id) entries.push({ malId: e.mal_id, score: e.score || 0, title: e.title || '' });
       });
       hasMore = json.pagination?.has_next_page ?? false;
@@ -4979,20 +5013,26 @@ async function startMALLoading() {
       if (hasMore) await new Promise(r => setTimeout(r, 1000)); // Jikan rate limit
     }
 
-    // Also fetch watching/rewatching lists
+    // Also fetch watching/rewatching lists (paginated)
     for (const status of ['watching', 'rewatching']) {
-      const url2 = `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&page=1`;
-      try {
-        await new Promise(r => setTimeout(r, 600));
-        const r2 = await fetch(url2);
-        if (r2.ok) {
+      let wPage = 1;
+      let wMore = true;
+      while (wMore) {
+        try {
+          await new Promise(r => setTimeout(r, 600)); // Jikan rate limit
+          document.getElementById('loading-msg').textContent =
+            `Fetching ${status} list for ${username}… (page ${wPage})`;
+          const r2 = await fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&page=${wPage}`);
+          if (!r2.ok) break;
           const j2 = await r2.json();
           (j2.data || []).forEach(e => {
             if (e.mal_id && !entries.some(x => x.malId === e.mal_id))
               entries.push({ malId: e.mal_id, score: e.score || 0, title: e.title || '' });
           });
-        }
-      } catch { /* skip */ }
+          wMore = j2.pagination?.has_next_page ?? false;
+          wPage++;
+        } catch { break; }
+      }
     }
 
     if (entries.length === 0) throw new Error('No completed anime found for this user.');
@@ -7122,7 +7162,9 @@ function renderStatsTab() {
       ).join('')
     : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No upsets recorded yet.</div>';
 
-  renderGenreStats();
+  renderFormatSplit();
+  renderScoreDistribution();
+  renderGenreStats();       // async — enriches genres/studios if needed, then calls renderStudioAffinity
   renderDisagreements();
 }
 
@@ -7203,6 +7245,108 @@ async function renderGenreStats() {
       </div>`;
     }).join('');
   }
+
+  // Studio affinity runs after enrichment (which now also fetches studios)
+  renderStudioAffinity();
+}
+
+function renderFormatSplit() {
+  const el = document.getElementById('stat-format-chart');
+  if (!el) return;
+  const fmtLabels = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' };
+  const fmtMap = {};
+  animeList.forEach(a => {
+    const fmt = a.format || 'Unknown';
+    if (!fmtMap[fmt]) fmtMap[fmt] = { sum: 0, count: 0 };
+    fmtMap[fmt].sum += a.elo;
+    fmtMap[fmt].count++;
+  });
+  const formats = Object.entries(fmtMap)
+    .map(([fmt, v]) => ({ fmt, label: fmtLabels[fmt] || fmt, avg: Math.round(v.sum / v.count), count: v.count }))
+    .sort((a, b) => b.count - a.count);
+  if (!formats.length) { el.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No data yet.</div>'; return; }
+  const maxCount = Math.max(...formats.map(f => f.count));
+  el.innerHTML = formats.map(f => {
+    const pct = Math.round((f.count / maxCount) * 100);
+    return `<div class="genre-chart-row">
+      <div class="genre-chart-label">${f.label}</div>
+      <div class="genre-chart-track"><div class="genre-chart-fill format-fill" style="width:${pct}%"></div></div>
+      <div class="genre-chart-value">${f.count} <span style="color:#6e7681">avg ${f.avg}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderScoreDistribution() {
+  const el = document.getElementById('stat-score-dist');
+  if (!el) return;
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const total = sorted.length;
+  if (!total) { el.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No data yet.</div>'; return; }
+  // Use the same percentile buckets as _eloToScore10
+  const buckets = { 10:0, 9:0, 8:0, 7:0, 6:0, 5:0, 4:0, 3:0 };
+  sorted.forEach((_, i) => { buckets[_eloToScore10(i, total)]++; });
+  const maxCount = Math.max(...Object.values(buckets));
+  const scoreColors = { 10:'#3fb950', 9:'#56d364', 8:'#7ee787', 7:'#a5d6ff', 6:'#79c0ff', 5:'#d29922', 4:'#f0883e', 3:'#f85149' };
+  el.innerHTML = [10,9,8,7,6,5,4,3].map(score => {
+    const count = buckets[score];
+    const pct   = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
+    const c     = scoreColors[score];
+    return `<div class="genre-chart-row score-dist-row">
+      <div class="genre-chart-label" style="color:${c};font-weight:600">${score}/10</div>
+      <div class="genre-chart-track"><div class="genre-chart-fill" style="width:${pct}%;background:${c}55;outline:1px solid ${c}44"></div></div>
+      <div class="genre-chart-value">${count}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderStudioAffinity() {
+  const el = document.getElementById('stat-studio-affinity');
+  if (!el) return;
+  const hasStudios = animeList.some(a => Array.isArray(a.studios) && a.studios.length > 0);
+  if (!hasStudios) {
+    el.innerHTML = `<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Studio data not loaded yet —
+      <a href="#" style="color:#58a6ff" onclick="event.preventDefault();_enrichGenresAndEras().then(renderStatsTab)">fetch it now →</a></div>`;
+    return;
+  }
+  const overallAvg = Math.round(animeList.reduce((s, a) => s + a.elo, 0) / animeList.length);
+  const studioMap = {};
+  animeList.forEach(a => {
+    (a.studios || []).forEach(s => {
+      if (!studioMap[s]) studioMap[s] = { sum: 0, count: 0 };
+      studioMap[s].sum += a.elo;
+      studioMap[s].count++;
+    });
+  });
+  const studios = Object.entries(studioMap)
+    .filter(([, v]) => v.count >= 3)
+    .map(([name, v]) => ({ name, avg: Math.round(v.sum / v.count), count: v.count, diff: Math.round(v.sum / v.count) - overallAvg }))
+    .sort((a, b) => b.diff - a.diff);
+  if (!studios.length) {
+    el.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Not enough data yet — need 3+ ranked anime per studio.</div>';
+    return;
+  }
+  const top    = studios.slice(0, 6);
+  const bottom = [...studios].reverse().slice(0, 6);
+  const renderList = (list, positive) => list.map(s => {
+    const sign  = s.diff >= 0 ? '+' : '';
+    const color = positive ? '#3fb950' : '#f85149';
+    return `<div class="stat-anime-row">
+      <span>${s.name} <span style="color:#6e7681;font-size:0.8em">(${s.count})</span></span>
+      <span style="color:${color};font-weight:600">${sign}${s.diff}</span>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="studio-affinity-grid">
+      <div>
+        <div style="font-size:0.82rem;color:#3fb950;margin-bottom:8px;font-weight:600">🟢 You rate highest</div>
+        ${renderList(top, true)}
+      </div>
+      <div>
+        <div style="font-size:0.82rem;color:#f85149;margin-bottom:8px;font-weight:600">🔴 You rate lowest</div>
+        ${renderList(bottom, false)}
+      </div>
+    </div>
+    <p style="color:#6e7681;font-size:0.75rem;margin-top:10px">ELO difference from your overall average (${overallAvg})</p>`;
 }
 
 // Silently fetch genres + seasonYear for existing anime that predate those fields
@@ -7218,6 +7362,7 @@ async function _enrichGenresAndEras() {
             id
             genres
             seasonYear
+            studios(isMain: true) { nodes { name } }
           }
         }
       }`;
@@ -7235,6 +7380,7 @@ async function _enrichGenresAndEras() {
       if (m) {
         if (!Array.isArray(a.genres)) a.genres = m.genres || [];
         if (!a.seasonYear)            a.seasonYear = m.seasonYear || null;
+        if (!Array.isArray(a.studios)) a.studios = (m.studios?.nodes || []).map(n => n.name).filter(Boolean);
       }
     });
     if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 350));
@@ -8365,7 +8511,8 @@ async function executeSyncToAniList() {
 
   const total = queue.length;
   let done = 0, errors = 0;
-  const failedTitles = [];
+  const failedItems = []; // full queue items that failed, for retry
+  const failedTitles = []; // just titles, for display
 
   const mutation = `
     mutation ($mediaId: Int!, $score: Float!) {
@@ -8456,6 +8603,7 @@ async function executeSyncToAniList() {
 
     if (!itemOk) {
       errors++;
+      failedItems.push(item);
       failedTitles.push(item.title);
     }
     done++;
@@ -8491,9 +8639,25 @@ async function executeSyncToAniList() {
   }
   doneMsg.innerHTML = msg;
 
-  // Replace Cancel with a Close button
-  actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
-  actionBtns.style.display = 'flex';
+  // Replace Cancel with Close (+ Retry if there were failures)
+  if (errors > 0) {
+    actionBtns.innerHTML =
+      `<button class="btn-secondary" onclick="closeSyncModal()">Close</button>` +
+      `<button class="btn-primary" id="sync-retry-btn">🔄 Retry ${errors} failed</button>`;
+    actionBtns.style.display = 'flex';
+    document.getElementById('sync-retry-btn').addEventListener('click', () => {
+      _syncQueue = failedItems;
+      // Reset UI for another run
+      actionBtns.style.display = 'none';
+      doneMsg.style.display = 'none';
+      doneMsg.textContent = '';
+      progressWrap.style.display = '';
+      executeSyncToAniList();
+    });
+  } else {
+    actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
+    actionBtns.style.display = 'flex';
+  }
 }
 
 // ─── RESEED FROM ANILIST SCORES ───────────────────────────────────────────────
@@ -8598,7 +8762,7 @@ async function reseedFromMAL() {
     });
 
     saveState();
-    schedulCloudSave();
+    scheduleCloudSave();
     renderRankingList();
     filterRankings();
     showToast(`✓ Re-seeded ${updated} anime from MAL scores.`);
