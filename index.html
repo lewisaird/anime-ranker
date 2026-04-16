@@ -1715,14 +1715,6 @@
     .login-card .btn-anilist-login,
     .login-card .btn-mal-login { width: 100%; }
     .login-card .auth-logged-in-row { width: 100%; }
-    .login-card-divider {
-      display: flex; align-items: center; gap: 8px;
-      color: #6e7681; font-size: 0.75rem; width: 100%;
-    }
-    .login-card-divider::before, .login-card-divider::after {
-      content: ''; flex: 1; height: 1px; background: #30363d;
-    }
-
     /* "Having trouble signing in?" disclosure */
     .login-trouble { width: 100%; margin-top: 4px; }
     .login-trouble summary {
@@ -1765,15 +1757,6 @@
     }
     .mal-drop-zone:hover, .mal-drop-zone.drag-over { border-color: #58a6ff; color: #58a6ff; background: #1c2940; }
     .mal-drop-zone input[type="file"] { display: none; }
-    .mal-instructions {
-      font-size: 0.76rem;
-      color: #6e7681;
-      text-align: center;
-      line-height: 1.5;
-    }
-    .mal-instructions a { color: #58a6ff; text-decoration: none; }
-    .mal-instructions a:hover { text-decoration: underline; }
-
     /* DISCOVER SUB-TABS (For You / This Season / Predict) */
     #tab-panel-discover .source-tabs {
       display: flex;
@@ -3668,7 +3651,7 @@ async function _startMALOAuthSession() {
       await new Promise(r => setTimeout(r, 500));
       hide('loading-screen');
       show('battle-screen');
-      document.getElementById('change-user-btn').style.display = 'block';
+      _showChangeUserBtn();
       snapshotSessionStart();
       maybeShowKbTip();
       if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
@@ -3683,7 +3666,7 @@ async function _startMALOAuthSession() {
     await new Promise(r => setTimeout(r, 600));
     hide('loading-screen');
     show('battle-screen');
-    document.getElementById('change-user-btn').style.display = 'block';
+    _showChangeUserBtn();
     snapshotSessionStart();
     maybeShowKbTip();
     if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
@@ -4081,7 +4064,7 @@ async function manualCloudPull() {
     if (!onBattle && !onResults) {
       hide('username-screen');
       show('battle-screen');
-      document.getElementById('change-user-btn').style.display = 'block';
+      _showChangeUserBtn();
       if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
     } else if (onBattle) {
       syncFormatButtons(); syncEpRangeButtons();
@@ -5161,6 +5144,13 @@ function resetAll() {
   );
 }
 
+// Only show the Change User button when the user is NOT signed in via OAuth.
+// OAuth users switch accounts by pressing Logout instead.
+function _showChangeUserBtn() {
+  if (authToken || malAuthToken) return; // OAuth session active — hide it
+  _showChangeUserBtn();
+}
+
 function changeUser() {
   if (battleCount > 0) {
     _showConfirm(
@@ -5192,125 +5182,6 @@ function setSource(src) {
 }
 
 // ─── MAL IMPORT (Jikan API + XML fallback) ───────────────────────────────────
-async function startMALLoading() {
-  const username = document.getElementById('mal-username-input').value.trim();
-  if (!username) return;
-  const seedFromScores = document.getElementById('mal-warm-start-chk').checked;
-  const errEl = document.getElementById('error-msg');
-  errEl.style.display = 'none';
-
-  const existingSaveKey = 'anime_elo_mal_' + username.toLowerCase();
-
-  if (seedFromScores && localStorage.getItem(existingSaveKey)) {
-    const ok = await _confirmAsync(
-      '🔥 Warm start?',
-      `You have a saved session for ${username}. Warm start will re-seed all ELO scores from your MAL ratings and reset battle progress.\n\nCancel to restore your saved session instead.`,
-      'Yes, warm start'
-    );
-    if (!ok) {
-      hide('username-screen');
-      errEl.style.display = 'none';
-      showFlex('loading-screen');
-      loadState(username, 'mal');
-      document.getElementById('loading-msg').textContent = 'Restoring your saved session…';
-      await new Promise(r => setTimeout(r, 600));
-      hide('loading-screen');
-      show('battle-screen');
-      document.getElementById('change-user-btn').style.display = 'block';
-      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
-      return;
-    }
-    localStorage.removeItem(existingSaveKey);
-  }
-
-  if (!seedFromScores && loadState(username, 'mal')) {
-    hide('username-screen');
-    errEl.style.display = 'none';
-    showFlex('loading-screen');
-    document.getElementById('loading-msg').textContent = 'Restoring your saved MAL session…';
-    await new Promise(r => setTimeout(r, 600));
-    hide('loading-screen');
-    show('battle-screen');
-    document.getElementById('change-user-btn').style.display = 'block';
-    snapshotSessionStart();
-    maybeShowKbTip();
-    if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
-    return;
-  }
-
-  hide('username-screen');
-  errEl.style.display = 'none';
-  showFlex('loading-screen');
-
-  try {
-    // Fetch all pages from Jikan v4
-    const WATCHED = new Set(['Completed', 'Watching', 'Rewatching']);
-    const entries = [];
-    let page = 1;
-    let hasMore = true;
-
-    while (hasMore) {
-      document.getElementById('loading-msg').textContent =
-        `Fetching MAL list for ${username}… (page ${page})`;
-      const url = `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=completed&page=${page}`;
-      const res = await fetch(url);
-      if (res.status === 404) throw new Error('MAL user "' + username + '" not found.');
-      if (!res.ok) throw new Error('Jikan API error (HTTP ' + res.status + '). Try the XML export fallback.');
-      const json = await res.json();
-      (json.data || []).forEach(e => {
-        if (!WATCHED.has(e.status)) return; // Jikan v4: e.status is a string e.g. "Completed"
-        if (e.mal_id) entries.push({ malId: e.mal_id, score: e.score || 0, title: e.title || '' });
-      });
-      hasMore = json.pagination?.has_next_page ?? false;
-      page++;
-      if (hasMore) await new Promise(r => setTimeout(r, 1000)); // Jikan rate limit
-    }
-
-    // Also fetch watching/rewatching lists (paginated)
-    for (const status of ['watching', 'rewatching']) {
-      let wPage = 1;
-      let wMore = true;
-      while (wMore) {
-        try {
-          await new Promise(r => setTimeout(r, 600)); // Jikan rate limit
-          document.getElementById('loading-msg').textContent =
-            `Fetching ${status} list for ${username}… (page ${wPage})`;
-          const r2 = await fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&page=${wPage}`);
-          if (!r2.ok) break;
-          const j2 = await r2.json();
-          (j2.data || []).forEach(e => {
-            if (e.mal_id && !entries.some(x => x.malId === e.mal_id))
-              entries.push({ malId: e.mal_id, score: e.score || 0, title: e.title || '' });
-          });
-          wMore = j2.pagination?.has_next_page ?? false;
-          wPage++;
-        } catch { break; }
-      }
-    }
-
-    if (entries.length === 0) throw new Error('No completed anime found for this user.');
-    await _buildAnimeListFromMalEntries(entries, username, seedFromScores, existingSaveKey);
-
-  } catch (err) {
-    hide('loading-screen');
-    showFlex('username-screen');
-    let msg = err.message || '';
-    if (!navigator.onLine) {
-      msg = '⚠️ No internet connection — check your network and try again.';
-    } else if (msg.includes('No completed anime')) {
-      msg = '📭 No completed anime found. Make sure your MAL list is public and has entries with "Completed" status.';
-    } else if (msg.includes('404') || msg.includes('not found') || msg.includes('Invalid username')) {
-      msg = '🔍 MAL username not found — double-check the spelling and try again.';
-    } else if (msg.includes('429') || msg.includes('rate limit')) {
-      msg = '⏳ MAL / Jikan is rate-limiting requests right now. Wait a minute and try again.';
-    } else if (!msg) {
-      msg = 'Could not load MAL list — check the username and your connection, then try again.';
-    }
-    errEl.textContent = msg;
-    errEl.style.display = 'block';
-  }
-}
-
 async function handleMalFile(file) {
   if (!file) return;
   const errEl = document.getElementById('error-msg');
@@ -5425,7 +5296,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
   saveState();
   hide('loading-screen');
   show('battle-screen');
-  document.getElementById('change-user-btn').style.display = 'block';
+  _showChangeUserBtn();
   renderBattle();
 }
 
@@ -6705,7 +6576,7 @@ async function startLoading() {
       await new Promise(r => setTimeout(r, 600));
       hide('loading-screen');
       show('battle-screen');
-      document.getElementById('change-user-btn').style.display = 'block';
+      _showChangeUserBtn();
       if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
       return;
     }
@@ -6728,7 +6599,7 @@ async function startLoading() {
       await new Promise(r => setTimeout(r, 500));
       hide('loading-screen');
       show('battle-screen');
-      document.getElementById('change-user-btn').style.display = 'block';
+      _showChangeUserBtn();
       snapshotSessionStart();
       maybeShowKbTip();
       syncFormatButtons(); syncEpRangeButtons();
@@ -6743,7 +6614,7 @@ async function startLoading() {
     await new Promise(r => setTimeout(r, 600));
     hide('loading-screen');
     show('battle-screen');
-    document.getElementById('change-user-btn').style.display = 'block';
+    _showChangeUserBtn();
     snapshotSessionStart();
     maybeShowKbTip();
     if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
@@ -6785,7 +6656,7 @@ async function startLoading() {
 
     hide('loading-screen');
     show('battle-screen');
-    document.getElementById('change-user-btn').style.display = 'block';
+    _showChangeUserBtn();
     snapshotSessionStart();
     maybeShowKbTip();
     renderBattle();
@@ -6880,7 +6751,7 @@ async function startGuestMode() {
       await new Promise(r => setTimeout(r, 600));
       hide('loading-screen');
       show('battle-screen');
-      document.getElementById('change-user-btn').style.display = 'block';
+      _showChangeUserBtn();
       if (currentA !== null && currentB !== null) renderCurrentPair();
       else renderBattle();
       return;
@@ -6893,7 +6764,7 @@ async function startGuestMode() {
     await new Promise(r => setTimeout(r, 600));
     hide('loading-screen');
     show('battle-screen');
-    document.getElementById('change-user-btn').style.display = 'block';
+    _showChangeUserBtn();
     renderBattle();
   } catch (err) {
     hide('loading-screen');
