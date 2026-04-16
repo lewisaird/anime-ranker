@@ -1342,6 +1342,19 @@
     #auth-error-msg { color: #f85149; font-size: 0.78rem; margin-top: 6px; display: none; }
 
     /* header auth badge */
+    #mal-header-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: #1c2333;
+      border: 1px solid #30363d;
+      border-radius: 20px;
+      padding: 4px 10px 4px 6px;
+    }
+    #mal-header-badge img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+    #mal-header-badge .auth-hdr-name { color: #c9d1d9; font-weight: 500; }
+    #mal-header-badge .auth-hdr-logout { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 0.7rem; padding: 2px 5px; border-radius: 4px; }
+    #mal-header-badge .auth-hdr-logout:hover { color: #f85149; }
     #auth-header-badge {
       display: none;
       align-items: center;
@@ -2064,13 +2077,18 @@
       <span class="auth-hdr-name" id="auth-hdr-name"></span>
       <button class="auth-hdr-logout" onclick="clearAuth()">Logout</button>
     </div>
+    <div id="mal-header-badge">
+      <img id="mal-hdr-avatar" src="" alt="" />
+      <span class="auth-hdr-name" id="mal-hdr-name"></span>
+      <button class="auth-hdr-logout" onclick="logoutMAL()">Logout</button>
+    </div>
     <button id="lang-toggle-btn" onclick="toggleLanguage()" title="Switch between English and Romaji titles">🇬🇧 English</button>
     <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄ Change User</button>
   </div>
 </header>
 
 <div id="new-anime-banner">
-  <span id="new-anime-msg">🆕 New anime found on your AniList</span>
+  <span id="new-anime-msg">🆕 New anime found on your list</span>
   <div style="display:flex;gap:6px">
     <button onclick="addPendingNewAnime()" style="background:none;border:1px solid #388bfd;color:#58a6ff;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Add to ranking</button>
     <button onclick="dismissNewAnimeBanner()" style="background:none;border:none;color:#58a6ff;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:0.78rem">✕</button>
@@ -2160,6 +2178,7 @@
         Warm start — seed ELO from my MAL scores
       </label>
       <p class="warm-start-info" id="mal-warm-start-info">Only applies when starting fresh. Scores map 10→1500 · 7→1200 · 4→900.</p>
+      <p class="warm-start-info" id="mal-oauth-seed-note" style="display:none;color:#58a6ff">✓ Your MAL scores will be used as starting ELO values on a fresh load.</p>
 
       <!-- XML fallback -->
       <p class="mal-instructions" id="mal-xml-fallback">
@@ -2531,6 +2550,13 @@
           <p id="refresh-metadata-msg" style="font-size:0.8rem;margin-top:4px;display:none"></p>
         </div>
 
+        <div class="manage-section" id="manage-mal-section" style="display:none">
+          <div class="manage-section-title">MyAnimeList</div>
+          <button id="reseed-mal-btn" class="manage-btn" onclick="reseedFromMAL()">🌱 Re-seed ELO from MAL scores</button>
+          <button id="refresh-metadata-mal-btn" class="manage-btn" onclick="refreshMetadata()">🖼 Refresh covers &amp; metadata</button>
+          <p id="refresh-metadata-mal-msg" style="font-size:0.8rem;margin-top:4px;display:none"></p>
+        </div>
+
         <div class="manage-section">
           <div class="manage-section-title" style="color:#f85149">Danger Zone</div>
           <div class="manage-danger-box">
@@ -2642,7 +2668,7 @@
 
         <div class="help-section" id="help-anilist-section" style="display:none">
           <h4>☁️ Cloud Sync</h4>
-          <p>When logged in with AniList, your rankings automatically save to the cloud after each battle (with a short delay). Opening the app on another device will prompt you to load the cloud save if it's newer than your local one. You can also push or pull manually any time from <strong>Manage → Backup, Sync &amp; Export</strong>.</p>
+          <p>When logged in with AniList or MAL, your rankings automatically save to the cloud after each battle (with a short delay). Opening the app on another device will prompt you to load the cloud save if it's newer than your local one. You can also push or pull manually any time from <strong>Manage → Backup, Sync &amp; Export</strong>.</p>
         </div>
 
         <div class="help-section" id="help-anilist-section-2" style="display:none">
@@ -2650,6 +2676,14 @@
           <p><strong>On first load</strong> — your AniList scores seed starting ELO values (10→1500 · 7→1200 · 4→900), so rankings begin close to where you already know they should be.</p>
           <p style="margin-top:6px"><strong>Sync to AniList</strong> (Manage tab) — push your ELO rankings back to AniList as updated scores. You'll see a preview of every change before confirming.</p>
           <p style="margin-top:6px"><strong>Re-seed from AniList</strong> (Manage tab) — re-pull your current AniList scores and replace ELO values with fresh starting points, without erasing battle history.</p>
+        </div>
+
+        <div class="help-section" id="help-mal-section" style="display:none">
+          <h4>📋 MAL Integration</h4>
+          <p><strong>On first load</strong> — your MAL scores seed starting ELO values (10→1500 · 7→1200 · 4→900), giving your rankings a head start based on what you already know.</p>
+          <p style="margin-top:6px"><strong>Re-seed from MAL</strong> (Manage tab) — re-pull your current MAL scores and replace ELO values with fresh starting points, without erasing battle history.</p>
+          <p style="margin-top:6px"><strong>Discover &amp; Stats</strong> — fully supported. Recommendations are powered by AniList's public database, which is also where cover art and metadata come from.</p>
+          <p style="margin-top:6px"><strong>Social features</strong> (taste comparison &amp; friend recs) use AniList usernames — enter any friend's AniList handle to compare.</p>
         </div>
 
       </div>
@@ -2958,28 +2992,31 @@ function _updateAuthUI() {
   if (warmInfo)  warmInfo.style.display  = loggedIn ? 'none' : '';
   if (oauthNote) oauthNote.style.display = loggedIn ? ''     : 'none';
 
-  // Show/hide the AniList help sections in the help modal
+  // Show/hide help sections in the help modal
   const helpAnilist  = document.getElementById('help-anilist-section');
   const helpAnilist2 = document.getElementById('help-anilist-section-2');
-  if (helpAnilist)  helpAnilist.style.display  = loggedIn ? '' : 'none';
+  const malLoggedInNow = !!(malAuthToken && malAuthUser);
+  // Cloud sync help shows for either login; AniList-specific section only for AniList
+  if (helpAnilist)  helpAnilist.style.display  = (loggedIn || malLoggedInNow) ? '' : 'none';
   if (helpAnilist2) helpAnilist2.style.display = loggedIn ? '' : 'none';
 
-  // Start new-anime polling when logged in; stop when logged out
+  // Start new-anime polling when logged in; stop only if neither AniList nor MAL is active
   if (loggedIn && animeList.length) {
     _startNewAnimePolling();
-  } else if (!loggedIn && _newAnimePollingTimer) {
+  } else if (!loggedIn && _newAnimePollingTimer && !malLoggedInNow) {
     clearInterval(_newAnimePollingTimer);
     _newAnimePollingTimer = null;
     document.getElementById('new-anime-banner')?.classList.remove('active');
   }
 
-  // Enable/disable cloud sync
-  _cloudSyncEnabled = loggedIn;
-  if (!loggedIn) _setSyncIndicator('hidden');
+  // Enable/disable cloud sync — also consider MAL auth
+  const malLoggedIn = !!(malAuthToken && malAuthUser);
+  _cloudSyncEnabled = loggedIn || malLoggedIn;
+  if (!_cloudSyncEnabled) _setSyncIndicator('hidden');
 
-  // Show cloud push/pull buttons only when AniList-authenticated
+  // Show cloud push/pull buttons when any auth is active
   const cloudBtns = document.getElementById('cloud-sync-btns');
-  if (cloudBtns) cloudBtns.style.display = loggedIn ? '' : 'none';
+  if (cloudBtns) cloudBtns.style.display = (loggedIn || malLoggedIn) ? '' : 'none';
 }
 
 const ANILIST_CLIENT_ID = '37947';
@@ -3184,6 +3221,55 @@ function _updateMALAuthUI() {
       }
     }
   }
+
+  // Header badge
+  const hdrBadge = document.getElementById('mal-header-badge');
+  if (hdrBadge) {
+    hdrBadge.style.display = loggedIn ? 'flex' : 'none';
+    if (loggedIn) {
+      const hdrAvatar = document.getElementById('mal-hdr-avatar');
+      const hdrName   = document.getElementById('mal-hdr-name');
+      if (hdrAvatar) {
+        hdrAvatar.src = malAuthUser.picture || '';
+        hdrAvatar.style.display = malAuthUser.picture ? '' : 'none';
+      }
+      if (hdrName) hdrName.textContent = malAuthUser.name;
+    }
+  }
+
+  // Show/hide MAL manage section
+  const manageMal = document.getElementById('manage-mal-section');
+  if (manageMal) manageMal.style.display = loggedIn ? '' : 'none';
+
+  // Enable cloud sync when MAL is logged in (or AniList already is)
+  const aniListLoggedIn = !!(authToken && authUser);
+  _cloudSyncEnabled = loggedIn || aniListLoggedIn;
+  if (!_cloudSyncEnabled) _setSyncIndicator('hidden');
+
+  // Show cloud push/pull buttons when any auth is active
+  const cloudBtns = document.getElementById('cloud-sync-btns');
+  if (cloudBtns) cloudBtns.style.display = (loggedIn || aniListLoggedIn) ? '' : 'none';
+
+  // Warm-start confirmation note
+  const malSeedNote = document.getElementById('mal-oauth-seed-note');
+  const malWarmInfo = document.getElementById('mal-warm-start-info');
+  if (malSeedNote) malSeedNote.style.display = loggedIn ? '' : 'none';
+  if (malWarmInfo) malWarmInfo.style.display  = loggedIn ? 'none' : '';
+
+  // Help modal sections
+  const helpCloud  = document.getElementById('help-anilist-section');
+  const helpMal    = document.getElementById('help-mal-section');
+  if (helpCloud) helpCloud.style.display = (loggedIn || aniListLoggedIn) ? '' : 'none';
+  if (helpMal)   helpMal.style.display   = loggedIn ? '' : 'none';
+
+  // New-anime polling — start for MAL, stop if neither service is active
+  if (loggedIn && animeList.length) {
+    _startNewAnimePolling();
+  } else if (!loggedIn && _newAnimePollingTimer && !aniListLoggedIn) {
+    clearInterval(_newAnimePollingTimer);
+    _newAnimePollingTimer = null;
+    document.getElementById('new-anime-banner')?.classList.remove('active');
+  }
 }
 
 let _malOAuthPopup     = null;
@@ -3355,14 +3441,32 @@ async function _fetchMALAnimeListViaAPI() {
 
 // Start a full MAL OAuth session: fetch list → build anime list → start battles
 async function _startMALOAuthSession() {
-  const username      = malAuthUser.name;
+  const username       = malAuthUser.name;
   const seedFromScores = document.getElementById('mal-warm-start-chk')?.checked ?? true;
   const existingSaveKey = 'anime_elo_mal_' + username.toLowerCase();
 
-  // Restore existing save (when not doing a warm-start reset)
+  hide('username-screen');
+  showFlex('loading-screen');
+
+  // Check for a cloud save newer than what's stored locally
+  if (_cloudSyncEnabled) {
+    document.getElementById('loading-msg').textContent = '☁️ Checking for cloud save…';
+    const applied = await checkAndApplyCloudSave(existingSaveKey);
+    if (applied) {
+      document.getElementById('loading-msg').textContent = '☁️ Cloud save loaded!';
+      await new Promise(r => setTimeout(r, 500));
+      hide('loading-screen');
+      show('battle-screen');
+      document.getElementById('change-user-btn').style.display = 'block';
+      snapshotSessionStart();
+      maybeShowKbTip();
+      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      return;
+    }
+  }
+
+  // Restore existing local save (when not doing a warm-start reset)
   if (!seedFromScores && loadState(username, 'mal')) {
-    hide('username-screen');
-    showFlex('loading-screen');
     document.getElementById('loading-msg').textContent = 'Restoring your saved MAL session…';
     await new Promise(r => setTimeout(r, 600));
     hide('loading-screen');
@@ -3373,9 +3477,6 @@ async function _startMALOAuthSession() {
     if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
     return;
   }
-
-  hide('username-screen');
-  showFlex('loading-screen');
 
   try {
     const entries = await _fetchMALAnimeListViaAPI();
@@ -3566,7 +3667,7 @@ function saveState() {
 // The Netlify Function verifies the AniList token server-side.
 
 let _cloudSaveTimer    = null;  // debounce handle
-let _cloudSyncEnabled  = false; // only when AniList-authenticated
+let _cloudSyncEnabled  = false; // true when AniList or MAL authenticated
 let _suppressCloudSave = false; // true while applying a cloud save to avoid an immediate re-save
 
 function _setSyncIndicator(state) {
@@ -3582,15 +3683,20 @@ function _setSyncIndicator(state) {
 
 // Call this after saveState() for anything battle-related.
 // Debounced — fires 5 s after the last change to avoid hammering the function.
+// Returns whichever auth token is active (AniList takes priority)
+function _activeCloudToken() { return authToken || malAuthToken || null; }
+function _activeCloudUser()  { return authUser  || malAuthUser  || null; }
+function _isMalCloudSession() { return !authToken && !!malAuthToken; }
+
 function schedulCloudSave() {
-  if (_suppressCloudSave || !_cloudSyncEnabled || !authToken || !authUser) return;
+  if (_suppressCloudSave || !_cloudSyncEnabled || !_activeCloudUser()) return;
   clearTimeout(_cloudSaveTimer);
   _setSyncIndicator('saving');
   _cloudSaveTimer = setTimeout(_doCloudSave, 5000);
 }
 
 async function _doCloudSave() {
-  if (!_cloudSyncEnabled || !authToken || !authUser || !animeList.length) return;
+  if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length) return;
   try {
     const session = {
       saveKey,
@@ -3610,14 +3716,16 @@ async function _doCloudSave() {
       matchupStats,
       savedAt: new Date().toISOString(),
     };
+    const body = _isMalCloudSession()
+      ? { malToken: malAuthToken, session }
+      : { token: authToken, session };
     const res = await fetch('/.netlify/functions/save-session', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token: authToken, session }),
+      body:    JSON.stringify(body),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     _setSyncIndicator('saved');
-    // Fade back to hidden after 3 s
     setTimeout(() => _setSyncIndicator('hidden'), 3000);
   } catch (err) {
     console.warn('Cloud save failed:', err);
@@ -3628,16 +3736,19 @@ async function _doCloudSave() {
 // Called on login / page load (when already logged in).
 // Returns the session object or null.
 async function _loadCloudSave() {
-  if (!authToken || !authUser) return null;
+  if (!_activeCloudUser()) return null;
   try {
+    const body = _isMalCloudSession()
+      ? { malToken: malAuthToken }
+      : { token: authToken };
     const res = await fetch('/.netlify/functions/load-session', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ token: authToken }),
+      body:    JSON.stringify(body),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    return data?.session ?? null; // { session: {...} } wrapper
+    return data?.session ?? null;
   } catch (err) {
     console.warn('Cloud load failed:', err);
     return null;
@@ -3684,7 +3795,7 @@ function _applyCloudSaveToMemory(cloud) {
 }
 
 async function checkAndApplyCloudSave(localSaveKey) {
-  if (!_cloudSyncEnabled || !authToken || !authUser) return false;
+  if (!_cloudSyncEnabled || !_activeCloudUser()) return false;
   const cloud = await _loadCloudSave();
   if (!cloud || !cloud.animeList || !cloud.saveKey) return false;
 
@@ -3722,7 +3833,7 @@ async function checkAndApplyCloudSave(localSaveKey) {
 
 // Manual cloud push — accessible from Manage tab
 async function manualCloudPush() {
-  if (!authToken || !authUser) return;
+  if (!_activeCloudUser()) return;
   if (!animeList.length) { showToast('Nothing to save yet — start ranking first.'); return; }
   _setSyncIndicator('saving');
   clearTimeout(_cloudSaveTimer);
@@ -3731,7 +3842,7 @@ async function manualCloudPush() {
 
 // Manual cloud pull — accessible from Manage tab
 async function manualCloudPull() {
-  if (!authToken || !authUser) { showToast('Log in with AniList to use cloud sync.'); return; }
+  if (!_activeCloudUser()) { showToast('Log in to use cloud sync.'); return; }
   const cloud = await _loadCloudSave();
   if (!cloud || !cloud.animeList) { showToast('No cloud save found yet.'); return; }
 
@@ -4348,8 +4459,8 @@ function showResults() {
   switchResultsTab('rankings');
   // Check achievements on load so existing saves are retroactively credited
   setTimeout(_checkAchievements, 500);
-  // Start polling for new anime if logged in (deferred so ranking renders first)
-  if (authToken && authUser) setTimeout(_startNewAnimePolling, 2000);
+  // Start polling for new anime if logged in via either service (deferred so ranking renders first)
+  if ((authToken && authUser) || (malAuthToken && malAuthUser)) setTimeout(_startNewAnimePolling, 2000);
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
@@ -8132,13 +8243,76 @@ async function reseedFromAniList() {
   }
 }
 
+async function reseedFromMAL() {
+  if (!malAuthToken || !malAuthUser) {
+    showToast('Please log in with MAL first.');
+    return;
+  }
+  if (!animeList.length) { showToast('No anime in your list yet.'); return; }
+
+  const btn = document.getElementById('reseed-mal-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching MAL scores…'; }
+
+  try {
+    // 1. Fetch current MAL scores from the API proxy
+    const entries = await _fetchMALAnimeListViaAPI();
+    const malScoreMap = new Map(entries.map(e => [e.malId, e.score]));
+
+    // 2. Get the AniList → MAL ID mapping for all anime in our list
+    //    (needed because animeList stores AniList IDs, not MAL IDs)
+    const ids       = animeList.map(a => a.id);
+    const PAGE_SIZE = 50;
+    const idMalMap  = {}; // anilistId → malId
+
+    for (let i = 0; i < ids.length; i += PAGE_SIZE) {
+      const chunk = ids.slice(i, i + PAGE_SIZE);
+      const query = `query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(id_in: $ids, type: ANIME) { id idMal }
+        }
+      }`;
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { ids: chunk } })
+      });
+      const data = await res.json();
+      (data?.data?.Page?.media ?? []).forEach(m => { if (m.idMal) idMalMap[m.id] = m.idMal; });
+      if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 250));
+    }
+
+    // 3. Apply scores to animeList
+    let updated = 0;
+    animeList.forEach(a => {
+      const malId = idMalMap[a.id];
+      if (!malId) return;
+      const score = malScoreMap.get(malId);
+      if (score) {
+        a.elo      = scoreToElo(score);
+        a.malScore = score;
+        updated++;
+      }
+    });
+
+    saveState();
+    schedulCloudSave();
+    renderRankingList();
+    filterRankings();
+    showToast(`✓ Re-seeded ${updated} anime from MAL scores.`);
+  } catch (err) {
+    showToast('Error re-seeding: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌱 Re-seed ELO from MAL scores'; }
+  }
+}
+
 // ─── METADATA REFRESH ────────────────────────────────────────────────────────
 // Re-fetches covers, titles, descriptions, episodes, genres etc. for all
 // existing anime in the list. Ranking data (ELO, wins, losses, battles) is
 // preserved — only display metadata is overwritten.
 async function refreshMetadata() {
-  if (!authToken || !authUser) {
-    showToast('Please log in with AniList first.');
+  if (!authToken && !malAuthToken) {
+    showToast('Please log in first to refresh metadata.');
     return;
   }
   if (!animeList.length) {
@@ -8243,6 +8417,65 @@ async function checkForNewAnime() {
   } catch { /* silent — don't bother user on background poll failure */ }
 }
 
+// MAL variant: fetch current list, diff against animeList by AniList ID
+async function checkForNewAnimeMAL() {
+  if (!malAuthToken || !malAuthUser || !animeList.length) return;
+  try {
+    const entries   = await _fetchMALAnimeListViaAPI();
+    const malIds    = entries.map(e => e.malId);
+    const scoreMap  = new Map(entries.map(e => [e.malId, e.score]));
+    const ownIds    = new Set(animeList.map(a => a.id));
+    const PAGE_SIZE = 50;
+    const pendingAnime = [];
+
+    for (let i = 0; i < malIds.length; i += PAGE_SIZE) {
+      const chunk = malIds.slice(i, i + PAGE_SIZE);
+      const query = `query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(idMal_in: $ids, type: ANIME) {
+            id idMal title { romaji english } coverImage { large medium }
+            description(asHtml: false) format averageScore genres seasonYear popularity
+          }
+        }
+      }`;
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { ids: chunk } })
+      });
+      const data = await res.json();
+      (data?.data?.Page?.media ?? []).forEach(m => {
+        if (!ownIds.has(m.id)) {
+          const userScore = scoreMap.get(m.idMal) || 0;
+          const titleEn   = m.title.english || m.title.romaji;
+          const titleRo   = m.title.romaji  || m.title.english;
+          pendingAnime.push({
+            id: m.id, title: titleEn, titleEn, titleRo,
+            cover: m.coverImage.large || m.coverImage.medium,
+            description: stripHtml(m.description || '').slice(0, 500),
+            format: m.format || 'TV', globalScore: m.averageScore || 0,
+            genres: m.genres || [], seasonYear: m.seasonYear || null,
+            popularity: m.popularity || 0,
+            elo: 1200, wins: 0, losses: 0, comparisons: 0, battles: 0,
+            fuzzy: false, eloHistory: [1200],
+            anilistScore: 0, malScore: userScore,
+          });
+        }
+      });
+      if (i + PAGE_SIZE < malIds.length) await new Promise(r => setTimeout(r, 250));
+    }
+
+    _pendingNewAnime = pendingAnime;
+    if (pendingAnime.length > 0) {
+      const msg = document.getElementById('new-anime-msg');
+      if (msg) msg.textContent = `🆕 ${pendingAnime.length} new anime on your MAL — not yet in rankings`;
+      document.getElementById('new-anime-banner')?.classList.add('active');
+    } else {
+      document.getElementById('new-anime-banner')?.classList.remove('active');
+    }
+  } catch { /* silent — don't bother user on background poll failure */ }
+}
+
 function dismissNewAnimeBanner() {
   document.getElementById('new-anime-banner')?.classList.remove('active');
   _pendingNewAnime = [];
@@ -8260,9 +8493,15 @@ function addPendingNewAnime() {
 
 function _startNewAnimePolling() {
   if (_newAnimePollingTimer) clearInterval(_newAnimePollingTimer);
-  // Check immediately then every 5 minutes
-  checkForNewAnime();
-  _newAnimePollingTimer = setInterval(checkForNewAnime, 5 * 60 * 1000);
+  if (malAuthToken && malAuthUser && !authToken) {
+    // MAL path: longer interval (involves more API hops)
+    checkForNewAnimeMAL();
+    _newAnimePollingTimer = setInterval(checkForNewAnimeMAL, 15 * 60 * 1000);
+  } else {
+    // AniList path (or AniList + MAL — AniList takes priority)
+    checkForNewAnime();
+    _newAnimePollingTimer = setInterval(checkForNewAnime, 5 * 60 * 1000);
+  }
 }
 
 // Auto-load if username is pre-filled, or show shared view if URL has a share hash
@@ -8293,7 +8532,7 @@ window.addEventListener('load', () => {
 // Save to cloud when the user closes the tab or navigates away.
 // sendBeacon is the only reliable mechanism for this — it fires even if the page is unloading.
 window.addEventListener('beforeunload', () => {
-  if (!_cloudSyncEnabled || !authToken || !authUser || !animeList.length || !saveKey) return;
+  if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey) return;
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
   const session = {
     saveKey, animeList, battleCount, currentA, currentB, battleHistory,
@@ -8306,8 +8545,11 @@ window.addEventListener('beforeunload', () => {
     matchupStats,
     savedAt: new Date().toISOString(),
   };
+  const body = _isMalCloudSession()
+    ? { malToken: malAuthToken, session }
+    : { token: authToken, session };
   const blob = new Blob(
-    [JSON.stringify({ token: authToken, session })],
+    [JSON.stringify(body)],
     { type: 'application/json' }
   );
   navigator.sendBeacon('/.netlify/functions/save-session', blob);
