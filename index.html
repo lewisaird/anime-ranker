@@ -8328,8 +8328,42 @@ async function executeSyncToAniList() {
   actionBtns.style.display = 'none';
   progressWrap.style.display = '';
   doneMsg.style.display = 'none';
+  doneMsg.textContent = '';
 
-  const total = _syncQueue.length;
+  // ── Step 1: Fetch the user's full AniList list to find which IDs exist ──
+  progressText.textContent = 'Checking your AniList…';
+  barFill.style.width = '0%';
+
+  let anilistIds = null; // null = couldn't check; Set = confirmed IDs
+  try {
+    const listQuery = `
+      query ($userId: Int) {
+        MediaListCollection(userId: $userId, type: ANIME) {
+          lists { entries { mediaId } }
+        }
+      }`;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query: listQuery, variables: { userId: authUser?.id } })
+    });
+    const data = await res.json();
+    if (!data.errors) {
+      anilistIds = new Set(
+        data.data.MediaListCollection.lists.flatMap(l => l.entries.map(e => e.mediaId))
+      );
+    }
+  } catch { /* proceed without pre-check */ }
+
+  // Partition queue into synacable + not-on-list
+  let queue = _syncQueue;
+  let notOnList = [];
+  if (anilistIds !== null) {
+    notOnList = _syncQueue.filter(item => !anilistIds.has(item.mediaId));
+    queue = _syncQueue.filter(item => anilistIds.has(item.mediaId));
+  }
+
+  const total = queue.length;
   let done = 0, errors = 0;
   const failedTitles = [];
 
@@ -8340,12 +8374,23 @@ async function executeSyncToAniList() {
       }
     }`;
 
+  if (total === 0) {
+    // Nothing to sync — all entries not on list
+    barFill.style.width = '100%';
+    progressWrap.style.display = 'none';
+    doneMsg.style.display = '';
+    doneMsg.innerHTML = `ℹ️ None of your ${_syncQueue.length} anime are on your AniList list yet — add them on AniList first.`;
+    actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
+    actionBtns.style.display = 'flex';
+    return;
+  }
+
   // Serial sync: one request at a time, 1500ms between each.
   // AniList limit is 90 req/min; 1500ms spacing = ~40 req/min.
   // On ANY error (HTTP 429, GraphQL rate-limit, or other) we retry up to 3×.
   // GraphQL-level rate limits come back as json.errors, NOT HTTP 429,
   // so we must retry those too rather than treating them as permanent failures.
-  for (const item of _syncQueue) {
+  for (const item of queue) {
     progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
     barFill.style.width = Math.round((done / total) * 100) + '%';
 
@@ -8393,18 +8438,29 @@ async function executeSyncToAniList() {
   doneMsg.style.display = '';
   const succeeded = done - errors;
 
-  if (errors === 0) {
-    doneMsg.textContent = `✅ Done! Synced all ${done} scores to AniList.`;
-  } else if (succeeded === 0) {
-    doneMsg.textContent = `❌ All ${errors} syncs failed — your AniList token may have expired. Try logging out and back in.`;
+  let msg = '';
+  if (errors === 0 && notOnList.length === 0) {
+    msg = `✅ Done! Synced all ${done} scores to AniList.`;
+  } else if (succeeded === 0 && errors > 0) {
+    msg = `❌ All ${errors} syncs failed — your AniList token may have expired. Try logging out and back in.`;
   } else {
-    doneMsg.innerHTML = `⚠️ Synced ${succeeded}/${done} scores. ${errors} couldn't be updated`
-      + ` — these anime may not be on your AniList list yet (AniList requires you to have them added).<br>`
-      + `<details style="margin-top:6px;font-size:0.82em;opacity:0.75;cursor:pointer">`
-      + `<summary>${errors} failed title${errors !== 1 ? 's' : ''}</summary>`
-      + `<div style="margin-top:4px;line-height:1.6">${failedTitles.map(t => `• ${t}`).join('<br>')}</div>`
-      + `</details>`;
+    if (succeeded > 0) msg += `✅ Synced ${succeeded}/${total} scores. `;
+    if (errors > 0) {
+      msg += `⚠️ ${errors} update${errors !== 1 ? 's' : ''} failed (see console for details). `;
+      msg += `<details style="display:inline;font-size:0.82em;opacity:0.75;cursor:pointer">`
+           + `<summary>${errors} failed</summary>`
+           + `<div style="margin-top:4px;line-height:1.6">${failedTitles.map(t => `• ${t}`).join('<br>')}</div>`
+           + `</details> `;
+    }
+    if (notOnList.length > 0) {
+      msg += `<br><span style="opacity:0.7;font-size:0.9em">ℹ️ ${notOnList.length} anime skipped — not on your AniList list: `
+           + `<details style="display:inline;cursor:pointer">`
+           + `<summary>${notOnList.length} titles</summary>`
+           + `<div style="margin-top:4px;line-height:1.6">${notOnList.map(t => `• ${t.title}`).join('<br>')}</div>`
+           + `</details></span>`;
+    }
   }
+  doneMsg.innerHTML = msg;
 
   // Replace Cancel with a Close button
   actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
