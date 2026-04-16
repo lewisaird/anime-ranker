@@ -8331,6 +8331,7 @@ async function executeSyncToAniList() {
 
   const total = _syncQueue.length;
   let done = 0, errors = 0;
+  const failedTitles = [];
 
   const mutation = `
     mutation ($mediaId: Int!, $score: Float!) {
@@ -8339,11 +8340,9 @@ async function executeSyncToAniList() {
       }
     }`;
 
-  for (const item of _syncQueue) {
-    progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
-    barFill.style.width = Math.round((done / total) * 100) + '%';
-    let itemOk = false;
-    for (let attempt = 1; attempt <= 3 && !itemOk; attempt++) {
+  // Process one item, with retry on rate-limit
+  async function syncOne(item) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await fetch('https://graphql.anilist.co', {
           method: 'POST',
@@ -8351,8 +8350,6 @@ async function executeSyncToAniList() {
           body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
         });
         if (res.status === 429) {
-          // Hard rate-limit header — back off and retry
-          progressText.textContent = `Rate limited — pausing… (${done + 1}/${total})`;
           await new Promise(r => setTimeout(r, 8000));
           continue;
         }
@@ -8361,29 +8358,62 @@ async function executeSyncToAniList() {
           /rate.?limit|too many/i.test(e.message || '') || e.status === 429
         );
         if (isRateLimit) {
-          progressText.textContent = `Rate limited — pausing… (${done + 1}/${total})`;
           await new Promise(r => setTimeout(r, 8000));
           continue;
         }
-        if (json.errors) { errors++; itemOk = true; /* failed but not retriable */ break; }
-        itemOk = true; // success
-      } catch { /* network blip — try again */ }
+        if (json.errors) {
+          const msg = json.errors[0]?.message || 'unknown error';
+          console.warn(`[Sync] Failed "${item.title}" (id ${item.mediaId}): ${msg}`);
+          return false; // API error, not retriable
+        }
+        return true; // success
+      } catch { /* network blip — retry */ }
     }
-    if (!itemOk) errors++; // all 3 attempts failed
-    done++;
-    // 1500ms spacing — ~40 req/min, well under AniList's 90 req/min ceiling
-    await new Promise(r => setTimeout(r, 1500));
+    return false; // all attempts failed
+  }
+
+  // Parallel batches: 3 concurrent requests, 2s between batches
+  // = ~90 req/min max, well within AniList's limit, ~3x faster than serial
+  const BATCH_SIZE = 3;
+  const BATCH_DELAY = 2000;
+
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+    const batch = _syncQueue.slice(i, i + BATCH_SIZE);
+    progressText.textContent = `Syncing ${Math.min(i + BATCH_SIZE, total)} / ${total}…`;
+    barFill.style.width = Math.round((i / total) * 100) + '%';
+
+    const results = await Promise.all(batch.map(item => syncOne(item)));
+    results.forEach((ok, idx) => {
+      done++;
+      if (!ok) { errors++; failedTitles.push(batch[idx].title); }
+    });
+
+    // Update progress after batch
+    barFill.style.width = Math.round((done / total) * 100) + '%';
+
+    // Pause between batches (skip delay after the last batch)
+    if (i + BATCH_SIZE < total) {
+      await new Promise(r => setTimeout(r, BATCH_DELAY));
+    }
   }
 
   barFill.style.width = '100%';
   progressWrap.style.display = 'none';
   doneMsg.style.display = '';
   const succeeded = done - errors;
-  doneMsg.textContent = errors === 0
-    ? `✅ Done! Synced ${done} scores to AniList.`
-    : succeeded === 0
-      ? `❌ All ${errors} syncs failed — your AniList token may have expired. Try logging out and back in.`
-      : `⚠️ Synced ${succeeded}/${done} scores. ${errors} failed — these may not be on your AniList. Try again to retry.`;
+
+  if (errors === 0) {
+    doneMsg.textContent = `✅ Done! Synced all ${done} scores to AniList.`;
+  } else if (succeeded === 0) {
+    doneMsg.textContent = `❌ All ${errors} syncs failed — your AniList token may have expired. Try logging out and back in.`;
+  } else {
+    doneMsg.innerHTML = `⚠️ Synced ${succeeded}/${done} scores. ${errors} couldn't be updated`
+      + ` — these anime may not be on your AniList list yet (AniList requires you to have them added).<br>`
+      + `<details style="margin-top:6px;font-size:0.82em;opacity:0.75;cursor:pointer">`
+      + `<summary>${errors} failed title${errors !== 1 ? 's' : ''}</summary>`
+      + `<div style="margin-top:4px;line-height:1.6">${failedTitles.map(t => `• ${t}`).join('<br>')}</div>`
+      + `</details>`;
+  }
 
   // Replace Cancel with a Close button
   actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
