@@ -2758,6 +2758,7 @@
 
         <div class="manage-section" id="manage-mal-section" style="display:none">
           <div class="manage-section-title">MyAnimeList</div>
+          <button id="sync-mal-btn" class="manage-btn" style="border-color:#2e51a2;color:#4a74d8" onclick="openMALSyncModal()">🔴 Sync scores to MAL</button>
           <button id="reseed-mal-btn" class="manage-btn" onclick="reseedFromMAL()">🌱 Re-seed ELO from MAL scores</button>
           <button id="refresh-metadata-mal-btn" class="manage-btn" onclick="refreshMetadata()">🖼 Refresh covers &amp; metadata</button>
           <p id="refresh-metadata-mal-msg" style="font-size:0.8rem;margin-top:4px;display:none"></p>
@@ -3017,6 +3018,25 @@
     <div class="sync-actions" id="sync-action-btns">
       <button class="btn-secondary" onclick="closeSyncModal()">Cancel</button>
       <button class="btn-primary" id="sync-confirm-btn" onclick="executeSyncToAniList()">Sync <span id="sync-count-label"></span> anime →</button>
+    </div>
+  </div>
+</div>
+
+<!-- SYNC TO MAL MODAL -->
+<div id="mal-sync-modal" onclick="closeMALSyncOnOverlay(event)" style="display:none">
+  <div class="sync-modal-box" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeMALSyncModal()" style="position:absolute;top:14px;right:14px">✕</button>
+    <h3>🔴 Sync Scores to MyAnimeList</h3>
+    <p class="sync-modal-sub">Your ELO rankings will be mapped to a 1–10 score using percentile bands and saved to your MyAnimeList account.</p>
+    <div id="mal-sync-preview-wrap"></div>
+    <div id="mal-sync-progress-wrap" style="display:none">
+      <div class="sync-progress-bar-track"><div class="sync-progress-bar-fill" id="mal-sync-bar-fill" style="width:0%"></div></div>
+      <p class="sync-progress-text" id="mal-sync-progress-text">Syncing…</p>
+    </div>
+    <p id="mal-sync-done-msg" class="sync-done-msg" style="display:none"></p>
+    <div class="sync-actions" id="mal-sync-action-btns">
+      <button class="btn-secondary" onclick="closeMALSyncModal()">Cancel</button>
+      <button class="btn-primary" id="mal-sync-confirm-btn" onclick="executeSyncToMAL()">Sync <span id="mal-sync-count-label"></span> anime →</button>
     </div>
   </div>
 </div>
@@ -9319,6 +9339,186 @@ async function executeSyncToAniList() {
     });
   } else {
     actionBtns.innerHTML = '<button class="btn-primary" onclick="closeSyncModal()">Close</button>';
+    actionBtns.style.display = 'flex';
+  }
+}
+
+// ─── SYNC TO MAL ─────────────────────────────────────────────────────────────
+let _malSyncQueue = []; // [{malId, title, cover, score}]
+
+function openMALSyncModal() {
+  if (!malAuthToken) return;
+  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const total = sorted.length;
+
+  // Only sync anime that have a MAL ID — skip anything the MAL↔AniList match missed
+  _malSyncQueue = sorted
+    .filter(a => !excludedIds.has(a.id) && a.idMal)
+    .map((a, i) => ({
+      malId: a.idMal,
+      title: a.title,
+      cover: a.cover,
+      score: _eloToScore10(i, total),
+    }));
+
+  const noIdCount = sorted.filter(a => !excludedIds.has(a.id) && !a.idMal).length;
+
+  const rows = _malSyncQueue.map(item => `
+    <tr>
+      <td><img src="${item.cover}" alt="" /></td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.title}</td>
+      <td style="text-align:center"><span class="sync-score-pill ${_scoreClass(item.score)}">${item.score}</span></td>
+    </tr>`).join('');
+
+  const noIdNote = noIdCount > 0
+    ? `<p style="font-size:0.78rem;color:#8b949e;margin-top:8px">⚠️ ${noIdCount} anime skipped — MAL ID not found.</p>`
+    : '';
+
+  document.getElementById('mal-sync-preview-wrap').innerHTML = `
+    <p style="font-size:0.78rem;color:#8b949e;margin-bottom:8px">Score format: <strong style="color:#c9d1d9">10-pt</strong> · Percentile-based mapping</p>
+    <div style="max-height:320px;overflow-y:auto;border:1px solid #30363d;border-radius:8px">
+      <table class="sync-preview-table">
+        <thead><tr><th></th><th>Title</th><th style="text-align:center">Score</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>${noIdNote}`;
+
+  document.getElementById('mal-sync-count-label').textContent = _malSyncQueue.length;
+  document.getElementById('mal-sync-progress-wrap').style.display = 'none';
+  document.getElementById('mal-sync-done-msg').style.display = 'none';
+  document.getElementById('mal-sync-action-btns').style.display = 'flex';
+  document.getElementById('mal-sync-modal').style.display = 'flex';
+}
+
+function closeMALSyncModal() {
+  document.getElementById('mal-sync-modal').style.display = 'none';
+}
+
+function closeMALSyncOnOverlay(e) {
+  if (e.target === document.getElementById('mal-sync-modal')) closeMALSyncModal();
+}
+
+async function executeSyncToMAL() {
+  if (!malAuthToken || !_malSyncQueue.length) return;
+
+  const actionBtns   = document.getElementById('mal-sync-action-btns');
+  const progressWrap = document.getElementById('mal-sync-progress-wrap');
+  const progressText = document.getElementById('mal-sync-progress-text');
+  const barFill      = document.getElementById('mal-sync-bar-fill');
+  const doneMsg      = document.getElementById('mal-sync-done-msg');
+
+  actionBtns.style.display   = 'none';
+  progressWrap.style.display = '';
+  doneMsg.style.display      = 'none';
+  doneMsg.textContent        = '';
+
+  const queue = [..._malSyncQueue];
+  const total = queue.length;
+  let done = 0, errors = 0;
+  const failedItems  = [];
+  const failedTitles = [];
+
+  for (const item of queue) {
+    progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
+    barFill.style.width = Math.round((done / total) * 100) + '%';
+
+    let itemOk = false;
+
+    for (let attempt = 1; attempt <= 2 && !itemOk; attempt++) {
+      try {
+        const res = await fetch('/.netlify/functions/mal-api', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path:   `/v2/anime/${item.malId}/my_list_status`,
+            token:  malAuthToken,
+            method: 'PATCH',
+            body:   `score=${item.score}`,
+          }),
+        });
+
+        if (res.status === 401) {
+          // Token expired — try refresh once then retry
+          if (malRefreshToken && attempt === 1) {
+            const ok = await _refreshMALToken(malRefreshToken);
+            if (ok) { saveMALAuth(); continue; }
+          }
+          // Unrecoverable auth failure — abort entire sync
+          errors += total - done;
+          barFill.style.width = '100%';
+          progressWrap.style.display = 'none';
+          doneMsg.style.display = '';
+          doneMsg.innerHTML = '❌ MAL session expired — log out and back in, then try again.';
+          actionBtns.innerHTML = '<button class="btn-primary" onclick="closeMALSyncModal()">Close</button>';
+          actionBtns.style.display = 'flex';
+          return;
+        }
+
+        if (res.status === 429) {
+          // Rate limited — back off and retry
+          await new Promise(r => setTimeout(r, 10000));
+          continue;
+        }
+
+        if (!res.ok) {
+          console.warn(`[MAL Sync] HTTP ${res.status} for "${item.title}" (malId ${item.malId})`);
+          break;
+        }
+
+        itemOk = true;
+      } catch (err) {
+        console.warn(`[MAL Sync] Network error for "${item.title}" (attempt ${attempt}):`, err.message);
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+
+    if (!itemOk) {
+      errors++;
+      failedItems.push(item);
+      failedTitles.push(item.title);
+    }
+    done++;
+    // 700ms between calls — stays comfortably under MAL's 90 req/min limit
+    await new Promise(r => setTimeout(r, 700));
+  }
+
+  barFill.style.width = '100%';
+  progressWrap.style.display = 'none';
+  doneMsg.style.display = '';
+
+  const succeeded = done - errors;
+  let msg = '';
+  if (errors === 0) {
+    msg = `✅ Done! Synced all ${done} scores to MyAnimeList.`;
+  } else if (succeeded === 0) {
+    msg = `❌ All ${errors} syncs failed — your MAL token may have expired. Try logging out and back in.`;
+  } else {
+    msg += `✅ Synced ${succeeded}/${total} scores. `;
+    if (errors > 0) {
+      msg += `⚠️ ${errors} failed. `
+           + `<details style="display:inline;font-size:0.82em;opacity:0.75;cursor:pointer">`
+           + `<summary>${errors} failed</summary>`
+           + `<div style="margin-top:4px;line-height:1.6">${failedTitles.map(t => `• ${t}`).join('<br>')}</div>`
+           + `</details>`;
+    }
+  }
+  doneMsg.innerHTML = msg;
+
+  if (errors > 0) {
+    actionBtns.innerHTML =
+      `<button class="btn-secondary" onclick="closeMALSyncModal()">Close</button>` +
+      `<button class="btn-primary" id="mal-sync-retry-btn">🔄 Retry ${errors} failed</button>`;
+    actionBtns.style.display = 'flex';
+    document.getElementById('mal-sync-retry-btn').addEventListener('click', () => {
+      _malSyncQueue = failedItems;
+      actionBtns.style.display   = 'none';
+      doneMsg.style.display      = 'none';
+      doneMsg.textContent        = '';
+      progressWrap.style.display = '';
+      executeSyncToMAL();
+    });
+  } else {
+    actionBtns.innerHTML = '<button class="btn-primary" onclick="closeMALSyncModal()">Close</button>';
     actionBtns.style.display = 'flex';
   }
 }
