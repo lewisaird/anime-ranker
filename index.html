@@ -4415,7 +4415,10 @@ function pickOpponents() {
   const poolText    = document.getElementById('pool-warning-text');
   if (poolBanner) {
     if (activeCount < 2) {
-      poolText.textContent = '⚠️ All anime are filtered out — remove some filters to keep battling.';
+      const msg = animeList.length < 2
+        ? '⚠️ You need at least 2 anime in your list to start battling.'
+        : '⚠️ All anime are filtered out — remove some filters to keep battling.';
+      poolText.textContent = msg;
       poolBanner.classList.add('active');
     } else if (activeCount <= 5) {
       poolText.textContent = `⚠️ Only ${activeCount} anime in your battle pool — remove some filters to see more matchups.`;
@@ -5471,7 +5474,8 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
       };
     });
 
-  if (animeList.length === 0) throw new Error('Could not match any entries to AniList data.');
+  if (animeList.length === 0) throw new Error('Could not match any MAL entries to AniList data. Make sure your MAL list is public and has completed anime.');
+  if (animeList.length === 1) throw new Error('Only 1 anime matched — you need at least 2 to start ranking. Add more completed anime on MAL first.');
 
   const seedMsg = seedFromScores ? ' · ELO seeded from MAL scores' : '';
   document.getElementById('loading-msg').textContent =
@@ -6870,6 +6874,8 @@ async function startLoading() {
 
   try {
     document.getElementById('loading-msg').textContent = 'Fetching your anime list from AniList…';
+    // Small random jitter (0–2s) so concurrent logins don't all hit AniList simultaneously
+    await new Promise(r => setTimeout(r, Math.random() * 2000));
     const _fetchResult = await fetchAllAnime(username, seedFromScores);
     animeList = _fetchResult.entries;
     if (_fetchResult.skipped > 0) {
@@ -6877,6 +6883,7 @@ async function startLoading() {
     }
 
     if (animeList.length === 0) throw new Error('No completed anime found on this account. Make sure you have anime marked as "Completed" on AniList.');
+    if (animeList.length === 1) throw new Error('Only 1 completed anime found — you need at least 2 to start ranking. Add more completed anime on AniList first.');
 
     // Warn if warm start was requested but user has no AniList scores
     const scoredCount = animeList.filter(a => a.anilistScore > 0).length;
@@ -9419,6 +9426,21 @@ async function executeSyncToMAL() {
   const failedItems  = [];
   const failedTitles = [];
 
+  // Helper: make a single PATCH call to the MAL proxy
+  const malPatch = (malId, score) => fetch('/.netlify/functions/mal-api', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path:   `/v2/anime/${malId}/my_list_status`,
+      token:  malAuthToken,
+      method: 'PATCH',
+      body:   `score=${score}`,
+    }),
+  });
+
+  // Track consecutive rate-limit signals so we can pause for a full window reset
+  let consecutiveRateLimits = 0;
+
   for (const item of queue) {
     progressText.textContent = `Syncing ${done + 1} / ${total} — ${item.title}`;
     barFill.style.width = Math.round((done / total) * 100) + '%';
@@ -9427,19 +9449,9 @@ async function executeSyncToMAL() {
 
     for (let attempt = 1; attempt <= 2 && !itemOk; attempt++) {
       try {
-        const res = await fetch('/.netlify/functions/mal-api', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            path:   `/v2/anime/${item.malId}/my_list_status`,
-            token:  malAuthToken,
-            method: 'PATCH',
-            body:   `score=${item.score}`,
-          }),
-        });
-
+        const res     = await malPatch(item.malId, item.score);
         const resText = await res.text();
-        console.log(`[MAL Sync] ${item.title} → HTTP ${res.status}`, resText);
+        if (!res.ok) console.warn(`[MAL Sync] ${item.title} → HTTP ${res.status}`, resText);
 
         if (res.status === 401) {
           // Token expired — try refresh once then retry
@@ -9461,7 +9473,6 @@ async function executeSyncToMAL() {
         if (res.status === 403 || res.status === 405) {
           // App-level permission issue — write access not enabled on the MAL app registration.
           // MAL returns 405 (not 403) when the app hasn't been granted animelist write access.
-          // Fix: go to myanimelist.net/apiconfig → edit the app → enable Animelist write permission.
           errors += total - done;
           barFill.style.width = '100%';
           progressWrap.style.display = 'none';
@@ -9477,7 +9488,7 @@ async function executeSyncToMAL() {
         }
 
         if (res.status === 429) {
-          // Rate limited — back off and retry
+          consecutiveRateLimits++;
           await new Promise(r => setTimeout(r, 10000));
           continue;
         }
@@ -9487,10 +9498,27 @@ async function executeSyncToMAL() {
           break;
         }
 
+        consecutiveRateLimits = 0; // successful — not rate limited
         itemOk = true;
       } catch (err) {
+        // Treat network errors as possible rate-limit signals
+        consecutiveRateLimits++;
         console.warn(`[MAL Sync] Network error for "${item.title}" (attempt ${attempt}):`, err.message);
         await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+
+    // After 3+ consecutive rate-limit signals, pause for a full window reset
+    if (consecutiveRateLimits >= 3) {
+      progressText.textContent = `Rate limited — pausing 65s for limit to reset… (${done + 1}/${total})`;
+      await new Promise(r => setTimeout(r, 65000));
+      consecutiveRateLimits = 0;
+      // One more attempt on the current item after the reset
+      if (!itemOk) {
+        try {
+          const res = await malPatch(item.malId, item.score);
+          if (res.ok) itemOk = true;
+        } catch { /* still failing — give up on this item */ }
       }
     }
 
@@ -9517,7 +9545,7 @@ async function executeSyncToMAL() {
   } else {
     msg += `✅ Synced ${succeeded}/${total} scores. `;
     if (errors > 0) {
-      msg += `⚠️ ${errors} failed. `
+      msg += `⚠️ ${errors} update${errors !== 1 ? 's' : ''} failed (see console for details). `
            + `<details style="display:inline;font-size:0.82em;opacity:0.75;cursor:pointer">`
            + `<summary>${errors} failed</summary>`
            + `<div style="margin-top:4px;line-height:1.6">${failedTitles.map(t => `• ${t}`).join('<br>')}</div>`
@@ -9766,7 +9794,7 @@ async function checkForNewAnime() {
     } else {
       document.getElementById('new-anime-banner')?.classList.remove('active');
     }
-  } catch { /* silent — don't bother user on background poll failure */ }
+  } catch (e) { console.warn('[checkForNewAnime] poll failed:', e?.message); }
 }
 
 // MAL variant: fetch current list, diff against animeList by AniList ID
@@ -9826,7 +9854,7 @@ async function checkForNewAnimeMAL() {
     } else {
       document.getElementById('new-anime-banner')?.classList.remove('active');
     }
-  } catch { /* silent — don't bother user on background poll failure */ }
+  } catch (e) { console.warn('[checkForNewAnimeMAL] poll failed:', e?.message); }
 }
 
 function dismissNewAnimeBanner() {
