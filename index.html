@@ -3584,10 +3584,11 @@ function startMALOAuthFlow() {
 
   const authUrl = 'https://myanimelist.net/v1/oauth2/authorize'
     + '?response_type=code'
-    + '&client_id='      + MAL_CLIENT_ID
-    + '&code_challenge=' + codeVerifier
+    + '&client_id='               + MAL_CLIENT_ID
+    + '&code_challenge='          + codeVerifier
+    + '&code_challenge_method=plain'
     + '&state=mal'
-    + '&redirect_uri='   + encodeURIComponent(_getRedirectUri());
+    + '&redirect_uri='            + encodeURIComponent(_getRedirectUri());
 
   const pw = 600, ph = 720;
   const pl = Math.round(window.screenX + (window.outerWidth  - pw) / 2);
@@ -9457,13 +9458,19 @@ async function executeSyncToMAL() {
           return;
         }
 
-        if (res.status === 403) {
-          // App-level permission issue — write access not granted
+        if (res.status === 403 || res.status === 405) {
+          // App-level permission issue — write access not enabled on the MAL app registration.
+          // MAL returns 405 (not 403) when the app hasn't been granted animelist write access.
+          // Fix: go to myanimelist.net/apiconfig → edit the app → enable Animelist write permission.
           errors += total - done;
           barFill.style.width = '100%';
           progressWrap.style.display = 'none';
           doneMsg.style.display = '';
-          doneMsg.innerHTML = '❌ MAL denied write access (403). Check the browser console for details.';
+          doneMsg.innerHTML = `❌ MAL returned ${res.status} (method not allowed). `
+            + `<strong>First try:</strong> log out of MAL in Kessen and log back in to refresh your token. `
+            + `If that doesn't help, your MAL app at `
+            + `<a href="https://myanimelist.net/apiconfig" target="_blank" rel="noopener" style="color:#58a6ff">myanimelist.net/apiconfig</a> `
+            + `may need write permission enabled (check for any Animelist/Write scope toggles).`;
           actionBtns.innerHTML = '<button class="btn-primary" onclick="closeMALSyncModal()">Close</button>';
           actionBtns.style.display = 'flex';
           return;
