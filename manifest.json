@@ -1,6 +1,6 @@
 {
-  "name": "Anime ELO Ranker",
-  "short_name": "Anime Ranker",
+  "name": "Kessen",
+  "short_name": "Kessen",
   "description": "Rank your anime watchlist using head-to-head ELO battles",
   "start_url": "/",
   "display": "standalone",
