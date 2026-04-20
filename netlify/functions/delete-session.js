@@ -22,9 +22,6 @@ async function verifyAniListToken(token) {
   }
 }
 
-// Use Node.js https module instead of fetch — MAL's API times out or blocks
-// requests from Netlify's servers when using the global fetch.
-// 3-second timeout so a hung MAL API doesn't stall the whole function.
 function verifyMALToken(token) {
   return new Promise((resolve) => {
     const options = {
@@ -47,8 +44,6 @@ function verifyMALToken(token) {
       });
     });
     req.on('error', () => resolve(null));
-    // If MAL's API hangs, don't stall the whole Netlify function — resolve null
-    // and fall through to the client-supplied malUserId fallback.
     req.setTimeout(3000, () => { req.destroy(); resolve(null); });
     req.end();
   });
@@ -76,9 +71,6 @@ export default async (request, context) => {
       userId = await verifyAniListToken(token);
     } else {
       userId = await verifyMALToken(malToken);
-      // Fall back to client-provided userId if server-side MAL verification fails.
-      // MAL's API often blocks or times out requests from Netlify's servers.
-      // The token is already validated client-side; this only affects storage key scoping.
       const numericId = parseInt(malUserId, 10);
       if (!userId && numericId) {
         userId = `mal_${numericId}`;
@@ -91,12 +83,8 @@ export default async (request, context) => {
 
   try {
     const store = getStore({ name: 'anime-elo-sessions', context });
-    const value = await store.get(`session_${userId}`);
-    if (value === null || value === undefined) {
-      return Response.json({ session: null });
-    }
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return Response.json({ session: parsed });
+    await store.delete(`session_${userId}`);
+    return Response.json({ ok: true });
   } catch (e) {
     return Response.json({ error: 'Blob store error: ' + e.message }, { status: 500 });
   }

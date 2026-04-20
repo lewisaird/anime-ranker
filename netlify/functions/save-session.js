@@ -2,17 +2,24 @@ import { getStore } from '@netlify/blobs';
 import { request as httpsRequest } from 'https';
 
 async function verifyAniListToken(token) {
-  const res = await fetch('https://graphql.anilist.co', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query: '{ Viewer { id } }' }),
-  });
-  const data = await res.json();
-  return data?.data?.Viewer?.id ?? null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: '{ Viewer { id } }' }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    return data?.data?.Viewer?.id ?? null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Use Node.js https module instead of fetch — MAL's API times out or blocks
