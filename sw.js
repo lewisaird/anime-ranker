@@ -5,7 +5,7 @@
 //   - AniList GraphQL API → network-only (always fresh)
 //   - Everything else → network-first, fall back to cache
 
-const CACHE_NAME = 'kessen-v2';
+const CACHE_NAME = 'kessen-v3';
 const SHELL = [
   '/',
   '/index.html',
@@ -13,6 +13,7 @@ const SHELL = [
   '/icon.svg',
   '/icon-192.png',
   '/icon-512.png',
+  '/offline.html',
 ];
 
 // ── Install: pre-cache the app shell ────────────────────────────────────────
@@ -53,6 +54,7 @@ self.addEventListener('fetch', event => {
   }
 
   // App shell: cache-first, revalidate in background
+  // Falls back to offline.html for navigation requests when network is unavailable
   if (request.method === 'GET') {
     event.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
@@ -64,8 +66,15 @@ self.addEventListener('fetch', event => {
           return response;
         }).catch(() => null);
 
-        // Return cached immediately if available, otherwise wait for network
-        return cached || networkFetch;
+        if (cached) return cached;
+
+        const networkResponse = await networkFetch;
+        if (networkResponse) return networkResponse;
+
+        // Network failed and nothing cached — serve offline page for navigation
+        if (request.mode === 'navigate') {
+          return cache.match('/offline.html');
+        }
       })
     );
   }
