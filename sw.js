@@ -1,11 +1,11 @@
-// Anime ELO Ranker — Service Worker
+// Kessen — Service Worker
 // Strategy:
 //   - App shell (index.html, icons, manifest) → cache-first, update in background
 //   - Netlify Functions (/.netlify/functions/*) → network-only (always fresh)
 //   - AniList GraphQL API → network-only (always fresh)
 //   - Everything else → network-first, fall back to cache
 
-const CACHE_NAME = 'anime-ranker-v1';
+const CACHE_NAME = 'kessen-v2';
 const SHELL = [
   '/',
   '/index.html',
