@@ -2497,7 +2497,7 @@ function exportCSV() {
 // Load a cover image for canvas drawing by fetching it fresh as a blob URL.
 // This bypasses any cached non-CORS version (which would taint the canvas),
 // and works regardless of whether the user is on AniList, MAL, or guest mode.
-async function _loadCoverForCanvas(url, timeoutMs = 8000) {
+async function _loadCoverForCanvas(url, timeoutMs = 3000) {
   if (!url) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -2645,10 +2645,9 @@ async function _buildTierListBlob() {
 }
 
 async function exportTierListImage() {
-  // Called from the Rankings panel's "Download tier list image" button. The
-  // share modal has its own primary flow (shareTierListImage / native share).
   const btns = [
     byId(IDS.exportImageBtn),
+    byId(IDS.sharePrimaryBtn),
   ].filter(Boolean);
   const origText = new Map(btns.map(b => [b, b.textContent]));
   btns.forEach(b => { b.disabled = true; b.textContent = '⏳ Generating…'; });

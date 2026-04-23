@@ -10,16 +10,15 @@
 # us drop 'unsafe-inline' entirely — that's a future hardening step.
 #
 # Allowed image/API hosts:
-#   • s4.anilist.co           — AniList cover images
+#   • *.anilist.co            — AniList cover images (s4, s1, s2, etc.) + GraphQL
 #   • img.anili.st            — AniList alt CDN
-#   • cdn.myanimelist.net     — MAL cover images
-#   • myanimelist.cdn-dena.com — MAL legacy CDN
-#   • graphql.anilist.co      — AniList GraphQL API (connect-src)
-#   • api.myanimelist.net     — MAL REST API (connect-src; only used by Netlify
-#                               Functions server-side, but allowlisted anyway in
-#                               case a future change calls it from the client)
+#   • *.myanimelist.net       — MAL cover images + API
+#   • *.cdn-dena.com          — MAL legacy CDN
+#
+# connect-src includes CDN domains so the canvas tier-list export
+# (which uses fetch() with mode:cors on cover URLs) isn't blocked.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://s4.anilist.co https://img.anili.st https://cdn.myanimelist.net https://myanimelist.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://graphql.anilist.co https://api.myanimelist.net; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY

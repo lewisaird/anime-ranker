@@ -647,7 +647,6 @@
           <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
           <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
-          <button class="manage-btn" id="export-image-btn" onclick="openShareFromManage()">🖼️ Share / export tier list image</button>
         </div>
 
         <div class="manage-section" id="manage-anilist-section" style="display:none">
@@ -876,7 +875,7 @@
     <p class="share-subtitle">Export your tier list as an image — or share a link to your top 20.</p>
 
     <!-- Primary action: native share sheet (mobile) or download (desktop) -->
-    <button class="btn-primary share-primary" id="share-primary-btn" onclick="shareTierListImage()" data-native-share="0">
+    <button class="btn-primary share-primary" id="share-primary-btn" onclick="exportTierListImage()">
       ⬇️ Download tier list image
     </button>
 
