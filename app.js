@@ -2320,16 +2320,18 @@ function _franchiseBaseName(title) {
     .replace(/\s*-[^-\s][^-]*-/g, '')
     // Strip everything from colon onwards (e.g. ": Kimetsu no Yaiba", ": The Final Season")
     .replace(/\s*:.*$/, '')
+    // Strip OVA/Special/Recap suffixes (e.g. "Baccano! Specials", "Series Name OVA")
+    .replace(/[!\s]+(Specials?|OVAs?|ONAs?|Recaps?|Extra|Encore)$/i, s => s.startsWith('!') ? '!' : '')
     // Strip "The Movie" and anything after
     .replace(/\s+(The\s+)?Movie\b.*/i, '')
     // Strip season/part/cour markers
     .replace(/\s+(Season|Part|Cour)\s*[IVXivx\d]+.*$/i, '')
-    .replace(/\s+[2-9](?:nd|rd|th)\s+Season.*$/i, '')
+    .replace(/\s+\d+(?:st|nd|rd|th)\s+Season.*$/i, '')
     // Strip trailing Roman/ASCII/Unicode multiplier suffixes (e.g. II, ××, ✕✕)
-    .replace(/\s+(II|III|IV|V|VI|VII|VIII|IX|XX?|XI|XII)$/i, '')
+    .replace(/\s+(II|III|IV|V|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
     .replace(/[\s×✕✗]+[\d×✕✗]+$/, '')
     // Strip common spin-off/sequel single-word suffixes
-    .replace(/\s+(Twin|Twins|Zero|Origins?|Returns?|Revenge|Reborn|Reload|Revolution)$/i, '')
+    .replace(/\s+(Twin|Twins|Zero|Origins?|Returns?|Revenge|Reborn|Reload|Revolution|Final)$/i, '')
     // Strip trailing standalone numbers
     .replace(/\s+\d+$/, '')
     .trim();
