@@ -6316,6 +6316,15 @@ function toggleFormat(fmt) {
   filterRankings();
 }
 
+function toggleMobileFilters() {
+  const panel = document.getElementById('collapsible-filters');
+  const btn   = document.getElementById('mobile-filter-toggle');
+  if (!panel || !btn) return;
+  const open = panel.classList.toggle('open');
+  btn.classList.toggle('active', open);
+  btn.textContent = open ? '⊟ Filters' : '⊞ Filters';
+}
+
 function syncFormatButtons() {
   // Sync rankings tab buttons
   document.querySelectorAll('.format-btn').forEach(b => {

@@ -457,6 +457,8 @@
       <div id="search-wrap">
         <input type="text" id="search-input" placeholder="🔍  Search your rankings…" oninput="filterRankings()" />
       </div>
+      <button class="mobile-filter-toggle" id="mobile-filter-toggle" onclick="toggleMobileFilters()" style="display:none">⊟ Filters</button>
+      <div id="collapsible-filters">
       <div class="format-row" id="format-row">
         <span class="format-row-label">Formats:</span>
         <button class="format-btn active" data-format="TV"       onclick="toggleFormat('TV')">TV</button>
@@ -474,6 +476,7 @@
         <button class="format-btn active" data-ep="vlong"   onclick="toggleEpRange('vlong')"  >70+</button>
         <button class="format-btn active" data-ep="unknown" onclick="toggleEpRange('unknown')">Unknown</button>
       </div>
+      </div><!-- end collapsible-filters -->
       <div class="list-controls">
         <button class="sort-btn active" data-sort="elo"     data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
         <button class="sort-btn"        data-sort="title"   data-label="Title"      onclick="setSort('title')">Title</button>

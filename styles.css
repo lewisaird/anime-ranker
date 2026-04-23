@@ -2401,11 +2401,52 @@
       /* ── Rankings tab controls ── */
       #search-wrap input { width: 100%; box-sizing: border-box; }
       #search-wrap { width: 100%; }
-      .list-controls { gap: 6px; }
-      .sort-btn { font-size: 0.72rem; padding: 4px 8px; }
-      .fuzzy-filter-btn { font-size: 0.72rem; padding: 4px 8px; margin-left: 0; }
-      #view-toggle-wrap { margin-left: auto; }
-      .format-btn { font-size: 0.68rem; padding: 3px 7px; }
+
+      /* Collapsible filters toggle — shown only on mobile */
+      .mobile-filter-toggle {
+        display: flex !important;
+        align-items: center;
+        gap: 6px;
+        background: #21262d;
+        border: 1px solid #30363d;
+        color: #8b949e;
+        font-size: 0.78rem;
+        padding: 5px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        margin-bottom: 8px;
+        width: 100%;
+        justify-content: center;
+      }
+      .mobile-filter-toggle.active { border-color: #58a6ff; color: #58a6ff; }
+      #collapsible-filters { display: none; }
+      #collapsible-filters.open { display: block; }
+
+      /* Format/length rows — horizontal scroll on mobile */
+      .format-row {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 4px;
+      }
+      .format-row::-webkit-scrollbar { display: none; }
+      .format-btn { flex-shrink: 0; font-size: 0.7rem; padding: 4px 10px; }
+
+      /* Sort/control row — horizontal scroll on mobile */
+      .list-controls {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        gap: 5px;
+        padding-bottom: 4px;
+      }
+      .list-controls::-webkit-scrollbar { display: none; }
+      .sort-btn { flex-shrink: 0; font-size: 0.72rem; padding: 4px 8px; }
+      .fuzzy-filter-btn { flex-shrink: 0; font-size: 0.72rem; padding: 4px 8px; margin-left: 0; }
+      #franchise-btn { flex-shrink: 0; }
+      #view-toggle-wrap { flex-shrink: 0; margin-left: auto; }
 
       /* ── Results util bar — allow wrapping ── */
       .results-util-bar { flex-wrap: wrap; }
