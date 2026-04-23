@@ -2316,22 +2316,37 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
 //      "Sword Art Online: Alicization" → "Sword Art Online"
 function _franchiseBaseName(title) {
   return title
+    // Strip parenthetical format/year qualifiers e.g. "(TV)", "(2019)", "(Movie)"
+    .replace(/\s*\([^)]*\)\s*$/, '')
     // Strip -Japanese Subtitle- wrappers (e.g. "Demon Slayer -Kimetsu no Yaiba-")
     .replace(/\s*-[^-\s][^-]*-/g, '')
+    // Strip "tri." franchise label (e.g. "Digimon Adventure tri. Chapter 1")
+    .replace(/\s+tri\.?\s*(Chapter.*)?$/i, '')
+    // Strip "Chapter N" markers (e.g. "Digimon Adventure tri. Chapter 1: Reunion")
+    .replace(/\s+Chapter\s*[\d]+.*$/i, '')
+    // Strip all-caps subtitle word + colon (e.g. "SPY x FAMILY CODE: White" → "SPY x FAMILY")
+    .replace(/\s+[A-Z]{2,}:.*$/, '')
     // Strip everything from colon onwards (e.g. ": Kimetsu no Yaiba", ": The Final Season")
     .replace(/\s*:.*$/, '')
     // Strip OVA/Special/Recap suffixes (e.g. "Baccano! Specials", "Series Name OVA")
     .replace(/[!\s]+(Specials?|OVAs?|ONAs?|Recaps?|Extra|Encore)$/i, s => s.startsWith('!') ? '!' : '')
+    // Normalise trailing ! count so "Show!" and "Show!!" match
+    .replace(/!+$/, '!')
     // Strip "The Movie" and anything after
     .replace(/\s+(The\s+)?Movie\b.*/i, '')
-    // Strip season/part/cour markers
+    // Strip "Final Season/Part/Chapter" as a phrase first
+    .replace(/\s+(Final|The\s+Final)\s+(Season|Part|Chapter|Arc|Cour).*$/i, '')
+    // Strip season/part/cour markers with number
     .replace(/\s+(Season|Part|Cour)\s*[IVXivx\d]+.*$/i, '')
     .replace(/\s+\d+(?:st|nd|rd|th)\s+Season.*$/i, '')
-    // Strip trailing Roman/ASCII/Unicode multiplier suffixes (e.g. II, ××, ✕✕)
-    .replace(/\s+(II|III|IV|V|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
+    // Strip bare "Season" with nothing after
+    .replace(/\s+Season\s*$/i, '')
+    // Strip trailing Roman numerals (II, III etc.) but NOT single I or X
+    // to avoid mangling titles like "To Be Hero X" or "Danmachi I"
+    .replace(/\s+(III|IV|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
     .replace(/[\s×✕✗]+[\d×✕✗]+$/, '')
     // Strip common spin-off/sequel single-word suffixes
-    .replace(/\s+(Twin|Twins|Zero|Origins?|Returns?|Revenge|Reborn|Reload|Revolution|Final)$/i, '')
+    .replace(/\s+(Twin|Twins|Origins?|Returns?|Revenge|Reborn|Reload|Revolution)$/i, '')
     // Strip trailing standalone numbers
     .replace(/\s+\d+$/, '')
     .trim();
@@ -2376,6 +2391,10 @@ function _buildFranchiseGroups(sorted) {
     group.bestElo = Math.round(group.members.reduce((s, a) => s + a.elo, 0) / group.members.length);
     group.cover  = group.members[0].cover;
     group.format = group.members[0].format;
+    // Single-entry groups: show the full original title, not the stripped base name
+    if (group.members.length === 1) {
+      group.name = group.members[0].titleEn || group.members[0].title;
+    }
     result.push(group);
   }
   result.sort((a, b) => b.bestElo - a.bestElo);
@@ -2495,6 +2514,7 @@ function renderRankingList() {
       groups.forEach((group, i) => frag.appendChild(_buildFranchiseCard(group, i, groups.length)));
       list.appendChild(frag);
     }
+    _filterFranchise(); // apply any active search term
     return;
   }
 
