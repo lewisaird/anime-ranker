@@ -6576,7 +6576,7 @@ function _applyBlindState() {
 //   (b) tapping the visible "⋯ Hold for more" chip directly.
 // A first-use tooltip (one-shot, guarded by KESSEN_KEYS.ui.longPressTipSeen)
 // explains the gesture the first time the battle screen is shown on touch.
-const _LONG_PRESS_MS = 500;
+const _LONG_PRESS_MS = 350;
 const _LONG_PRESS_MOVE_TOLERANCE = 10; // px — cancels if user starts scrolling
 const _longPressState = { timer: null, fired: false, startX: 0, startY: 0, side: -1 };
 

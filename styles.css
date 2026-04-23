@@ -2342,7 +2342,6 @@
       .anime-card.actions-expanded .card-actions {
         display: flex;
         margin-top: 6px;
-        animation: fadeInUp 0.18s ease;
       }
       .card-more-chip { display: inline-flex; }
     }
