@@ -24,7 +24,9 @@ async function verifyAniListToken(token) {
 
 // Use Node.js https module instead of fetch — MAL's API times out or blocks
 // requests from Netlify's servers when using the global fetch.
-// 3-second timeout so a hung MAL API doesn't stall the whole function.
+// 8-second timeout is generous enough that transient MAL slowness does not
+// masquerade as an auth failure. If MAL is truly down, we return 401 and the
+// client can retry — we never trust a client-asserted user id.
 function verifyMALToken(token) {
   return new Promise((resolve) => {
     const options = {
@@ -47,9 +49,7 @@ function verifyMALToken(token) {
       });
     });
     req.on('error', () => resolve(null));
-    // If MAL's API hangs, don't stall the whole Netlify function — resolve null
-    // and fall through to the client-supplied malUserId fallback.
-    req.setTimeout(3000, () => { req.destroy(); resolve(null); });
+    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
     req.end();
   });
 }
@@ -59,9 +59,9 @@ export default async (request, context) => {
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
   }
 
-  let token, malToken, malUserId;
+  let token, malToken;
   try {
-    ({ token, malToken, malUserId } = await request.json());
+    ({ token, malToken } = await request.json());
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -70,19 +70,15 @@ export default async (request, context) => {
     return Response.json({ error: 'Missing token' }, { status: 400 });
   }
 
+  // The session blob key is derived ONLY from a server-verified token.
+  // Never fall back to a client-supplied user id — doing so would let anyone
+  // read/write/delete any MAL user's saved session by guessing their numeric id.
   let userId;
   try {
     if (token) {
       userId = await verifyAniListToken(token);
     } else {
       userId = await verifyMALToken(malToken);
-      // Fall back to client-provided userId if server-side MAL verification fails.
-      // MAL's API often blocks or times out requests from Netlify's servers.
-      // The token is already validated client-side; this only affects storage key scoping.
-      const numericId = parseInt(malUserId, 10);
-      if (!userId && numericId) {
-        userId = `mal_${numericId}`;
-      }
     }
     if (!userId) throw new Error('No user id');
   } catch {

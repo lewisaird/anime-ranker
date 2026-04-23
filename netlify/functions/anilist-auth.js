@@ -68,7 +68,7 @@ exports.handler = async (event) => {
               body: JSON.stringify(parsed),
             });
           }
-        } catch (e) {
+        } catch (_e) {
           resolve({ statusCode: 500, body: JSON.stringify({ error: 'Parse error', raw: data }) });
         }
       });

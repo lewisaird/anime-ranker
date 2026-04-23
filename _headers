@@ -1,0 +1,45 @@
+# ───────────────────────── Security headers (all paths) ──────────────────────
+# CSP — Content Security Policy. Limits what the browser will load/execute even
+# if an attacker injects HTML. Everything the app actually needs is allowlisted
+# explicitly; anything else (arbitrary external scripts, inline event handlers,
+# data: / javascript: URLs in <img src>) is refused by the browser.
+#
+# NOTE: 'unsafe-inline' is required for script-src and style-src because the
+# entire application lives in a single HTML file with inline <script> and
+# inline style="…" attributes. Migrating to external files + a nonce would let
+# us drop 'unsafe-inline' entirely — that's a future hardening step.
+#
+# Allowed image/API hosts:
+#   • s4.anilist.co           — AniList cover images
+#   • img.anili.st            — AniList alt CDN
+#   • cdn.myanimelist.net     — MAL cover images
+#   • myanimelist.cdn-dena.com — MAL legacy CDN
+#   • graphql.anilist.co      — AniList GraphQL API (connect-src)
+#   • api.myanimelist.net     — MAL REST API (connect-src; only used by Netlify
+#                               Functions server-side, but allowlisted anyway in
+#                               case a future change calls it from the client)
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://s4.anilist.co https://img.anili.st https://cdn.myanimelist.net https://myanimelist.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://graphql.anilist.co https://api.myanimelist.net; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# ─────────────────────── Cache-control for critical files ───────────────────
+# Service worker and manifest must never be served from cache —
+# browsers need to fetch them fresh to pick up updates (name changes, new cache keys, etc.)
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/manifest.json
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Digital Asset Links — Google uses this to verify TWA ownership.
+# Content-Type must be application/json (Netlify auto-detects .json but we
+# pin it explicitly so Play's verifier never sees the wrong MIME).
+# Short max-age so a SHA correction propagates within an hour, not a day.
+/.well-known/assetlinks.json
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600, must-revalidate
+  X-Robots-Tag: noindex

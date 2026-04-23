@@ -1,12 +1,17 @@
 {
   "name": "Kessen",
   "short_name": "Kessen",
-  "description": "Rank your anime watchlist using head-to-head ELO battles",
-  "start_url": "/",
+  "description": "Rank your anime watchlist using head-to-head ELO battles. Connects to AniList and MyAnimeList.",
+  "id": "/?source=pwa",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#0d1117",
   "theme_color": "#161b22",
   "orientation": "any",
+  "lang": "en-GB",
+  "dir": "ltr",
   "icons": [
     {
       "src": "/icon.svg",
@@ -27,5 +32,59 @@
       "purpose": "any maskable"
     }
   ],
-  "categories": ["entertainment", "games"]
+  "shortcuts": [
+    {
+      "name": "Continue battling",
+      "short_name": "Battle",
+      "description": "Resume your current ELO ranking session",
+      "url": "/?action=battle",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "See rankings",
+      "short_name": "Rankings",
+      "description": "Open your current top list",
+      "url": "/?action=rankings",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/phone-1.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Pick your favourite in a head-to-head battle"
+    },
+    {
+      "src": "/screenshots/phone-2.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Your personal top list, sorted by ELO"
+    },
+    {
+      "src": "/screenshots/phone-3.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Compare taste with friends"
+    },
+    {
+      "src": "/screenshots/phone-4.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "See which anime you've battled most"
+    },
+    {
+      "src": "/screenshots/phone-5.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Discover anime tailored to your top picks"
+    }
+  ],
+  "categories": ["entertainment", "utilities"],
+  "prefer_related_applications": false
 }

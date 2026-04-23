@@ -44,7 +44,7 @@ function verifyMALToken(token) {
       });
     });
     req.on('error', () => resolve(null));
-    req.setTimeout(3000, () => { req.destroy(); resolve(null); });
+    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
     req.end();
   });
 }
@@ -54,9 +54,9 @@ export default async (request, context) => {
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
   }
 
-  let token, malToken, malUserId;
+  let token, malToken;
   try {
-    ({ token, malToken, malUserId } = await request.json());
+    ({ token, malToken } = await request.json());
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -65,16 +65,15 @@ export default async (request, context) => {
     return Response.json({ error: 'Missing token' }, { status: 400 });
   }
 
+  // The session blob key is derived ONLY from a server-verified token.
+  // Never fall back to a client-supplied user id — doing so would let anyone
+  // delete any MAL user's saved session by guessing their numeric id.
   let userId;
   try {
     if (token) {
       userId = await verifyAniListToken(token);
     } else {
       userId = await verifyMALToken(malToken);
-      const numericId = parseInt(malUserId, 10);
-      if (!userId && numericId) {
-        userId = `mal_${numericId}`;
-      }
     }
     if (!userId) throw new Error('No user id');
   } catch {

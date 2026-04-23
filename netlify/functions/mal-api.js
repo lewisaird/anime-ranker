@@ -13,13 +13,44 @@
 
 const https = require('https');
 
+// Origin allowlist — requests from any other origin (or none) are refused.
+// Without this the function becomes a free, authenticated proxy for anyone
+// with a bearer token, which burns MAL_CLIENT_ID quota and risks a ban.
+// Production domain + Netlify deploy previews + localhost for `netlify dev`.
+// Can be extended via the ALLOWED_ORIGINS env var (comma-separated).
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://kessen.co.uk',
+  'https://www.kessen.co.uk',
+];
+const EXTRA_ALLOWED = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const ALLOWED_ORIGIN_PATTERNS = [
+  ...DEFAULT_ALLOWED_ORIGINS,
+  ...EXTRA_ALLOWED,
+  /^https:\/\/[a-z0-9-]+--kessen\.netlify\.app$/,  // deploy previews
+  /^https:\/\/kessen\.netlify\.app$/,               // main Netlify URL
+  /^https:\/\/[a-z0-9-]+\.netlify\.app$/,           // generic *.netlify.app
+  /^http:\/\/localhost(:\d+)?$/,                    // netlify dev
+  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+];
+function isOriginAllowed(origin) {
+  if (!origin) return false;
+  for (const p of ALLOWED_ORIGIN_PATTERNS) {
+    if (typeof p === 'string' && p === origin) return true;
+    if (p instanceof RegExp && p.test(origin)) return true;
+  }
+  return false;
+}
+
 // Make one HTTPS request to api.myanimelist.net and return { statusCode, headers, body }
 function malRequest(path, token, method, reqBody) {
   return new Promise((resolve, reject) => {
     const bodyBuf = (reqBody && method !== 'GET') ? Buffer.from(reqBody, 'utf8') : null;
     // Include MAL_CLIENT_ID alongside Bearer token — some MAL write endpoints
-    // expect both to be present. Also send a User-Agent so MAL's WAF doesn't
-    // treat the request as a headless bot (MAL blocks many server-side user agents).
+    // expect both to be present. Use a truthful User-Agent that identifies this
+    // app (per MAL API guidance) rather than spoofing a browser. If MAL's WAF
+    // starts blocking this UA, open a support request with MAL rather than
+    // reinstating the spoof — the spoof is a ToS grey zone.
     const clientId = process.env.MAL_CLIENT_ID;
     const options = {
       hostname: 'api.myanimelist.net',
@@ -28,7 +59,7 @@ function malRequest(path, token, method, reqBody) {
       headers: {
         'Authorization':  'Bearer ' + token,
         'Accept':         'application/json',
-        'User-Agent':     'Mozilla/5.0 (compatible; Kessen/1.0)',
+        'User-Agent':     'Kessen/1.0 (+https://kessen.co.uk)',
         ...(clientId ? { 'X-MAL-Client-ID': clientId } : {}),
         ...(bodyBuf ? {
           'Content-Type':   'application/x-www-form-urlencoded',
@@ -60,6 +91,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
+
+  // Origin/Referer allowlist — prevents the function being used as an open
+  // authenticated MAL proxy by anyone on the internet with a bearer token.
+  // Falls back to Referer's origin when Origin is absent (older browsers).
+  const headers = event.headers || {};
+  const rawOrigin = headers.origin || headers.Origin || '';
+  let origin = rawOrigin;
+  if (!origin) {
+    const ref = headers.referer || headers.Referer || '';
+    try { origin = ref ? new URL(ref).origin : ''; } catch { origin = ''; }
+  }
+  if (!isOriginAllowed(origin)) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Forbidden origin' }) };
   }
 
   let path, token, method, body;
