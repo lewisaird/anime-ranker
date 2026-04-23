@@ -19,16 +19,31 @@
       border-bottom: 1px solid #30363d;
       /* Safe-area padding so the header isn't clipped under a notch/status bar
          in TWA or on iOS PWA. env() falls back to 0 on browsers without support. */
-      padding: calc(16px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) 16px calc(24px + env(safe-area-inset-left));
+      padding: calc(8px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) 8px calc(24px + env(safe-area-inset-left));
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
     header h1 {
       font-size: 1.2rem;
       font-weight: 600;
       color: #58a6ff;
+      line-height: 1;
+      margin: 0;
+    }
+    .header-logo {
+      width: 40px;
+      height: 40px;
+      border-radius: 9px;
+      display: block;
+      flex-shrink: 0;
     }
 
     #progress-info {
@@ -175,6 +190,26 @@
        at a glance. The popover lives in .mode-control; see #mode-popover below. */
     #mode-btn.active-settle { background: #1a2d1a; border-color: #238636; color: #3fb950; }
     #mode-btn.active-blind  { background: #1a1230; border-color: #6e40c9; color: #a371f7; }
+    #filter-btn.has-filter  { border-color: #d29922; color: #e3b341; }
+
+    #filter-popover {
+      display: none; position: absolute; top: calc(100% + 6px); right: 0;
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 12px; z-index: 100; min-width: 200px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    #filter-popover.open { display: block; }
+    .filter-popover-title { font-size: 0.75rem; color: #8b949e; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .filter-format-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .filter-fmt-btn {
+      padding: 4px 10px; font-size: 0.8rem; border-radius: 6px; cursor: pointer;
+      border: 1px solid #30363d; background: #21262d; color: #e6edf3;
+      transition: all 0.1s;
+    }
+    .filter-fmt-btn.active { background: #1f4070; border-color: #388bfd; color: #79b8ff; }
+    .filter-fmt-btn.hidden-fmt { background: #21262d; border-color: #30363d; color: #6e7681; text-decoration: line-through; }
+    .filter-popover-hint { font-size: 0.72rem; color: #6e7681; line-height: 1.4; }
     .mode-control { position: relative; display: inline-flex; align-items: stretch; }
     #mode-popover {
       display: none;
@@ -641,6 +676,7 @@
       text-align: center;
     }
     .welcome-box .welcome-emoji { font-size: 2.4rem; margin-bottom: 12px; }
+    .welcome-logo { width: 72px; height: 72px; border-radius: 16px; margin-bottom: 12px; }
     .welcome-box h2 { font-size: 1.4rem; color: #e6edf3; margin-bottom: 8px; }
     .welcome-box .welcome-subtitle { font-size: 0.9rem; color: #8b949e; margin-bottom: 24px; line-height: 1.5; }
     .welcome-steps {
@@ -689,6 +725,27 @@
     }
     .welcome-cta:hover { opacity: 0.9; }
 
+    .welcome-page { width: 100%; }
+
+    .welcome-elo-explainer {
+      display: flex; flex-direction: column; gap: 12px;
+      margin-bottom: 24px; text-align: left;
+    }
+    .welcome-elo-row {
+      display: flex; align-items: flex-start; gap: 12px;
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 8px; padding: 12px;
+    }
+    .welcome-elo-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 1px; }
+    .welcome-elo-row span:last-child { font-size: 0.85rem; color: #8b949e; line-height: 1.5; }
+
+    .welcome-login-link {
+      width: 100%; background: transparent; border: none;
+      color: #58a6ff; font-size: 0.88rem; padding: 10px;
+      cursor: pointer; margin-top: 8px;
+    }
+    .welcome-login-link:hover { text-decoration: underline; }
+
     .ranking-list {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -713,6 +770,107 @@
     /* Global image fallback — grey background shown while loading or if src fails */
     img { background: #21262d; }
     img.img-broken { opacity: 0.3; }
+
+    /* Franchise view in list mode — single column */
+    .ranking-list.franchise-view {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Franchise grouping cards — base */
+    .franchise-group {
+      overflow: hidden;
+      contain-intrinsic-block-size: auto;
+      content-visibility: visible;
+    }
+
+    /* List-mode franchise cards */
+    .franchise-group:not(.franchise-grid-card) {
+      align-items: stretch !important;
+      text-align: left !important;
+      padding: 0 !important;
+      width: 100%;
+    }
+
+    /* Grid-mode franchise cards — same look as regular rank-cards */
+    .franchise-grid-card {
+      position: relative;
+      cursor: pointer;
+    }
+    .franchise-grid-meta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .franchise-table-group { cursor: pointer; }
+    .franchise-table-group:hover td { background: #1c2128; }
+    .franchise-table-member:hover td { background: #1a1f25; }
+    .franchise-table-member td { background: #0d1117; border-top: none; }
+    .franchise-table-chevron { display: inline-block; transition: transform 0.15s; }
+
+    .franchise-expand-btn {
+      font-size: 0.72rem;
+      color: #58a6ff;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 2px 0;
+      margin-top: 2px;
+    }
+    .franchise-expand-btn:hover { text-decoration: underline; }
+    .franchise-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      cursor: pointer;
+    }
+    .franchise-header:hover { background: #1c2128; }
+    .franchise-group .franchise-header img {
+      width: 48px !important;
+      height: 68px !important;
+      max-width: none !important;
+      object-fit: cover;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .franchise-info { flex: 1; min-width: 0; }
+    .franchise-name { font-size: 0.9rem; font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
+    .franchise-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .franchise-elo { font-size: 0.78rem; color: #8b949e; }
+    .franchise-count { font-size: 0.75rem; color: #58a6ff; background: #1a2d4d; border-radius: 10px; padding: 1px 7px; }
+    .franchise-chevron { color: #6e7681; font-size: 0.8rem; transition: transform 0.15s; flex-shrink: 0; }
+    /* List-mode franchise members (horizontal row with image) */
+    .franchise-members { border-top: 1px solid #30363d; }
+    .franchise-member {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid #21262d;
+    }
+    .franchise-member:last-child { border-bottom: none; }
+    .franchise-member:hover { background: #1c2128; }
+    .franchise-group .franchise-member img { width: 28px !important; height: 40px !important; max-width: none !important; object-fit: cover; border-radius: 3px; flex-shrink: 0; }
+    .franchise-member-title { flex: 1; font-size: 0.82rem; color: #c9d1d9; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .franchise-member-elo { font-size: 0.75rem; color: #8b949e; flex-shrink: 0; }
+
+    /* Grid-mode franchise members — compact stacked list, no image */
+    .franchise-grid-card .franchise-members {
+      border-top: 1px solid #30363d;
+      width: 100%;
+    }
+    .franchise-grid-card .franchise-member {
+      padding: 5px 8px;
+      gap: 6px;
+    }
+    .franchise-grid-card .franchise-member img { display: none !important; }
+    .franchise-grid-card .franchise-member-title { font-size: 0.75rem; white-space: normal; line-height: 1.3; }
+    .franchise-grid-card .franchise-member-elo { font-size: 0.7rem; }
 
     .rank-card img {
       width: 100%;
@@ -835,23 +993,22 @@
     .history-list {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      max-height: 400px;
-      overflow-y: auto;
+      gap: 4px;
     }
     .history-item {
       display: grid;
-      grid-template-columns: 1fr auto 1fr;
+      grid-template-columns: auto 1fr auto 1fr;
       align-items: center;
       gap: 10px;
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 8px;
-      padding: 8px 14px;
+      padding: 8px 12px;
       font-size: 0.82rem;
     }
+    .history-item .history-num { color: #6e7681; font-size: 0.72rem; min-width: 32px; }
     .history-item .winner { color: #3fb950; font-weight: 600; }
-    .history-item .loser  { color: #8b949e; }
+    .history-item .loser  { color: #8b949e; text-align: right; }
     .history-item .elo-change { text-align: center; color: #58a6ff; font-size: 0.75rem; white-space: nowrap; }
 
     /* CARD ACTIONS (fuzzy + anilist on battle cards) */
