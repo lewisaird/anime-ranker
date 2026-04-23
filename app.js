@@ -2083,9 +2083,9 @@ function renderCurrentPair() {
 
 function renderBattle() {
   let ia, ib;
-  if (nextPairOverride) {
-    [ia, ib] = nextPairOverride;
-    nextPairOverride = null;
+  if (nextPairOverride && nextPairOverride.length > 0) {
+    [ia, ib] = nextPairOverride.shift();
+    if (nextPairOverride.length === 0) nextPairOverride = null;
   } else if (settleMode) {
     const pair = pickSettlePair();
     [ia, ib] = pair ?? pickOpponents();
@@ -2199,7 +2199,7 @@ function undoLast() {
   if (battleHistory.length > 0) battleHistory.shift();
 
   // After undo, if the user re-picks from pairA/pairB, restore the same next pair
-  nextPairOverride = [nextA, nextB];
+  nextPairOverride = [[nextA, nextB], ...(nextPairOverride || [])];
 
   prevState = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
   _updateUndoBtn();
