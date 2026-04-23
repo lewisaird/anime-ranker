@@ -2325,29 +2325,40 @@ function _franchiseBaseName(title) {
     // Strip season/part/cour markers
     .replace(/\s+(Season|Part|Cour)\s*[IVXivx\d]+.*$/i, '')
     .replace(/\s+[2-9](?:nd|rd|th)\s+Season.*$/i, '')
-    // Strip trailing Roman numerals
-    .replace(/\s+(II|III|IV|V|VI|VII|VIII|IX|X)$/i, '')
+    // Strip trailing Roman/ASCII/Unicode multiplier suffixes (e.g. II, ××, ✕✕)
+    .replace(/\s+(II|III|IV|V|VI|VII|VIII|IX|XX?|XI|XII)$/i, '')
+    .replace(/[\s×✕✗]+[\d×✕✗]+$/, '')
+    // Strip common spin-off/sequel single-word suffixes
+    .replace(/\s+(Twin|Twins|Zero|Origins?|Returns?|Revenge|Reborn|Reload|Revolution)$/i, '')
     // Strip trailing standalone numbers
     .replace(/\s+\d+$/, '')
     .trim();
 }
 
+// Case-insensitive key for grouping
+function _franchiseKey(title) {
+  return _franchiseBaseName(title).toLowerCase();
+}
+
 // Build franchise groups from the current animeList.
 // Returns an array of group objects sorted by best ELO descending.
 function _buildFranchiseGroups(sorted) {
-  const groups = new Map(); // baseName → [anime, ...]
+  const groups    = new Map(); // key → [anime, ...]
+  const keyToName = new Map(); // key → display name (first seen title's base)
   for (const a of sorted) {
-    const base = _franchiseBaseName(a.titleEn || a.title);
-    if (!groups.has(base)) groups.set(base, []);
-    groups.get(base).push(a);
+    const raw  = a.titleEn || a.title;
+    const base = _franchiseBaseName(raw);
+    const key  = base.toLowerCase();
+    if (!groups.has(key)) { groups.set(key, []); keyToName.set(key, base); }
+    groups.get(key).push(a);
   }
   // Convert to array and sort each group by ELO desc
   const result = [];
-  for (const [base, members] of groups) {
+  for (const [key, members] of groups) {
     members.sort((a, b) => b.elo - a.elo);
     const avgElo = Math.round(members.reduce((sum, a) => sum + a.elo, 0) / members.length);
     result.push({
-      name:    base,
+      name:    keyToName.get(key),
       members,
       bestElo: avgElo,
       cover:   members[0].cover,
@@ -2608,6 +2619,27 @@ function renderHistory() {
   list.appendChild(frag);
   const searchEl = byId(IDS.historySearch);
   if (searchEl && searchEl.value) filterHistory(searchEl.value);
+}
+
+function _filterFranchise() {
+  const q = (byId(IDS.searchInput)?.value || '').toLowerCase().trim();
+  if (rankingView === 'grid') {
+    document.querySelectorAll('#ranking-list .franchise-group').forEach(card => {
+      const name = (card.dataset.franchiseName || '').toLowerCase();
+      card.style.display = (!q || name.includes(q)) ? '' : 'none';
+    });
+  } else {
+    // List mode — filter group header rows and hide/show their members together
+    document.querySelectorAll('#ranking-table-body .franchise-table-group').forEach(row => {
+      const title = row.querySelector('.tbl-title')?.textContent?.toLowerCase() || '';
+      const show  = !q || title.includes(q);
+      row.style.display = show ? '' : 'none';
+      const gid = row.dataset.gid;
+      if (gid) document.querySelectorAll(`[data-member-gid="${gid}"]`).forEach(r => {
+        r.style.display = show ? (r.style.display === 'none' && !r.dataset.expanded ? 'none' : '') : 'none';
+      });
+    });
+  }
 }
 
 function filterHistory(q) {
@@ -5747,7 +5779,7 @@ function flagFuzzy(event, side) {
 
 // ─── SEARCH / FILTER ──────────────────────────────────────────────────────────
 function filterRankings() {
-  if (franchiseMode) return; // franchise cards have their own filtering
+  if (franchiseMode) { _filterFranchise(); return; }
   const q = byId(IDS.searchInput).value.toLowerCase().trim();
   // Build a quick id→fuzzy lookup from the data model (not DOM) so that
   // unfuzzying an anime is reflected immediately without a full re-render.
