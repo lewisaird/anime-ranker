@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.3" />
+  <meta name="version" content="1.0.4" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -647,7 +647,7 @@
           <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
           <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
-          <button class="manage-btn" id="export-image-btn" onclick="exportTierListImage()">🖼️ Download tier list image</button>
+          <button class="manage-btn" id="export-image-btn" onclick="openShareFromManage()">🖼️ Share / export tier list image</button>
         </div>
 
         <div class="manage-section" id="manage-anilist-section" style="display:none">
@@ -880,29 +880,14 @@
       ⬇️ Download tier list image
     </button>
 
-    <!-- Desktop-only: copy image to clipboard (paste into any chat app) -->
+    <!-- Desktop-only: copy image to clipboard -->
     <button class="btn-secondary share-copy-image" id="share-copy-image-btn" onclick="copyTierListImageToClipboard()" style="display:none">
       📋 Copy image to clipboard
     </button>
 
-    <!-- Divider -->
-    <div class="share-divider"><span>or share a link</span></div>
-
-    <!-- Social buttons -->
-    <div class="share-social-row" aria-label="Share to social platforms">
-      <button type="button" class="share-social-btn share-twitter"  onclick="shareToSocial('twitter')"  aria-label="Share on X / Twitter">𝕏</button>
-      <button type="button" class="share-social-btn share-whatsapp" onclick="shareToSocial('whatsapp')" aria-label="Share on WhatsApp">💬</button>
-      <button type="button" class="share-social-btn share-telegram" onclick="shareToSocial('telegram')" aria-label="Share on Telegram">✈️</button>
-      <button type="button" class="share-social-btn share-reddit"   onclick="shareToSocial('reddit')"   aria-label="Share on Reddit">🔴</button>
-      <button type="button" class="share-social-btn share-facebook" onclick="shareToSocial('facebook')" aria-label="Share on Facebook">f</button>
-    </div>
-
-    <!-- Collapsed encoded URL (still reachable via Copy link) -->
-    <details class="share-link-details">
-      <summary>Show share link</summary>
-      <textarea id="share-url" readonly aria-label="Share link"></textarea>
-      <button class="btn-secondary share-copy-link" onclick="copyShareLink()" id="copy-btn">📋 Copy link</button>
-    </details>
+    <!-- Share link -->
+    <textarea id="share-url" readonly aria-label="Share link"></textarea>
+    <button class="btn-secondary share-copy-link" onclick="copyShareLink()" id="copy-btn">📋 Copy link</button>
 
     <button class="share-close-bottom" onclick="closeShare()">Close</button>
   </div>

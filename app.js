@@ -2828,20 +2828,22 @@ async function deleteAllData() {
   if (!ok) return;
 
   // 1. Delete cloud save FIRST — we need auth tokens to authenticate the
-  //    delete request. Best-effort: a network failure here still proceeds
-  //    with the local wipe; the user already confirmed destructive intent.
+  //    delete request. If the cloud delete fails (e.g. MAL token verification
+  //    times out on Netlify), warn the user so they know the blob may persist.
+  let cloudDeleteOk = true;
   try {
     const body = authToken
       ? { token: authToken }
       : { malToken: malAuthToken, malUserId: malAuthUser?.id };
     if (body.token || body.malToken) {
-      await fetch('/.netlify/functions/delete-session', {
+      const resp = await fetch('/.netlify/functions/delete-session', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(body),
       });
+      if (!resp.ok) cloudDeleteOk = false;
     }
-  } catch { /* silent — local data is about to be gone too */ }
+  } catch { cloudDeleteOk = false; }
 
   // 2. Remove every Kessen key from localStorage. Covers the consolidated
   //    `kessen.*` namespace (§6.2.17) plus legacy `anime_elo_*` and `kessen_*`
@@ -2864,7 +2866,11 @@ async function deleteAllData() {
   _updateMALAuthUI();
   _clearRankingState();
 
-  showToast('✓ All your data has been deleted.');
+  if (cloudDeleteOk) {
+    showToast('✓ All your data has been deleted.');
+  } else {
+    showToast('⚠️ Local data cleared, but cloud data could not be deleted. Log back in and try again, or email feedback@kessen.co.uk.', 6000);
+  }
 }
 
 // Show the Change User button unless the current session IS the user's own OAuth account.
@@ -4939,6 +4945,9 @@ function closeShare() {
   document.removeEventListener('keydown', _shareEscHandler);
 }
 function closeShareOnOverlay(e) { if (e.target === byId(IDS.shareModal)) closeShare(); }
+
+// Opens the share modal from the Manage tab — equivalent to shareRankings().
+function openShareFromManage() { shareRankings(); }
 
 // ─── HELP MODAL ───────────────────────────────────────────────────────────────
 function showHelp()  { byId(IDS.helpModal).style.display = 'flex'; }
