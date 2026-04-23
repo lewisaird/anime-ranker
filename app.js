@@ -2337,7 +2337,6 @@ function _franchiseBaseName(title) {
     .trim();
 }
 
-// Case-insensitive key for grouping
 function _franchiseKey(title) {
   return _franchiseBaseName(title).toLowerCase();
 }
@@ -2345,27 +2344,39 @@ function _franchiseKey(title) {
 // Build franchise groups from the current animeList.
 // Returns an array of group objects sorted by best ELO descending.
 function _buildFranchiseGroups(sorted) {
-  const groups    = new Map(); // key → [anime, ...]
-  const keyToName = new Map(); // key → display name (first seen title's base)
+  // keyMap: any normalised key (English or Romaji) → canonical group key
+  // This lets an anime stored with its Romaji title still find a group that
+  // was created under the English title, and vice-versa.
+  const keyMap = new Map();
+  const groups = new Map(); // canonical key → { name, members }
+
   for (const a of sorted) {
-    const raw  = a.titleEn || a.title;
-    const base = _franchiseBaseName(raw);
-    const key  = base.toLowerCase();
-    if (!groups.has(key)) { groups.set(key, []); keyToName.set(key, base); }
-    groups.get(key).push(a);
+    const enRaw = a.titleEn || a.title || '';
+    const roRaw = a.titleRo || a.title || '';
+    const enKey = _franchiseKey(enRaw);
+    const roKey = _franchiseKey(roRaw);
+
+    // Check if either key already has a group
+    const canon = keyMap.get(enKey) || keyMap.get(roKey) || enKey;
+
+    if (!groups.has(canon)) {
+      groups.set(canon, { name: _franchiseBaseName(enRaw), members: [] });
+    }
+
+    // Register both keys so future anime with either title variant find this group
+    keyMap.set(enKey, canon);
+    if (roKey !== enKey) keyMap.set(roKey, canon);
+
+    groups.get(canon).members.push(a);
   }
-  // Convert to array and sort each group by ELO desc
+
   const result = [];
-  for (const [key, members] of groups) {
-    members.sort((a, b) => b.elo - a.elo);
-    const avgElo = Math.round(members.reduce((sum, a) => sum + a.elo, 0) / members.length);
-    result.push({
-      name:    keyToName.get(key),
-      members,
-      bestElo: avgElo,
-      cover:   members[0].cover,
-      format:  members[0].format,
-    });
+  for (const group of groups.values()) {
+    group.members.sort((a, b) => b.elo - a.elo);
+    group.bestElo = Math.round(group.members.reduce((s, a) => s + a.elo, 0) / group.members.length);
+    group.cover  = group.members[0].cover;
+    group.format = group.members[0].format;
+    result.push(group);
   }
   result.sort((a, b) => b.bestElo - a.bestElo);
   return result;
