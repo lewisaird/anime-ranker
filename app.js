@@ -1794,6 +1794,8 @@ function loadState(username, source = 'anilist') {
   if (!raw) return false;
   try {
     const s = JSON.parse(raw);
+    // Wipe marker written by another device — clear and start fresh
+    if (s._wiped) { localStorage.removeItem(saveKey); return false; }
     // Collision guard: if the saved payload belongs to a different OAuth
     // account than the one currently logged in, treat it as "no save" and
     // block further writes so we don't silently overwrite someone else.
@@ -2515,7 +2517,7 @@ function renderRankingList() {
     if (rankingView === 'list') {
       renderFranchiseTable();
     } else {
-      const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+      const sorted = getSortedList();
       let groups = _buildFranchiseGroups(sorted);
       if (showFuzzyOnly) groups = groups.filter(g => g.members.some(a => a.fuzzy));
       const frag = document.createDocumentFragment();
@@ -3077,26 +3079,22 @@ async function deleteAllData() {
   );
   if (!ok) return;
 
-  // 1. Write a wipe marker to the cloud BEFORE clearing local tokens.
-  //    Other devices that log in will see this marker and clear themselves.
-  //    Then delete the blob entirely so the marker doesn't linger.
+  // 1. Replace the cloud save with a wipe marker — do NOT delete the blob.
+  //    Leaving the marker means other devices will see it on next login and
+  //    clear themselves. It will be overwritten naturally when the user next saves.
   let cloudDeleteOk = true;
   try {
     const body = authToken
       ? { token: authToken }
       : { malToken: malAuthToken, malUserId: malAuthUser?.id };
     if (body.token || body.malToken) {
-      // First write a wipe marker so other devices can detect the deletion
-      await fetch('/.netlify/functions/save-session', {
+      const resp = await fetch('/.netlify/functions/save-session', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ...body, session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }) }),
-      }).catch(() => {});
-      // Then delete the session blob
-      const resp = await fetch('/.netlify/functions/delete-session', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
+        body:    JSON.stringify({
+          ...body,
+          session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }),
+        }),
       });
       if (!resp.ok) cloudDeleteOk = false;
     }
@@ -7343,7 +7341,7 @@ function _vsRenderTableSlice() {
 }
 
 function renderFranchiseTable() {
-  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  const sorted = getSortedList();
   let groups = _buildFranchiseGroups(sorted);
   if (showFuzzyOnly) groups = groups.filter(g => g.members.some(a => a.fuzzy));
   let html = '';
