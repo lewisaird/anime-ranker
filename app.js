@@ -6269,7 +6269,11 @@ function _syncSortUI() {
     const active = b.dataset.sort === currentSort;
     b.classList.toggle('active', active);
     const label = b.dataset.label || b.textContent.replace(/ [↑↓]$/, '');
-    b.textContent = active ? `${label} ${sortAsc ? '↑' : '↓'}` : label;
+    // For asc-first sorts (title/tier/confidence), flip the arrow so ↓ always
+    // means "natural/default direction" and ↑ means reversed — consistent with ELO.
+    const ascFirst = _ascFirstSorts.has(currentSort);
+    const showUp = ascFirst ? !sortAsc : sortAsc;
+    b.textContent = active ? `${label} ${showUp ? '↑' : '↓'}` : label;
   });
   // Update table headers
   document.querySelectorAll('#ranking-table thead th[id]').forEach(th => {
@@ -6277,7 +6281,9 @@ function _syncSortUI() {
     th.classList.toggle('sorted', isActive);
     // Strip any existing arrow then add current one
     const base = th.textContent.replace(/ [▾▴]$/, '');
-    th.textContent = isActive ? `${base} ${sortAsc ? '▴' : '▾'}` : base;
+    const ascFirst = _ascFirstSorts.has(currentSort);
+    const showUp = ascFirst ? !sortAsc : sortAsc;
+    th.textContent = isActive ? `${base} ${showUp ? '▴' : '▾'}` : base;
   });
 }
 
