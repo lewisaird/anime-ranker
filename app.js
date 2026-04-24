@@ -2397,6 +2397,7 @@ function _buildFranchiseGroups(sorted) {
 
   const result = [];
   for (const group of groups.values()) {
+    // Sort members within the group by ELO so the best cover is always shown first
     group.members.sort((a, b) => b.elo - a.elo);
     group.bestElo = Math.round(group.members.reduce((s, a) => s + a.elo, 0) / group.members.length);
     group.cover  = group.members[0].cover;
@@ -2407,7 +2408,9 @@ function _buildFranchiseGroups(sorted) {
     }
     result.push(group);
   }
-  result.sort((a, b) => b.bestElo - a.bestElo);
+  // Group order is preserved from getSortedList() insertion order — do NOT re-sort here.
+  // The Map preserves insertion order, so groups appear in the same order as their
+  // first-seen member in the sorted input list.
   return result;
 }
 
