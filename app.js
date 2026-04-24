@@ -1621,6 +1621,14 @@ function _applyCloudSaveToMemory(cloud) {
 async function checkAndApplyCloudSave(localSaveKey) {
   if (!_cloudSyncEnabled || !_activeCloudUser()) return false;
   const cloud = await _loadCloudSave();
+
+  // Wipe marker — another device deleted all data. Clear local copy and start fresh.
+  if (cloud && cloud._wiped) {
+    localStorage.removeItem(localSaveKey);
+    showToast('Your data was deleted from another device. Starting fresh.');
+    return false; // caller proceeds as if no local data
+  }
+
   if (!cloud || !cloud.animeList || !cloud.saveKey) return false;
 
   const cloudDate = cloud.savedAt ? new Date(cloud.savedAt) : null;
@@ -3069,15 +3077,22 @@ async function deleteAllData() {
   );
   if (!ok) return;
 
-  // 1. Delete cloud save FIRST — we need auth tokens to authenticate the
-  //    delete request. If the cloud delete fails (e.g. MAL token verification
-  //    times out on Netlify), warn the user so they know the blob may persist.
+  // 1. Write a wipe marker to the cloud BEFORE clearing local tokens.
+  //    Other devices that log in will see this marker and clear themselves.
+  //    Then delete the blob entirely so the marker doesn't linger.
   let cloudDeleteOk = true;
   try {
     const body = authToken
       ? { token: authToken }
       : { malToken: malAuthToken, malUserId: malAuthUser?.id };
     if (body.token || body.malToken) {
+      // First write a wipe marker so other devices can detect the deletion
+      await fetch('/.netlify/functions/save-session', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ...body, session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }) }),
+      }).catch(() => {});
+      // Then delete the session blob
       const resp = await fetch('/.netlify/functions/delete-session', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -5217,13 +5232,12 @@ function maybeShowHelp() {
 function maybeShowWelcome() {
   // Show once per device — guarded solely by KESSEN_KEYS.ui.welcomeSeen.
   if (!localStorage.getItem(KESSEN_KEYS.ui.welcomeSeen)) {
-    // If already logged in, skip page 2 — just show a quick how-it-works screen
+    // If already logged in, skip page 2 — change Next to a direct dismiss
     const isLoggedIn = !!(authToken || malAuthToken);
     const nextBtn = byId('welcome-next-btn');
-    if (nextBtn) nextBtn.style.display = isLoggedIn ? 'none' : '';
-    if (isLoggedIn) {
-      // Replace Next with a direct dismiss for logged-in users
-      if (nextBtn) { nextBtn.textContent = 'Got it, let\'s rank! ▶'; nextBtn.onclick = dismissWelcome; }
+    if (nextBtn && isLoggedIn) {
+      nextBtn.textContent = 'Got it, let\'s rank! ▶';
+      nextBtn.onclick = dismissWelcome;
     }
     byId(IDS.welcomeModal).style.display = 'flex';
   }
