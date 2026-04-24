@@ -2357,12 +2357,14 @@ function _franchiseBaseName(title) {
     .replace(/\s+Season\s*$/i, '')
     // Strip trailing Roman numerals (II, III etc.) but NOT single I or X
     // to avoid mangling titles like "To Be Hero X" or "Danmachi I"
-    .replace(/\s+(III|IV|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
+    .replace(/\s+(II|III|IV|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
     .replace(/[\s×✕✗]+[\d×✕✗]+$/, '')
     // Strip common spin-off/sequel single-word suffixes
     .replace(/\s+(Twin|Twins|Origins?|Returns?|Revenge|Reborn|Reload|Revolution)$/i, '')
     // Strip trailing standalone numbers
     .replace(/\s+\d+$/, '')
+    // Normalise trailing ? after all sequel markers removed
+    .replace(/\?+$/, '')
     .trim();
 }
 
@@ -7554,14 +7556,17 @@ function renderFranchiseTable() {
     const conf     = confidenceLabel(group.totalBattles || 0);
     const wrStr    = group.winRate !== null ? group.winRate + '%' : '–';
     const scoreStr = group.avgScore ? group.avgScore + '%' : '–';
+    const clickHandler = isSingle
+      ? `showAnimeDetail(${group.members[0].id})`
+      : `showFranchiseDetail('${esc(group.name).replace(/'/g, "\\'")}')`;
     html += `
-      <tr class="franchise-table-group" data-gid="${gid}" onclick="toggleFranchiseTableGroup(${gid})">
+      <tr class="franchise-table-group" data-gid="${gid}" onclick="${clickHandler}">
         <td class="tbl-rank">${rank + 1}</td>
         <td><img class="tbl-cover" src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
           <strong>${esc(group.name)}</strong>
           ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>` : ''}
-          ${!isSingle ? `<span class="franchise-table-chevron" data-chv="${gid}" style="margin-left:6px;color:#6e7681;font-size:0.75rem;display:inline-block;transition:transform 0.15s">▸</span>` : ''}
+          ${!isSingle ? `<span class="franchise-table-chevron" data-chv="${gid}" onclick="event.stopPropagation();toggleFranchiseTableGroup(${gid})" style="margin-left:6px;color:#6e7681;font-size:0.85rem;display:inline-block;transition:transform 0.15s;cursor:pointer;padding:0 4px">▸</span>` : ''}
         </td>
         <td>${group.bestElo}</td>
         <td>${wrStr}</td>
