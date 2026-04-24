@@ -4429,17 +4429,26 @@ async function runFriendRecs() {
     }
     const globalAvgElo = animeList.reduce((s, a) => s + a.elo, 0) / animeList.length || 1200;
 
-    // Score each candidate
-    const scored = candidates.map(e => {
-      const genres = e.media.genres || [];
-      const affinities = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
-      const avgGenreElo = affinities.length ? affinities.reduce((s, v) => s + v, 0) / affinities.length : globalAvgElo;
-      const genreBonus = (avgGenreElo - globalAvgElo) / 400; // normalised offset
-      const friendNorm = maxScore > 10 ? e.score / 100 : e.score / 10;
-      const totalScore = friendNorm * 0.6 + genreBonus * 0.4;
-      const displayScore = (maxScore > 10 ? e.score / 10 : e.score).toFixed(1);
-      return { media: e.media, friendScore: displayScore, totalScore };
-    });
+    // Score each candidate and filter out genres the user dislikes.
+    // A candidate is excluded if we have genre data for it AND its average
+    // genre affinity is more than 80 ELO points below the user's global average
+    // (i.e. the user consistently rates that genre well below their norm).
+    const DISLIKE_THRESHOLD = 80;
+    const scored = candidates
+      .map(e => {
+        const genres = e.media.genres || [];
+        const affinities = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
+        const avgGenreElo = affinities.length
+          ? affinities.reduce((s, v) => s + v, 0) / affinities.length
+          : globalAvgElo;
+        const genreBonus = (avgGenreElo - globalAvgElo) / 400;
+        const friendNorm = maxScore > 10 ? e.score / 100 : e.score / 10;
+        const totalScore = friendNorm * 0.6 + genreBonus * 0.4;
+        const displayScore = (maxScore > 10 ? e.score / 10 : e.score).toFixed(1);
+        return { media: e.media, friendScore: displayScore, totalScore, avgGenreElo, hasGenreData: affinities.length > 0 };
+      })
+      // Exclude if we have genre data and the user clearly dislikes those genres
+      .filter(e => !e.hasGenreData || (e.avgGenreElo >= globalAvgElo - DISLIKE_THRESHOLD));
 
     scored.sort((a, b) => b.totalScore - a.totalScore);
     const top = scored.slice(0, 8);
