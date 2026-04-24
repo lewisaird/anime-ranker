@@ -371,7 +371,8 @@ const KESSEN_KEYS = {
     guestMergeDismissed: 'kessen.ui.guestMergeDismissed',
   },
   settings: {
-    allowAdult: 'kessen.settings.allowAdult',
+    allowAdult:  'kessen.settings.allowAdult',
+    viewPrefs:   'kessen.settings.viewPrefs', // local-only: rankingView + franchiseMode
   },
   data: {
     savedComparisons: 'kessen.data.savedComparisons',
@@ -1468,6 +1469,7 @@ function saveState() {
     hiddenFormats:  [...hiddenFormats],
     hiddenEpRanges: [...hiddenEpRanges],
     rankingView,
+    franchiseMode,
     currentSort,
     sortAsc,
     achievements,
@@ -1591,6 +1593,7 @@ function _applyCloudSaveToMemory(cloud) {
   hiddenFormats  = new Set(cloud.hiddenFormats  ?? []);
   hiddenEpRanges = new Set(cloud.hiddenEpRanges ?? []);
   rankingView    = cloud.rankingView    ?? 'grid';
+  franchiseMode  = cloud.franchiseMode  ?? false;
   currentSort    = cloud.currentSort    ?? 'elo';
   sortAsc        = cloud.sortAsc        ?? false;
   // Normalise: Title/Tier/Confidence sort naturally ascending — correct stale saved state
@@ -1815,6 +1818,7 @@ function loadState(username, source = 'anilist') {
     hiddenFormats  = new Set(s.hiddenFormats  ?? []);
     hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
     rankingView    = s.rankingView  ?? 'grid';
+    franchiseMode  = s.franchiseMode ?? false;
     currentSort    = s.currentSort  ?? 'elo';
     sortAsc        = s.sortAsc      ?? false;
     // Normalise: Title/Tier/Confidence sort naturally ascending — correct stale saved state
@@ -2385,7 +2389,9 @@ function _buildFranchiseGroups(sorted) {
     const canon = keyMap.get(enKey) || keyMap.get(roKey) || enKey;
 
     if (!groups.has(canon)) {
-      groups.set(canon, { name: _franchiseBaseName(enRaw), members: [] });
+      // Display name uses the current language preference
+      const displayRaw = preferRomaji ? (a.titleRo || a.title || '') : enRaw;
+      groups.set(canon, { name: _franchiseBaseName(displayRaw) || _franchiseBaseName(enRaw), members: [] });
     }
 
     // Register both keys so future anime with either title variant find this group
@@ -2412,7 +2418,7 @@ function _buildFranchiseGroups(sorted) {
     group.avgScore     = scoredMembers.length
       ? Math.round(scoredMembers.reduce((s, a) => s + a.globalScore, 0) / scoredMembers.length) : 0;
     if (group.members.length === 1) {
-      group.name = group.members[0].titleEn || group.members[0].title;
+      group.name = displayTitle(group.members[0]);
     }
     result.push(group);
   }
@@ -2455,6 +2461,7 @@ function toggleFranchiseMode() {
     btn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
   }
   _applyRankingViewState();
+  _saveViewPrefs();
   renderRankingList();
 }
 
@@ -2493,7 +2500,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   const membersHtml = !isSingle ? `
     <div class="franchise-members" style="display:none">
       ${group.members.map(a => `
-        <div class="franchise-member" onclick="openDetailModal(${a.id})">
+        <div class="franchise-member" onclick="showAnimeDetail(${a.id})">
           <img src="${esc(a.cover || '')}" alt="" onerror="this.style.display='none'" />
           <span class="franchise-member-title">${esc(a.titleEn || a.title)}</span>
           <span class="franchise-member-elo">${a.elo}</span>
@@ -2502,6 +2509,11 @@ function _buildFranchiseCard(group, rank, totalGroups) {
 
   if (rankingView === 'grid') {
     card.classList.add('franchise-grid-card');
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', e => {
+      if (!e.target.closest('.franchise-expand-btn') && !e.target.closest('.franchise-members'))
+        showFranchiseDetail(group.name);
+    });
     card.innerHTML = `
       <span class="rank-number">#${rank + 1}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
@@ -2515,7 +2527,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     `;
   } else {
     card.innerHTML = `
-      <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))">
+      <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))" ondblclick="event.stopPropagation();showFranchiseDetail('${esc(group.name)}')" title="Double-click for franchise overview">
         <img src="${esc(group.cover || '')}" alt="" onerror="this.style.display='none'" />
         <div class="franchise-info">
           <div class="franchise-name rank-title">${esc(group.name)}</div>
@@ -2534,6 +2546,123 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   return card;
 }
 
+function showFranchiseDetail(groupName) {
+  // Use unfiltered list so all franchise members show regardless of active filters
+  const groups = _buildFranchiseGroups(getSortedList());
+  const group  = groups.find(g => g.name === groupName);
+  if (!group) return;
+
+  const tier = getTier(group.eloRank ?? 0, groups.length);
+  const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
+  const conf  = confidenceLabel(group.totalBattles || 0);
+  const fmtLabel = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' };
+
+  const membersHtml = group.members.map((a, i) => {
+    const memberTier = getTier(
+      [...animeList].sort((x,y) => y.elo - x.elo).findIndex(x => x.id === a.id),
+      animeList.length
+    );
+    const wr = (a.wins + a.losses) > 0
+      ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
+    return `<div class="franchise-detail-member" onclick="closeDetailModal();showAnimeDetail(${a.id})">
+      <img src="${esc(a.cover || '')}" alt="" onerror="this.style.display='none'" />
+      <div class="franchise-detail-member-info">
+        <div class="franchise-detail-member-title">${esc(displayTitle(a))}</div>
+        <div class="franchise-detail-member-stats">
+          <span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>
+          <span>ELO ${a.elo}</span>
+          <span>${wr} WR</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Reuse the detail modal
+  const coverEl = byId(IDS.modalCover);
+  coverEl.classList.remove('img-broken');
+  coverEl.src = group.cover;
+  coverEl.alt = group.name;
+  byId(IDS.modalTitle).textContent = group.name;
+  const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
+  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${group.members.length} entries · Avg ELO ${group.bestElo}`;
+  byId(IDS.modalMetaLine).textContent = `${wrStr} win rate · ${group.totalBattles} total battles · ${conf.label}`;
+  byId(IDS.modalGenres).style.display = 'none';
+  const totalWins   = group.members.reduce((s,a) => s + (a.wins||0), 0);
+  const totalLosses = group.members.reduce((s,a) => s + (a.losses||0), 0);
+  byId(IDS.modalWins).textContent    = totalWins;
+  byId(IDS.modalLosses).textContent  = totalLosses;
+  byId(IDS.modalEloVal).textContent  = group.bestElo;
+  byId(IDS.modalWinrateVal).textContent = wrStr;
+
+  byId(IDS.modalConfidenceWrap).innerHTML =
+    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${group.totalBattles} battles</span>`;
+
+  // Hide fields that don't apply to a franchise
+  byId(IDS.modalGenres).style.display = 'none';
+  byId(IDS.modalAnilistBtn).style.display = 'none';
+  byId(IDS.modalUnfuzzyBtn).style.display = 'none';
+
+  // Sparkline — average ELO history across all members that have one.
+  // Each history is resampled to a common length so they can be averaged point-by-point.
+  const sparkWrap = byId(IDS.modalSparklineWrap);
+  const histories = group.members.map(a => a.eloHistory).filter(h => h && h.length >= 2);
+  if (histories.length > 0) {
+    const POINTS = Math.max(...histories.map(h => h.length));
+    const combined = Array.from({ length: POINTS }, (_, i) => {
+      const vals = histories.map(h => {
+        // Interpolate shorter histories to fit POINTS length
+        const t = i / (POINTS - 1);
+        const idx = t * (h.length - 1);
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        return h[lo] + (h[hi] - h[lo]) * (idx - lo);
+      });
+      return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+    });
+    byId(IDS.modalSparkline).innerHTML = buildSparkline(combined);
+    sparkWrap.style.display = 'block';
+  } else {
+    sparkWrap.style.display = 'none';
+  }
+
+  // Combined recent battles from all members
+  const memberIds = new Set(group.members.map(a => a.id));
+  const memberTitles = new Set(group.members.map(a => a.title));
+  const related = battleHistory
+    .filter(h => h.winnerId != null
+      ? memberIds.has(h.winnerId) || memberIds.has(h.loserId)
+      : memberTitles.has(h.winnerTitle) || memberTitles.has(h.loserTitle))
+    .slice(0, 10);
+  const recentEl = byId(IDS.modalRecent);
+  if (related.length > 0) {
+    recentEl.innerHTML = '<h4>Recent Battles</h4>' + related.map(h => {
+      const isWin = h.winnerId != null ? memberIds.has(h.winnerId) : memberTitles.has(h.winnerTitle);
+      const subject = isWin ? h.winnerTitle : h.loserTitle;
+      const opponent = isWin ? h.loserTitle : h.winnerTitle;
+      return `<div class="modal-recent-item">
+        <span class="${isWin ? 'modal-win' : 'modal-loss'}">${isWin ? '✓ W' : '✗ L'} <em style="color:#8b949e;font-size:0.75rem">${esc(subject)}</em> vs ${esc(opponent)}</span>
+        <span style="color:#8b949e">${isWin ? '+' : '−'}${h.eloSwing} ELO</span>
+      </div>`;
+    }).join('');
+  } else {
+    recentEl.innerHTML = '';
+  }
+
+  // Replace description with the member list
+  const descEl = byId(IDS.modalDescription);
+  if (descEl) {
+    descEl.innerHTML = `<div class="franchise-detail-members">${membersHtml}</div>`;
+    descEl.style.display = 'block';
+    descEl.style.opacity = '1';
+  }
+
+  byId(IDS.detailModal).style.display = 'flex';
+  byId(IDS.detailModal).scrollTop = 0;
+}
+
+function closeDetailModal() {
+  byId(IDS.detailModal).style.display = 'none';
+}
+
 function toggleFranchiseExpand(el) {
   const card = el.classList.contains('franchise-group') ? el : el.closest('.franchise-group');
   const members = card?.querySelector('.franchise-members');
@@ -2542,6 +2671,17 @@ function toggleFranchiseExpand(el) {
   const isOpen = members.style.display !== 'none';
   members.style.display = isOpen ? 'none' : 'block';
   if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
+// Returns the sorted list with format/ep-range/excluded filters applied —
+// used as input to franchise grouping so hidden anime are excluded from groups.
+function _franchiseSortedList() {
+  return getSortedList().filter(a =>
+    !excludedIds.has(a.id) &&
+    !hiddenFormats.has(a.format) &&
+    !hiddenEpRanges.has(epRange(a.episodes, a.format)) &&
+    (!showFuzzyOnly || a.fuzzy)
+  );
 }
 
 function renderRankingList() {
@@ -2554,9 +2694,8 @@ function renderRankingList() {
     if (rankingView === 'list') {
       renderFranchiseTable();
     } else {
-      const sorted = getSortedList();
+      const sorted = _franchiseSortedList();
       let groups = _buildFranchiseGroups(sorted);
-      if (showFuzzyOnly) groups = groups.filter(g => g.members.some(a => a.fuzzy));
       const frag = document.createDocumentFragment();
       groups.forEach((group, i) => frag.appendChild(_buildFranchiseCard(group, i, groups.length)));
       list.appendChild(frag);
@@ -2604,8 +2743,16 @@ function showResults() {
   _syncSortUI();
   // Sync view buttons and panels to current rankingView
   _applyRankingViewState();
+  // Load local-only view preferences (grid/list, franchise) before rendering
+  _loadViewPrefs();
   byId(IDS.viewGridBtn)?.classList.toggle('active', rankingView === 'grid');
   byId(IDS.viewListBtn)?.classList.toggle('active', rankingView === 'list');
+  const franchiseBtn = document.getElementById('franchise-btn');
+  if (franchiseBtn) {
+    franchiseBtn.classList.toggle('active', franchiseMode);
+    franchiseBtn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
+  }
+  _applyRankingViewState();
 
   byId(IDS.resultsSubtitle).textContent =
     `After ${battleCount} battles · Rankings update as you keep going`;
@@ -2976,6 +3123,7 @@ function downloadBackup() {
     hiddenFormats:  [...hiddenFormats],
     hiddenEpRanges: [...hiddenEpRanges],
     rankingView,
+    franchiseMode,
     currentSort,
     sortAsc,
     achievements,
@@ -6207,6 +6355,7 @@ function showAnimeDetail(id) {
   const modalBtn = byId(IDS.modalAnilistBtn);
   modalBtn.href        = _animeExternalUrl(anime);
   modalBtn.textContent = `View on ${_animeExternalLabel(anime)} ↗`;
+  modalBtn.style.display = '';
   const descEl = byId(IDS.modalDescription);
   const cleanDesc = stripHtml(anime.description);
   if (cleanDesc) {
@@ -6245,7 +6394,7 @@ function showAnimeDetail(id) {
     recentEl.innerHTML = '<p style="color:#8b949e;font-size:0.78rem;margin-top:8px">No battles recorded yet.</p>';
   }
 
-  // Sparkline
+  // Sparkline (always reset display first so franchise→anime transitions work)
   const sparkWrap = byId(IDS.modalSparklineWrap);
   if (anime.eloHistory && anime.eloHistory.length >= 2) {
     byId(IDS.modalSparkline).innerHTML = buildSparkline(anime.eloHistory);
@@ -7284,13 +7433,30 @@ function endTower() {
 }
 
 // ─── LIST VIEW ────────────────────────────────────────────────────────────────
+function _saveViewPrefs() {
+  try {
+    localStorage.setItem(KESSEN_KEYS.settings.viewPrefs,
+      JSON.stringify({ rankingView, franchiseMode }));
+  } catch { /* storage full — not critical */ }
+}
+function _loadViewPrefs() {
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.settings.viewPrefs);
+    if (!raw) return;
+    const p = JSON.parse(raw);
+    if (p.rankingView) rankingView = p.rankingView;
+    if (p.franchiseMode != null) franchiseMode = p.franchiseMode;
+  } catch { /* corrupt — ignore */ }
+}
+
 function setRankingView(view) {
   rankingView = view;
   byId(IDS.viewGridBtn).classList.toggle('active', view === 'grid');
   byId(IDS.viewListBtn).classList.toggle('active', view === 'list');
   _applyRankingViewState();
+  _saveViewPrefs();
   if (franchiseMode) {
-    renderRankingList(); // re-renders franchise cards for the new view mode
+    renderRankingList();
   } else if (view === 'list') {
     renderRankingTable();
   }
@@ -7378,9 +7544,8 @@ function _vsRenderTableSlice() {
 }
 
 function renderFranchiseTable() {
-  const sorted = getSortedList();
+  const sorted = _franchiseSortedList();
   let groups = _buildFranchiseGroups(sorted);
-  if (showFuzzyOnly) groups = groups.filter(g => g.members.some(a => a.fuzzy));
   let html = '';
   groups.forEach((group, rank) => {
     const tier     = getTier(group.eloRank ?? rank, groups.length);
@@ -7411,7 +7576,7 @@ function renderFranchiseTable() {
           ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
         const conf = confidenceLabel(a.battles || 0);
         const memberTier = getTier(sorted.indexOf(a), sorted.length);
-        html += `<tr class="franchise-table-member" data-member-gid="${gid}" style="display:none" onclick="openDetailModal(${a.id})">
+        html += `<tr class="franchise-table-member" data-member-gid="${gid}" style="display:none" onclick="showAnimeDetail(${a.id})">
           <td></td>
           <td><img class="tbl-cover" src="${esc(a.cover || '')}" alt="" loading="lazy" /></td>
           <td class="tbl-title" style="padding-left:24px">${esc(a.titleEn || a.title)}</td>
