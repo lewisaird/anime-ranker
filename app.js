@@ -2397,20 +2397,29 @@ function _buildFranchiseGroups(sorted) {
 
   const result = [];
   for (const group of groups.values()) {
-    // Sort members within the group by ELO so the best cover is always shown first
     group.members.sort((a, b) => b.elo - a.elo);
     group.bestElo = Math.round(group.members.reduce((s, a) => s + a.elo, 0) / group.members.length);
-    group.cover  = group.members[0].cover;
-    group.format = group.members[0].format;
-    // Single-entry groups: show the full original title, not the stripped base name
+    group.cover   = group.members[0].cover;
+    group.format  = group.members[0].format;
+    // Aggregate stats across all members
+    const totalWins    = group.members.reduce((s, a) => s + (a.wins    || 0), 0);
+    const totalLosses  = group.members.reduce((s, a) => s + (a.losses  || 0), 0);
+    const totalBattles = group.members.reduce((s, a) => s + (a.battles || 0), 0);
+    const scoredMembers = group.members.filter(a => a.globalScore > 0);
+    group.totalBattles = totalBattles;
+    group.winRate      = (totalWins + totalLosses) > 0
+      ? Math.round(totalWins / (totalWins + totalLosses) * 100) : null;
+    group.avgScore     = scoredMembers.length
+      ? Math.round(scoredMembers.reduce((s, a) => s + a.globalScore, 0) / scoredMembers.length) : 0;
     if (group.members.length === 1) {
       group.name = group.members[0].titleEn || group.members[0].title;
     }
     result.push(group);
   }
-  // Group order is preserved from getSortedList() insertion order — do NOT re-sort here.
-  // The Map preserves insertion order, so groups appear in the same order as their
-  // first-seen member in the sorted input list.
+  // Compute ELO rank for each group (used for tier badge regardless of sort order)
+  const eloSorted = [...result].sort((a, b) => b.bestElo - a.bestElo);
+  eloSorted.forEach((g, i) => { g.eloRank = i; });
+  // Group order is preserved from getSortedList() insertion order
   return result;
 }
 
@@ -2449,11 +2458,14 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   card.className = 'rank-card franchise-group' + (isSingle ? ' franchise-single' : '');
   card.dataset.franchiseName = group.name;
 
-  const tier = getTier(rank, totalGroups);
+  // Tier is always based on ELO rank, not current sort position
+  const tier = getTier(group.eloRank ?? rank, totalGroups);
   const tierColors = { S:'#ff9b00', A:'#3fb950', B:'#58a6ff', C:'#d29922', D:'#f85149' };
   const tierColor = tierColors[tier] || '#8b949e';
   const tierBadge = `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">${tier}</span>`;
   const countBadge = !isSingle ? `<span class="franchise-count">${group.members.length} entries</span>` : '';
+  const conf = confidenceLabel(group.totalBattles || 0);
+  const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
   const membersHtml = !isSingle ? `
     <div class="franchise-members" style="display:none">
       ${group.members.map(a => `
@@ -2465,22 +2477,19 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     </div>` : '';
 
   if (rankingView === 'grid') {
-    // Grid mode: looks like a regular rank-card with franchise name + entry count
     card.classList.add('franchise-grid-card');
     card.innerHTML = `
       <span class="rank-number">#${rank + 1}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
       <img src="${esc(group.cover || '')}" alt="" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
-      <div class="franchise-grid-meta">
-        <span class="franchise-elo">ELO ${group.bestElo}</span>
-        ${countBadge}
-      </div>
+      ${countBadge ? `<div class="franchise-grid-meta">${countBadge}</div>` : ''}
+      <div class="rank-elo">ELO ${group.bestElo}</div>
+      <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
       ${!isSingle ? `<button class="franchise-expand-btn" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))">▸ See all entries</button>` : ''}
       ${membersHtml}
     `;
   } else {
-    // List mode: horizontal row layout
     card.innerHTML = `
       <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))">
         <img src="${esc(group.cover || '')}" alt="" onerror="this.style.display='none'" />
@@ -2489,6 +2498,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
           <div class="franchise-meta">
             ${tierBadge}
             <span class="franchise-elo">ELO ${group.bestElo}</span>
+            <span class="franchise-elo">${wrStr} WR · ${group.totalBattles} battles</span>
             ${countBadge}
           </div>
         </div>
