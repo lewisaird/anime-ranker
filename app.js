@@ -2419,7 +2419,31 @@ function _buildFranchiseGroups(sorted) {
   // Compute ELO rank for each group (used for tier badge regardless of sort order)
   const eloSorted = [...result].sort((a, b) => b.bestElo - a.bestElo);
   eloSorted.forEach((g, i) => { g.eloRank = i; });
-  // Group order is preserved from getSortedList() insertion order
+
+  // Sort groups by the current sort metric using aggregated values
+  const dir = sortAsc ? 1 : -1;
+  switch (currentSort) {
+    case 'title':
+      result.sort((a, b) => a.name.localeCompare(b.name) * dir);
+      break;
+    case 'winrate':
+      result.sort((a, b) => ((a.winRate ?? -1) - (b.winRate ?? -1)) * dir);
+      break;
+    case 'battles':
+      result.sort((a, b) => (a.totalBattles - b.totalBattles) * dir);
+      break;
+    case 'score':
+      result.sort((a, b) => (a.avgScore - b.avgScore) * dir);
+      break;
+    case 'tier':
+      result.sort((a, b) => (a.eloRank - b.eloRank) * dir);
+      break;
+    case 'confidence':
+      result.sort((a, b) => (a.totalBattles - b.totalBattles) * dir);
+      break;
+    default: // elo
+      result.sort((a, b) => (a.bestElo - b.bestElo) * dir);
+  }
   return result;
 }
 
@@ -7359,20 +7383,27 @@ function renderFranchiseTable() {
   if (showFuzzyOnly) groups = groups.filter(g => g.members.some(a => a.fuzzy));
   let html = '';
   groups.forEach((group, rank) => {
-    const tier     = getTier(rank, groups.length);
+    const tier     = getTier(group.eloRank ?? rank, groups.length);
     const isSingle = group.members.length === 1;
     const gid      = rank;
+    const conf     = confidenceLabel(group.totalBattles || 0);
+    const wrStr    = group.winRate !== null ? group.winRate + '%' : '–';
+    const scoreStr = group.avgScore ? group.avgScore + '%' : '–';
     html += `
       <tr class="franchise-table-group" data-gid="${gid}" onclick="toggleFranchiseTableGroup(${gid})">
         <td class="tbl-rank">${rank + 1}</td>
         <td><img class="tbl-cover" src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
-        <td class="tbl-title" colspan="5">
+        <td class="tbl-title">
           <strong>${esc(group.name)}</strong>
           ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>` : ''}
           ${!isSingle ? `<span class="franchise-table-chevron" data-chv="${gid}" style="margin-left:6px;color:#6e7681;font-size:0.75rem;display:inline-block;transition:transform 0.15s">▸</span>` : ''}
         </td>
-        <td><span class="tier-badge t-${tier.toLowerCase()}">${tier}</span></td>
         <td>${group.bestElo}</td>
+        <td>${wrStr}</td>
+        <td>${group.totalBattles || 0}</td>
+        <td>${scoreStr}</td>
+        <td><span class="tier-badge t-${tier.toLowerCase()}">${tier}</span></td>
+        <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
       </tr>`;
     if (!isSingle) {
       group.members.forEach(a => {
