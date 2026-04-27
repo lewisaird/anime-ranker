@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.4" />
+  <meta name="version" content="1.0.7" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -94,6 +94,7 @@
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
     <span id="cloud-sync-indicator" style="display:none;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
+    <button id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle light/dark mode" style="background:none;border:none;cursor:pointer;font-size:1.1rem;padding:4px;line-height:1;color:var(--text-secondary)">🌙</button>
     <div id="auth-header-badge">
       <img id="auth-hdr-avatar" src="" alt="" />
       <span class="auth-hdr-name" id="auth-hdr-name"></span>
@@ -114,6 +115,15 @@
   <div style="display:flex;gap:6px">
     <button onclick="addPendingNewAnime()" style="background:none;border:1px solid #388bfd;color:#58a6ff;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Add to ranking</button>
     <button onclick="dismissNewAnimeBanner()" style="background:none;border:none;color:#58a6ff;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:0.78rem" aria-label="Dismiss">✕</button>
+  </div>
+</div>
+
+<!-- Post-finish Tower prompt -->
+<div id="finish-prompt-banner">
+  <span id="finish-prompt-msg">⚡ You just finished — battle in the Tower while the feelings are fresh?</span>
+  <div style="display:flex;gap:6px">
+    <button onclick="startFinishTower()" style="background:none;border:1px solid #f0c040;color:#f0c040;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">⚡ Battle now</button>
+    <button onclick="dismissFinishPrompt()" style="background:none;border:none;color:#f0c040;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:0.78rem" aria-label="Dismiss">✕</button>
   </div>
 </div>
 
@@ -342,11 +352,19 @@
       <button onclick="toggleBlindMode()" style="background:none;border:1px solid #6e40c9;color:#a371f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
+    <div id="trio-banner">
+      <span>🎲 Trio mode — tap all three in order of preference</span>
+      <button onclick="setMode('normal')" style="background:none;border:1px solid #c9913a;color:#e3a444;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+    </div>
+
 
     <div class="battle-prompt">
       <h2 id="battle-prompt-h2">Which did you enjoy more?</h2>
       <p   id="battle-prompt-p">Click your favourite — or skip if you can't decide.</p>
     </div>
+
+    <!-- TRIO ARENA (shown instead of .battle-arena in Trio mode) -->
+    <div id="trio-arena" style="display:none"></div>
 
     <div class="battle-arena">
       <div class="anime-card" id="card-a" onclick="pickWinner(0)">
@@ -403,6 +421,10 @@
             <span class="mode-icon" aria-hidden="true">🙈</span>
             <span class="mode-text"><span class="mode-name">Blind</span><span class="mode-desc">Hide ELO — pick on instinct</span></span>
           </button>
+          <button type="button" role="menuitemradio" data-mode="trio" onclick="setMode('trio')" aria-checked="false">
+            <span class="mode-icon" aria-hidden="true">🎲</span>
+            <span class="mode-text"><span class="mode-name">Trio</span><span class="mode-desc">Rank three at once</span></span>
+          </button>
         </div>
       </div>
       <div class="mode-control">
@@ -443,12 +465,11 @@
     <!-- Tab bar -->
     <div class="results-tabs">
       <button class="res-tab active" data-tab="rankings" onclick="switchResultsTab('rankings')">📋 Rankings</button>
-      <button class="res-tab" data-tab="stats"    onclick="switchResultsTab('stats')">📊 Stats</button>
+      <button class="res-tab" data-tab="battles"  onclick="switchResultsTab('battles')">⚔️ Battles</button>
+      <button class="res-tab" data-tab="profile"  onclick="switchResultsTab('profile')">🎨 Profile</button>
       <button class="res-tab" data-tab="discover" onclick="switchResultsTab('discover')">🎯 Discover</button>
-      <button class="res-tab" data-tab="history"  onclick="switchResultsTab('history')">⚔️ History</button>
-      <button class="res-tab" data-tab="social"        onclick="switchResultsTab('social')">👥 Social</button>
-      <button class="res-tab" data-tab="achievements" onclick="switchResultsTab('achievements')">🏆 Achievements</button>
-      <button class="res-tab" data-tab="manage"       onclick="switchResultsTab('manage')">⚙️ Manage</button>
+      <button class="res-tab" data-tab="social"   onclick="switchResultsTab('social')">👥 Social</button>
+      <button class="res-tab" data-tab="manage"   onclick="switchResultsTab('manage')">⚙️ Manage</button>
     </div>
 
     <!-- ── RANKINGS panel ──────────────────────────────────────────────── -->
@@ -485,11 +506,13 @@
         <button class="sort-btn"        data-sort="score"      data-label="AniList Avg"  onclick="setSort('score')">AniList Avg</button>
         <button class="sort-btn"        data-sort="tier"       data-label="Tier"         onclick="setSort('tier')">Tier</button>
         <button class="sort-btn"        data-sort="confidence" data-label="Confidence"   onclick="setSort('confidence')">Confidence</button>
-        <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">🌫 Fuzzy only</button>
-        <button class="view-btn" id="franchise-btn" onclick="toggleFranchiseMode()" title="Group sequels and seasons together" aria-pressed="false">⛓ Franchise</button>
-        <div id="view-toggle-wrap">
-          <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view" aria-label="Grid view" aria-pressed="true">⊞</button>
-          <button class="view-btn"        id="view-list-btn" onclick="setRankingView('list')" title="List view" aria-label="List view" aria-pressed="false">☰</button>
+        <div id="ranking-controls-right">
+          <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">🌫 Fuzzy only</button>
+          <button class="view-btn" id="franchise-btn" onclick="toggleFranchiseMode()" title="Group sequels and seasons together" aria-pressed="false">⛓ Franchise</button>
+          <div id="view-toggle-wrap">
+            <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view" aria-label="Grid view" aria-pressed="true">⊞</button>
+            <button class="view-btn"        id="view-list-btn" onclick="setRankingView('list')" title="List view" aria-label="List view" aria-pressed="false">☰</button>
+          </div>
         </div>
       </div>
       <div class="ranking-list" id="ranking-list"></div>
@@ -517,10 +540,12 @@
       </div>
     </div>
 
-    <!-- ── STATS panel ────────────────────────────────────────────────── -->
-    <div class="tab-panel" id="tab-panel-stats" style="display:none">
+    <!-- ── BATTLES panel ─────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-battles" style="display:none">
+
+      <!-- Battle stats summary -->
       <div id="stats-section">
-        <h3>Your Stats</h3>
+        <h3>Battle Stats</h3>
         <div class="stats-grid">
           <div class="stat-box"><div class="stat-number" id="stat-total-battles">0</div><div class="stat-label">Total Battles</div></div>
           <div class="stat-box"><div class="stat-number" id="stat-stability">0%</div><div class="stat-label">Rankings Stable</div></div>
@@ -540,55 +565,29 @@
             <div id="stat-upsets"></div>
           </div>
         </div>
-        <div class="stats-breakdown">
-          <div class="stats-list-section">
-            <h4>🎭 Taste by Genre</h4>
-            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Average ELO per genre · 3+ anime minimum</p>
-            <div id="stat-genre-chart"></div>
-          </div>
-          <div class="stats-list-section">
-            <h4>📅 Taste by Era</h4>
-            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Average ELO by decade · 2+ anime minimum</p>
-            <div id="stat-era-chart"></div>
-          </div>
-        </div>
-        <!-- Format split + Score distribution -->
-        <div class="stats-breakdown" style="margin-top:24px">
-          <div class="stats-list-section">
-            <h4>📺 Format Split</h4>
-            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Count and average ELO by format</p>
-            <div id="stat-format-chart"></div>
-          </div>
-          <div class="stats-list-section">
-            <h4>📊 Your Score Spread</h4>
-            <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">How many anime land at each score level, based on their ELO rank position</p>
-            <div id="stat-score-dist"></div>
-          </div>
-        </div>
-
-        <!-- Studio affinity -->
-        <div class="stats-list-section" style="margin-top:24px;grid-column:1/-1">
-          <h4>🎬 Studio Affinity</h4>
-          <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Studios you consistently rate above or below your average · 3+ anime minimum</p>
-          <div id="stat-studio-affinity"></div>
-        </div>
-
-        <div id="disagree-section" style="margin-top:32px">
-          <h3>⚖️ Your Taste vs the Community</h3>
-          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Compares your ELO rank to AniList's global community score — showing where your taste diverges from the crowd.</p>
-          <div class="disagree-cols">
-            <div class="disagree-col">
-              <h4>🟢 You rate higher than the community</h4>
-              <div id="disagree-elo-higher"></div>
-            </div>
-            <div class="disagree-col">
-              <h4>🔴 Community rates higher than you</h4>
-              <div id="disagree-score-higher"></div>
-            </div>
-          </div>
-        </div>
-
       </div>
+
+      <!-- Rivalries -->
+      <div id="rivalry-section" style="display:none;margin-top:32px;border-top:1px solid var(--border-subtle);padding-top:24px">
+        <h3>⚔️ Rivalries</h3>
+        <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Matchups you've fought 3+ times with split results.</p>
+        <div id="rivalry-list"></div>
+      </div>
+
+      <!-- Battle history -->
+      <div id="history-section" style="margin-top:32px;border-top:1px solid var(--border-subtle);padding-top:24px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+          <h3 style="margin:0">Battle History</h3>
+          <span id="history-count" style="color:#8b949e;font-size:0.82rem"></span>
+        </div>
+        <div style="margin-bottom:10px">
+          <input type="text" id="history-search" placeholder="🔍 Search by title…"
+            oninput="filterHistory(this.value)"
+            style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-primary);color:var(--text-bright);font-size:0.88rem" />
+        </div>
+        <div class="history-list" id="history-list"></div>
+      </div>
+
     </div>
 
     <!-- ── DISCOVER panel ─────────────────────────────────────────────── -->
@@ -604,9 +603,16 @@
         <div class="source-tabs" style="max-width:450px;width:100%;margin:0 auto 16px">
           <button class="source-tab active" id="recs-tab-foryou"   onclick="setRecsTab('foryou')">✨ For You</button>
           <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')">📅 This Season</button>
+          <button class="source-tab"        id="recs-tab-moods"    onclick="setRecsTab('moods')">☕ Moods</button>
           <button class="source-tab"        id="recs-tab-predict"  onclick="setRecsTab('predict')">🔮 Predict</button>
         </div>
         <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
+
+        <!-- ── Moods sub-tab ── -->
+        <div id="moods-section" style="display:none">
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Pick a mood and Kessen will find recommendations based on the anime in your rankings that match it.</p>
+          <div id="discover-mood-grid" class="taste-mood-grid"></div>
+        </div>
         <div id="recs-grid" class="recs-grid"></div>
 
         <!-- ── Predict sub-tab ── -->
@@ -615,7 +621,7 @@
           <div style="position:relative;margin-bottom:16px">
             <div style="display:flex;gap:8px">
               <input type="text" id="predictor-input" placeholder="Search an anime title…"
-                style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:0.88rem"
+                style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--border-default);background:var(--bg-primary);color:var(--text-bright);font-size:0.88rem"
                 oninput="predictorOnInput(this.value)"
                 onkeydown="predictorOnKeydown(event)"
                 autocomplete="off" />
@@ -628,24 +634,99 @@
       </div>
     </div>
 
-    <!-- ── HISTORY panel ──────────────────────────────────────────────── -->
-    <div class="tab-panel" id="tab-panel-history" style="display:none">
-      <div id="rivalry-section" style="display:none">
-        <h3>⚔️ Rivalries</h3>
-        <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Matchups you've fought 3+ times with split results.</p>
-        <div id="rivalry-list"></div>
+    <!-- ── PROFILE panel ─────────────────────────────────────────────── -->
+    <div class="tab-panel" id="tab-panel-profile" style="display:none">
+      <div id="taste-empty" class="taste-empty" style="display:none">
+        <h3>🎨 Your Profile</h3>
+        <p>Battle at least 20 anime to unlock your profile. The more you battle, the sharper the picture.</p>
       </div>
-      <div id="history-section">
-        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
-          <h3 style="margin:0">Battle History</h3>
-          <span id="history-count" style="color:#8b949e;font-size:0.82rem"></span>
-        </div>
-        <div style="margin-bottom:10px">
-          <input type="text" id="history-search" placeholder="🔍 Search by title…"
-            oninput="filterHistory(this.value)"
-            style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:0.88rem" />
-        </div>
-        <div class="history-list" id="history-list"></div>
+      <div id="taste-loading" class="taste-loading" style="display:none">
+        <div class="taste-spinner">⏳</div>
+        <div id="taste-loading-msg">Analyzing your taste…</div>
+      </div>
+      <div id="taste-body" style="display:none">
+
+        <!-- ── Section 1: Who you are ───────────────────────────────────── -->
+        <section class="taste-identity-card" id="taste-identity-card">
+          <div class="taste-identity-top">
+            <div>
+              <div class="taste-identity-label">Your taste type</div>
+              <h2 class="taste-identity-type" id="taste-headline"></h2>
+            </div>
+            <button id="taste-refresh-btn" class="util-btn" onclick="renderProfileTab()" title="Refresh">↻</button>
+          </div>
+          <div class="taste-identity-insights" id="taste-identity-insights"></div>
+          <div class="taste-meta" id="taste-meta"></div>
+        </section>
+
+        <!-- ── Section 2: How you've changed ───────────────────────────── -->
+        <section class="taste-section">
+          <h3 class="taste-section-title">How you've changed</h3>
+          <div id="taste-drift"></div>
+        </section>
+
+        <!-- ── Section 4: Taste Evolution ──────────────────────────────── -->
+        <section class="taste-section">
+          <h3 class="taste-section-title">Taste evolution</h3>
+          <p class="taste-sub">How your top 10 has shifted — snapshot taken every 50 battles.</p>
+          <div id="taste-evolution"></div>
+        </section>
+
+        <!-- ── Section 5: Genre & Era breakdown ─────────────────────────── -->
+        <section class="taste-section">
+          <div class="stats-breakdown">
+            <div class="stats-list-section">
+              <h4>🎭 Taste by Genre</h4>
+              <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Average ELO per genre · 3+ anime minimum</p>
+              <div id="stat-genre-chart"></div>
+            </div>
+            <div class="stats-list-section">
+              <h4>📅 Taste by Era</h4>
+              <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Average ELO by decade · 2+ anime minimum</p>
+              <div id="stat-era-chart"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Section 6: Format & Score spread ─────────────────────────── -->
+        <section class="taste-section">
+          <div class="stats-breakdown">
+            <div class="stats-list-section">
+              <h4>📺 Format Split</h4>
+              <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Count and average ELO by format</p>
+              <div id="stat-format-chart"></div>
+            </div>
+            <div class="stats-list-section">
+              <h4>📊 Your Score Spread</h4>
+              <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">How many anime land at each score level, based on their ELO rank position</p>
+              <div id="stat-score-dist"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Section 7: Studio affinity ───────────────────────────────── -->
+        <section class="taste-section">
+          <h4>🎬 Studio Affinity</h4>
+          <p style="color:#8b949e;font-size:0.8rem;margin:4px 0 12px">Studios you consistently rate above or below your average · 3+ anime minimum</p>
+          <div id="stat-studio-affinity"></div>
+        </section>
+
+        <!-- ── Section 8: Taste vs community ────────────────────────────── -->
+        <section class="taste-section" id="disagree-section">
+          <h3 class="taste-section-title">⚖️ Your Taste vs the Community</h3>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Compares your ELO rank to AniList's global community score — showing where your taste diverges from the crowd.</p>
+          <div class="disagree-cols">
+            <div class="disagree-col">
+              <h4>🟢 You rate higher than the community</h4>
+              <div id="disagree-elo-higher"></div>
+            </div>
+            <div class="disagree-col">
+              <h4>🔴 Community rates higher than you</h4>
+              <div id="disagree-score-higher"></div>
+            </div>
+          </div>
+        </section>
+
       </div>
     </div>
 
@@ -681,15 +762,17 @@
       </div>
     </div>
 
-    <!-- ── ACHIEVEMENTS panel ───────────────────────────────────────── -->
-    <div class="tab-panel" id="tab-panel-achievements" style="display:none">
-      <div id="achievements-content"></div>
-    </div>
-
     <!-- ── MANAGE panel ──────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-manage" style="display:none">
-      <div class="manage-tab-content">
 
+      <!-- Sub-tab bar -->
+      <div class="source-tabs">
+        <button class="source-tab active" id="manage-sub-settings" onclick="switchManageTab('settings')">⚙️ Settings</button>
+        <button class="source-tab"        id="manage-sub-achievements" onclick="switchManageTab('achievements')">🏆 Achievements</button>
+      </div>
+
+      <!-- Settings sub-panel -->
+      <div id="manage-panel-settings" class="manage-tab-content">
         <div class="manage-section">
           <div class="manage-section-title">Backup, Sync &amp; Export</div>
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Save a backup to transfer to another device, or export your rankings as text or CSV.</p>
@@ -732,8 +815,13 @@
             <button class="manage-btn manage-btn-danger" onclick="deleteAllData()">🗑️ Delete all my data</button>
           </div>
         </div>
-
       </div>
+
+      <!-- Achievements sub-panel -->
+      <div id="manage-panel-achievements" style="display:none">
+        <div id="achievements-content"></div>
+      </div>
+
     </div>
 
   </div>
@@ -757,6 +845,21 @@
       <b>Long-press a card</b> (or tap the <b>⋯ Hold for more</b> chip) to open fuzzy / synopsis / exclude options.
     </p>
     <button class="btn-secondary" style="font-size:0.78rem;padding:5px 16px" onclick="_markLongPressTipSeen()">Got it ✓</button>
+  </div>
+
+  <!-- TASTE STORY MODAL -->
+  <div id="taste-story-modal" style="display:none" onclick="if(event.target===this)closeTasteStory()">
+    <div class="ts-card">
+      <div class="ts-top">
+        <div class="ts-dots"></div>
+        <button class="ts-close" onclick="closeTasteStory()" aria-label="Close">✕</button>
+      </div>
+      <div class="ts-body"></div>
+      <div class="ts-nav">
+        <button class="ts-prev" onclick="tasteStoryNav(-1)">← Back</button>
+        <button class="ts-next" onclick="tasteStoryNav(1)">Next →</button>
+      </div>
+    </div>
   </div>
 
   <!-- SESSION SUMMARY MODAL -->
@@ -825,12 +928,11 @@
 
         <div class="help-section">
           <h4>📊 Tabs</h4>
-          <p><strong>Stats</strong> — genre &amp; era breakdowns, biggest upsets, most battled, and taste vs the community.<br>
-          <strong>Discover</strong> — personalised picks (✨ For You), airing anime (📅 This Season), and tier predictions (🔮 Predict).<br>
-          <strong>History</strong> — rivalries and recent battle log with search.<br>
-          <strong>Social</strong> — compare taste with any AniList user.<br>
-          <strong>Achievements</strong> — earn Bronze, Silver, and Gold tiers by hitting ranking milestones.<br>
-          <strong>Manage</strong> — backup, export, sync to AniList, or reset everything.</p>
+          <p><strong>Battles</strong> — battle stats, biggest upsets, rivalries, and your full battle history.<br>
+          <strong>Profile</strong> — your taste type, moods, how your top 10 has evolved, genre &amp; era breakdowns, studio affinity, and taste vs the community.<br>
+          <strong>Discover</strong> — personalised picks (✨ For You), airing anime (📅 This Season), mood-based recs, and tier predictions (🔮 Predict).<br>
+          <strong>Social</strong> — get recs from a friend's list or compare taste with any AniList user.<br>
+          <strong>Manage</strong> — achievements, backup, export, sync to AniList, or reset everything.</p>
         </div>
 
         <div class="help-section">
@@ -909,19 +1011,6 @@
 
 </div>
 
-<!-- MILESTONE OVERLAY -->
-<div id="milestone-overlay">
-  <div class="milestone-box">
-    <div class="milestone-emoji" id="ms-emoji">🎉</div>
-    <h2 id="ms-title"></h2>
-    <p id="ms-msg"></p>
-    <div class="milestone-top5" id="ms-top5"></div>
-    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-      <button class="btn-secondary" id="ms-share-btn" onclick="shareMilestone()">🔗 Share</button>
-      <button class="btn-primary" onclick="closeMilestone()">Keep Ranking! ▶</button>
-    </div>
-  </div>
-</div>
 
 <!-- SHARE MODAL (§5.2.5 — image-first, native share sheet on mobile) -->
 <div id="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onclick="closeShareOnOverlay(event)">
@@ -1020,7 +1109,7 @@
       </div>
     </div>
     <button class="welcome-cta" onclick="dismissWelcome()">Start ranking ▶</button>
-    <button class="welcome-login-link" onclick="dismissWelcome()">Log in with AniList or MAL first →</button>
+    <button class="welcome-login-link" onclick="dismissWelcome();_doChangeUser()">Log in with AniList or MAL first →</button>
   </div><!-- end welcome-page 2 -->
   </div><!-- end welcome-box -->
 </div><!-- end welcome-modal -->

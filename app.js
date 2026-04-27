@@ -99,7 +99,6 @@ const IDS = Object.freeze({
   malWarmStartChk:        'mal-warm-start-chk',
   manageAnilistSection:   'manage-anilist-section',
   manageMalSection:       'manage-mal-section',
-  milestoneOverlay:       'milestone-overlay',
   modalAnilistBtn:        'modal-anilist-btn',
   modalConfidenceWrap:    'modal-confidence-wrap',
   modalCover:             'modal-cover',
@@ -118,10 +117,6 @@ const IDS = Object.freeze({
   modalWins:              'modal-wins',
   modeBtn:                'mode-btn',
   modePopover:            'mode-popover',
-  msEmoji:                'ms-emoji',
-  msMsg:                  'ms-msg',
-  msTitle:                'ms-title',
-  msTop5:                 'ms-top5',
   newAnimeBanner:         'new-anime-banner',
   newAnimeMsg:            'new-anime-msg',
   oauthSeedNote:          'oauth-seed-note',
@@ -146,6 +141,8 @@ const IDS = Object.freeze({
   refreshListMalBtn:      'refresh-list-mal-btn',
   refreshMetadataBtn:     'refresh-metadata-btn',
   refreshMetadataMsg:     'refresh-metadata-msg',
+  finishPromptBanner:     'finish-prompt-banner',
+  finishPromptMsg:        'finish-prompt-msg',
   removedAnimeBanner:     'removed-anime-banner',
   removedAnimeMsg:        'removed-anime-msg',
   reseedAnilistBtn:       'reseed-anilist-btn',
@@ -193,8 +190,17 @@ const IDS = Object.freeze({
   syncRetryBtn:           'sync-retry-btn',
   synopsisA:              'synopsis-a',
   synopsisB:              'synopsis-b',
-  tabPanelAchievements:   'tab-panel-achievements',
+  tabPanelManage:         'tab-panel-manage',
   tabPanelSocial:         'tab-panel-social',
+  tabPanelProfile:        'tab-panel-profile',
+  tasteBody:              'taste-body',
+  tasteEmpty:             'taste-empty',
+  tasteHeadline:          'taste-headline',
+  tasteLoading:           'taste-loading',
+  tasteLoadingMsg:        'taste-loading-msg',
+  tasteMeta:              'taste-meta',
+  tasteRefreshBtn:        'taste-refresh-btn',
+  tasteSummary:           'taste-summary',
   thSc:                   'th-sc',
   titleA:                 'title-a',
   titleB:                 'title-b',
@@ -210,6 +216,8 @@ const IDS = Object.freeze({
   towerSummaryScreen:     'tower-summary-screen',
   towerSummarySub:        'tower-summary-sub',
   towerSummaryTitle:      'tower-summary-title',
+  trioBanner:             'trio-banner',
+  trioArena:              'trio-arena',
   undoBtn:                'undo-btn',
   usernameInput:          'username-input',
   viewGridBtn:            'view-grid-btn',
@@ -244,6 +252,7 @@ let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.
 let hiddenEpRanges  = new Set(); // episode-length buckets hidden from rankings
 let _pendingNewAnime    = [];    // anime on AniList not yet in rankings (new anime detection)
 let _pendingRemovedAnime = [];   // anime in rankings but no longer on the external list (§5.2.7)
+let _finishPromptQueue  = [];   // queue of {id, title, cover, detectedAt} for post-finish Tower prompts
 let _newAnimePollingTimer = null;
 let preferRomaji    = false;     // title language preference
 let currentSort     = 'elo';     // active sort in rankings view
@@ -258,6 +267,10 @@ let showFuzzyOnly   = false;     // fuzzy filter toggle
 let franchiseMode   = false;     // group sequels/seasons in rankings view
 let settleMode      = false;     // targeted low-confidence matchmaking
 let blindMode       = false;     // hide titles & covers until a pick is made
+let trioMode        = false;     // rank three anime at once
+let currentTrio     = [];        // [idxA, idxB, idxC] — indices into animeList
+let trioOrder       = [];        // subset of [0,1,2] in the order user tapped
+let nextTrioOverride = null;     // [[idxA,idxB,idxC], ...] — replayed after undo, like nextPairOverride
 
 // ─── PERSISTENT STATS (survive the 200-battle history cap) ──────────────────
 // matchupStats: { 'minId-maxId': { wins: {[id]: N}, total: N, titleA, titleB } }
@@ -369,6 +382,7 @@ const KESSEN_KEYS = {
     // (§5.2.12) JSON array of saveKeys for which the guest-merge prompt has
     // already been shown (accepted or declined). Prevents repeat pestering.
     guestMergeDismissed: 'kessen.ui.guestMergeDismissed',
+    tasteStorySeen:      'kessen.ui.tasteStorySeen', // JSON array of battle counts already shown
   },
   settings: {
     allowAdult:  'kessen.settings.allowAdult',
@@ -380,6 +394,10 @@ const KESSEN_KEYS = {
     // list (AniList / MAL) but whose battle history is preserved on request.
     // (§5.2.7) Keyed by the user's save key so archives don't collide.
     archive: (saveKey) => 'kessen.archive.' + String(saveKey || 'guest'),
+    // Post-finish Tower prompts — queue of {id, title, cover, detectedAt}
+    finishPrompts:    'kessen.data.finishPrompts',
+    // Set of anime IDs already prompted so we never fire twice for the same show
+    finishPromptedIds: 'kessen.data.finishPromptedIds',
   },
   _migrationFlagV1: 'kessen.meta.migratedV1',
 };
@@ -2097,6 +2115,12 @@ function renderCurrentPair() {
 }
 
 function renderBattle() {
+  // Restore standard battle prompt in case we're coming back from Trio mode
+  const h2 = byId(IDS.battlePromptH2);
+  const p  = byId(IDS.battlePromptP);
+  if (h2 && h2.textContent === 'Rank these three') h2.textContent = 'Which did you enjoy more?';
+  if (p  && p.textContent.startsWith('Tap in order')) p.textContent = 'Click your favourite — or skip if you can\'t decide.';
+
   let ia, ib;
   if (nextPairOverride && nextPairOverride.length > 0) {
     [ia, ib] = nextPairOverride.shift();
@@ -2173,6 +2197,7 @@ function pickWinner(side) {
   checkMilestone(prevCount, battleCount);
   checkSessionSummary();
   _checkAchievements();
+  _maybeSaveTasteSnapshot();
   saveState();
 
   // Pick and show the next pair FIRST — then push a snapshot onto the undo stack
@@ -2196,36 +2221,66 @@ function _updateUndoBtn() {
 
 function undoLast() {
   if (undoStack.length === 0) return;
+  const snap = undoStack.pop();
 
-  const { winnerIdx, loserIdx, winnerSnap, loserSnap, battleCount: savedCount, pairA, pairB, nextA, nextB, matchupKey, matchupSnap } = undoStack.pop();
+  if (snap.type === 'trio') {
+    // Restore all 3 anime to pre-trio state
+    snap.indices.forEach((idx, i) => {
+      animeList[idx] = { ...snap.snaps[i] };
+    });
+    // Restore matchup stats for all 3 pairs
+    snap.matchupData.forEach(({ key, snap: mSnap }) => {
+      if (mSnap) matchupStats[key] = mSnap;
+      else       delete matchupStats[key];
+    });
+    // Restore battle count and remove 3 history entries
+    battleCount = snap.battleCount;
+    for (let i = 0; i < 3; i++) {
+      if (battleHistory.length > 0) battleHistory.shift();
+    }
+    // Queue the next trio so completing this trio again shows the same follow-up
+    if (snap.nextTrio) {
+      nextTrioOverride = [snap.nextTrio, ...(nextTrioOverride || [])];
+    }
 
-  // Restore anime ELO/stats (including streak)
-  animeList[winnerIdx] = { ...winnerSnap };
-  animeList[loserIdx]  = { ...loserSnap };
+    // Show the same trio again with no picks
+    currentTrio = snap.indices.slice();
+    trioOrder   = [];
+    _paintTrio();
+    updateProgress();
+    saveState();
+  } else {
+    const { winnerIdx, loserIdx, winnerSnap, loserSnap, battleCount: savedCount, pairA, pairB, nextA, nextB, matchupKey, matchupSnap } = snap;
 
-  // Restore matchup stats
-  if (matchupKey) {
-    if (matchupSnap) matchupStats[matchupKey] = matchupSnap;
-    else delete matchupStats[matchupKey];
+    // Restore anime ELO/stats (including streak)
+    animeList[winnerIdx] = { ...winnerSnap };
+    animeList[loserIdx]  = { ...loserSnap };
+
+    // Restore matchup stats
+    if (matchupKey) {
+      if (matchupSnap) matchupStats[matchupKey] = matchupSnap;
+      else delete matchupStats[matchupKey];
+    }
+
+    // Restore battle count and remove last history entry
+    battleCount = savedCount;
+    if (battleHistory.length > 0) battleHistory.shift();
+
+    // After undo, if the user re-picks from pairA/pairB, restore the same next pair
+    nextPairOverride = [[nextA, nextB], ...(nextPairOverride || [])];
+
+    // Show the original pair
+    renderPair(pairA, pairB);
+    updateProgress();
+    saveState();
   }
-
-  // Restore battle count and remove last history entry
-  battleCount = savedCount;
-  if (battleHistory.length > 0) battleHistory.shift();
-
-  // After undo, if the user re-picks from pairA/pairB, restore the same next pair
-  nextPairOverride = [[nextA, nextB], ...(nextPairOverride || [])];
 
   prevState = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
   _updateUndoBtn();
-
-  // Show the original pair
-  renderPair(pairA, pairB);
-  updateProgress();
-  saveState();
 }
 
 function skipBattle() {
+  if (trioMode) { renderTrio(); return; }
   const snap = {
     winnerIdx:  currentA,  // reuse winnerIdx/loserIdx fields for the two anime
     loserIdx:   currentB,
@@ -2768,6 +2823,8 @@ function showResults() {
   setTimeout(_checkAchievements, 500);
   // Start polling for new anime if logged in via either service (deferred so ranking renders first)
   if ((authToken && authUser) || (malAuthToken && malAuthUser)) setTimeout(_startNewAnimePolling, 2000);
+  // Load any queued post-finish prompts (prunes stale ones, shows banner if pending)
+  _loadFinishPrompts();
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
@@ -2817,7 +2874,7 @@ function streakBadge(anime) {
 }
 
 // ─── HISTORY ─────────────────────────────────────────────────────────────────
-function toggleHistory() { switchResultsTab('history'); }
+function toggleHistory() { switchResultsTab('battles'); }
 
 function renderHistory() {
   const list = byId(IDS.historyList);
@@ -3236,6 +3293,15 @@ function resetAll() {
     'Yes, reset',
     () => {
       if (saveKey) localStorage.removeItem(saveKey);
+      // Clear taste snapshots, milestone seen-state, and saved comparisons
+      // so taste profile, taste story, and social tab start completely fresh.
+      localStorage.removeItem(TASTE_SNAPSHOT_KEY);
+      localStorage.removeItem(KESSEN_KEYS.ui.tasteStorySeen);
+      localStorage.removeItem(KESSEN_KEYS.data.savedComparisons);
+      localStorage.removeItem(KESSEN_KEYS.data.finishPrompts);
+      localStorage.removeItem(KESSEN_KEYS.data.finishPromptedIds);
+      _finishPromptQueue = [];
+      byId(IDS.finishPromptBanner)?.classList.remove('active');
       // Remember who was logged in so we can re-trigger their list load
       // without asking them to sign in again. We capture BEFORE clearing
       // ranking state since saveKey / tokens may be touched downstream.
@@ -3343,6 +3409,7 @@ function _doChangeUser() {
   byId(IDS.changeUserBtn).style.display = 'none';
   byId(IDS.progressInfo).textContent = '';
   byId(IDS.usernameInput).value = '';
+  byId(IDS.kbFirstTip).style.display = 'none';
   showFlex('username-screen');
 }
 
@@ -3419,6 +3486,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
             coverImage { medium large }
             description(asHtml: false)
             format
+            episodes
             averageScore
             genres
             seasonYear
@@ -3451,6 +3519,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
         cover: m.coverImage.large || m.coverImage.medium,
         description: stripHtml(m.description || '').slice(0, 500),
         format: m.format || 'TV',
+        episodes: m.episodes || 0,
         globalScore: m.averageScore || 0,
         genres: m.genres || [],
         seasonYear: m.seasonYear || null,
@@ -3479,6 +3548,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
   if (genCheck !== undefined && genCheck !== _loadGeneration) return;
   show('battle-screen');
   _showChangeUserBtn();
+  snapshotSessionStart();
   renderBattle();
   // §5.2.12 — Offer to merge guest progress (MAL OAuth path).
   maybeOfferGuestMerge(saveKey);
@@ -3510,22 +3580,34 @@ function refreshDiscover() {
   });
 }
 
-function setRecsTab(tab) {
+function setRecsTab(tab, fromMood = false) {
+  if (!fromMood) _moodRecActive = false; // user switching tabs manually resets mood mode
   recsTab = tab;
   byId(IDS.recsTabForyou).classList.toggle('active', tab === 'foryou');
   byId(IDS.recsTabSeasonal).classList.toggle('active', tab === 'seasonal');
   byId(IDS.recsTabPredict).classList.toggle('active', tab === 'predict');
+  document.getElementById('recs-tab-moods')?.classList.toggle('active', tab === 'moods');
 
   const isPredict = tab === 'predict';
+  const isMoods   = tab === 'moods';
   const sub        = byId(IDS.recsSubText);
   const grid       = byId(IDS.recsGrid);
   const predictSec = byId(IDS.predictorSection);
+  const moodsSec   = document.getElementById('moods-section');
   const refreshBtn = byId(IDS.discoverRefreshBtn);
 
-  if (sub)        sub.style.display        = isPredict ? 'none' : '';
-  if (grid)       grid.style.display       = isPredict ? 'none' : (grid.style.display || '');
-  if (predictSec) predictSec.style.display = isPredict ? ''     : 'none';
-  if (refreshBtn) refreshBtn.style.display = isPredict ? 'none' : '';
+  if (sub)        sub.style.display        = (isPredict || isMoods) ? 'none' : '';
+  if (grid)       grid.style.display       = (isPredict || isMoods) ? 'none' : (grid.style.display || '');
+  if (predictSec) predictSec.style.display = isPredict ? '' : 'none';
+  if (moodsSec)   moodsSec.style.display   = isMoods   ? '' : 'none';
+  if (refreshBtn) refreshBtn.style.display = (isPredict || isMoods) ? 'none' : '';
+
+  if (isMoods) {
+    // Populate the discover mood grid
+    const discoverMoodGrid = document.getElementById('discover-mood-grid');
+    if (discoverMoodGrid) _paintTasteMoods(discoverMoodGrid);
+    return;
+  }
 
   if (!isPredict) {
     if (tab === 'foryou') {
@@ -3536,8 +3618,10 @@ function setRecsTab(tab) {
       sub.textContent = `Airing this season (${season} ${year}) and next (${nextS.season} ${nextS.year}) — filtered to titles you haven't watched.`;
     }
 
-    // Restore from cache if available — avoids redundant API calls
-    if (_recsCache[tab]) {
+    if (_moodRecActive) {
+      // Mood rec will populate the grid itself — don't fetch or restore cache
+    } else if (_recsCache[tab]) {
+      // Restore from cache if available — avoids redundant API calls
       grid.innerHTML     = _recsCache[tab].html;
       grid.style.display = _recsCache[tab].gridDisplay;
       _recsLoadedTab     = tab;
@@ -3685,7 +3769,7 @@ function recCardHtml(media, opts = {}) {
   const avg          = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
   const relationNote = _getRelationNote(media);
   const watchedTag   = watched
-    ? '<span style="font-size:0.65rem;background:#21262d;color:#8b949e;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Watched</span>'
+    ? '<span style="font-size:0.65rem;background:var(--border-subtle);color:var(--text-secondary);padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Watched</span>'
     : '';
   // Show a taste badge on seasonal cards that match the user's genres well
   const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
@@ -4826,6 +4910,7 @@ async function startLoading() {
       if (myGen !== _loadGeneration) return;
       show('battle-screen');
       _showChangeUserBtn();
+      snapshotSessionStart();
       if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
       return;
     }
@@ -4970,6 +5055,7 @@ async function fetchGuestPool() {
             coverImage { large medium }
             description(asHtml: false)
             format
+            episodes
             averageScore
             genres
             seasonYear
@@ -4997,6 +5083,7 @@ async function fetchGuestPool() {
       cover: m.coverImage.large || m.coverImage.medium,
       description: stripHtml(m.description).slice(0, 500),
       format: m.format || 'TV',
+      episodes: m.episodes || 0,
       globalScore: m.averageScore || 0,
       genres: m.genres || [],
       seasonYear: m.seasonYear || null,
@@ -5022,6 +5109,8 @@ async function startGuestMode() {
       if (myGen !== _loadGeneration) return;
       show('battle-screen');
       _showChangeUserBtn();
+      snapshotSessionStart();
+      maybeShowKbTip();
       if (currentA !== null && currentB !== null) renderCurrentPair();
       else renderBattle();
       return;
@@ -5037,6 +5126,8 @@ async function startGuestMode() {
     if (myGen !== _loadGeneration) return;
     show('battle-screen');
     _showChangeUserBtn();
+    snapshotSessionStart();
+    maybeShowKbTip();
     renderBattle();
   } catch (err) {
     _clearLoadCancelTimer();
@@ -5174,56 +5265,418 @@ function buildSparkline(history) {
 }
 
 // ─── MILESTONES ───────────────────────────────────────────────────────────────
-const MILESTONES = [
-  { count: 100,  emoji: '🎉', title: '100 Battles!',   msg: 'The rankings are starting to take shape.' },
-  { count: 250,  emoji: '⚔️',  title: '250 Battles!',   msg: "You're on a serious ranking mission." },
-  { count: 500,  emoji: '🏆', title: '500 Battles!',   msg: 'Half a thousand matchups — a true connoisseur.' },
-  { count: 1000, emoji: '🌟', title: '1000 Battles!',  msg: 'Legendary. Your rankings are rock-solid.' },
-];
+const TASTE_STORY_MILESTONES = [50, 100, 200, 300, 500];
+const TASTE_STORY_REPEAT_INTERVAL = 250;
+
+// Returns the milestone value crossed between before and after, or null.
+// Fixed early milestones first, then every TASTE_STORY_REPEAT_INTERVAL after 500.
+function _findTasteStoryMilestone(before, after) {
+  const fixed = TASTE_STORY_MILESTONES.find(n => before < n && after >= n);
+  if (fixed) return fixed;
+  if (after > 500) {
+    const next = Math.ceil((before + 1) / TASTE_STORY_REPEAT_INTERVAL) * TASTE_STORY_REPEAT_INTERVAL;
+    if (next > 500 && next <= after) return next;
+  }
+  return null;
+}
+
+// Returns a sequential index for any milestone value, used to alternate titles.
+function _tasteArchetypeIndex(milestone) {
+  const fixedIdx = TASTE_STORY_MILESTONES.indexOf(milestone);
+  if (fixedIdx !== -1) return fixedIdx;
+  return TASTE_STORY_MILESTONES.length + Math.round((milestone - 500) / TASTE_STORY_REPEAT_INTERVAL) - 1;
+}
 
 function checkMilestone(before, after) {
-  const hit = MILESTONES.find(m => before < m.count && after >= m.count);
-  if (!hit) return;
-  byId(IDS.msEmoji).textContent = hit.emoji;
-  byId(IDS.msTitle).textContent = hit.title;
-  byId(IDS.msMsg).textContent   = hit.msg;
-  const top5 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 5);
-  byId(IDS.msTop5).innerHTML = top5.map((a, i) => `
-    <div class="ms-card">
-      <img src="${safeUrl(a.cover)}" alt="${esc(a.title)}" />
-      <div class="ms-card-rank">#${i + 1}</div>
-      <div class="ms-card-title">${esc(a.title)}</div>
-    </div>`).join('');
-  byId(IDS.milestoneOverlay).style.display = 'flex';
+  // Taste story — check before the regular milestone so it appears first
+  const tasteHit = _findTasteStoryMilestone(before, after);
+  if (tasteHit && animeList.length >= 10) {
+    try {
+      const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
+      if (!seen.includes(tasteHit)) {
+        seen.push(tasteHit);
+        localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(seen));
+        setTimeout(() => showTasteStory(tasteHit), 400);
+        return; // don't show regular milestone on same battle
+      }
+    } catch { /* ignore */ }
+  }
+
 }
 
-function closeMilestone() {
-  byId(IDS.milestoneOverlay).style.display = 'none';
+// ─── TASTE STORY ("WRAPPED" EXPERIENCE) ──────────────────────────────────────
+
+const _TASTE_ARCHETYPES = {
+  'Psychological': ['Read the Wiki After Every Episode', 'The 4D Chess Enjoyer'],
+  'Drama':         ['Onion Ninja Survivor',     'Cried at Episode 5'],
+  'Action':        ['Sakuga Connoisseur',       'AOTY Every Season'],
+  'Comedy':        ['Laughed During the Sad Part', 'Reaction Face Collector'],
+  'Sci-Fi':        ['The Infodump Appreciator',  'The Hard Sci-Fi Purist'],
+  'Fantasy':       ['Isekai Truck Survivor',    'Reincarnated With Great Taste'],
+  'Romance':       ['Just Confess Already',     'The Slow Burn Masochist'],
+  'Horror':        ['Watches Alone at 3am',     'Unfazed by the Gore'],
+  'Slice of Life': ['Iyashikei Devotee',        'Tea and Existential Dread'],
+  'Sports':        ['Cried at the Training Arc','Peak Fiction Finder'],
+  'Mystery':       ['Paused at Every Frame',    'The Theory Poster'],
+  'Supernatural':  ['Ayakashi Whisperer',       'Spirit World Citizen'],
+  'Mecha':         ['Get in the Robot',         'Unit 01 Apologist'],
+  'Shounen':       ['Power of Friendship Believer', 'Never Skips the Training Arc'],
+};
+
+const _ERA_NICKNAMES = {
+  1960: 'The Tezuka Era',
+  1970: 'Before the Algorithm',
+  1980: 'The OG Era',
+  1990: 'The Golden Otaku Era',
+  2000: 'The Moe Renaissance',
+  2010: "Anime's Golden Age",
+  2020: 'Current Season Regular',
+};
+const _ERA_COPY = {
+  1960: "Foundational taste. You don't play around.",
+  1970: "Pre-internet, pre-fandom, just pure craft. Respect.",
+  1980: "VHS era loyalist. You know what you're about.",
+  1990: "Before streaming. When fansubs were love letters. You were there.",
+  2000: "The decade that built the modern otaku. It never left your rankings.",
+  2010: "The decade that broke the algorithm. You never recovered.",
+  2020: "Still keeping up with the seasonals. Respect.",
+};
+
+const _STUDIO_QUIPS = {
+  'MAPPA':           "Your wallet has accepted its fate.",
+  'Ufotable':        "You have expensive taste and the sakuga to prove it.",
+  'Kyoto Animation': "You cry at beautiful things. That tracks.",
+  'Madhouse':        "Classic taste. You know what's good.",
+  'Bones':           "You trust the process. Even when the process takes 20 years.",
+  'A-1 Pictures':    "Quantity and quality. You don't discriminate.",
+  'Wit Studio':      "You followed them from the beginning.",
+  'TRIGGER':         "You came for the hype. You stayed for the hype.",
+  'Gainax':          "A person of culture and suffering.",
+  'Shaft':           "Head tilts and existential dread. Understood.",
+  'Production I.G':  "Action and atmosphere. Timeless.",
+  'J.C.Staff':       "You see the vision even when others don't.",
+  'Sunrise':         "Mecha and mayhem. The classics never die.",
+  'Toei Animation':  "You grew up on this. It shows.",
+  'P.A. Works':      "Beautiful backgrounds, beautiful sadness.",
+  'CloverWorks':     "You ride the hype. Sometimes it pays off.",
+};
+
+function _computeTasteInsights(battleMilestone) {
+  const sorted    = [...animeList].sort((a, b) => b.elo - a.elo);
+  const battled   = sorted.filter(a => (a.battles || 0) > 0);
+  const globalAvg = animeList.reduce((s, a) => s + a.elo, 0) / (animeList.length || 1);
+  const top20     = sorted.slice(0, Math.min(20, sorted.length));
+  const cards     = [];
+
+  // ── Insight 1: Taste archetype ──────────────────────────────────────────
+  const genreMap = {};
+  animeList.forEach(a => {
+    (a.genres || []).forEach(g => {
+      if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
+      genreMap[g].sum += a.elo;
+      genreMap[g].count++;
+    });
+  });
+  const genreAvgs = Object.entries(genreMap)
+    .filter(([, v]) => v.count >= 3)
+    .map(([g, v]) => ({ genre: g, avg: v.sum / v.count, count: v.count }))
+    .sort((a, b) => b.avg - a.avg);
+
+  const topGenre   = genreAvgs[0]?.genre || 'Drama';
+  const topDelta   = Math.round((genreAvgs[0]?.avg || globalAvg) - globalAvg);
+  const botGenre   = genreAvgs[genreAvgs.length - 1]?.genre;
+  const archetypes = _TASTE_ARCHETYPES[topGenre] || ['The Algorithm Gave Up', 'Refuses to Be Categorised'];
+  const archetype  = archetypes[_tasteArchetypeIndex(battleMilestone) % archetypes.length];
+
+  cards.push({
+    type:     'archetype',
+    label:    'Your taste type',
+    headline: archetype,
+    sub:      `After ${battleMilestone} battles, ${topGenre} shows sit ${Math.abs(topDelta)} ELO above your average.${botGenre ? ` ${botGenre}? Barely makes your top half.` : ''}`,
+    accent:   '#58a6ff',
+  });
+
+  // ── Insight 2: The undefeated champion ─────────────────────────────────
+  const champion = sorted[0];
+  if (champion && (champion.battles || 0) >= 5) {
+    cards.push({
+      type:     'champion',
+      label:    'Still undefeated',
+      headline: displayTitle(champion),
+      sub:      `${champion.battles} battles. ${champion.wins} wins. Sitting at #1 like it owns the place. Nothing has knocked it off.`,
+      accent:   '#f0c040',
+      cover:    champion.cover || '',
+    });
+  }
+
+  // ── Insight 3: Contrarian take ──────────────────────────────────────────
+  const scored = animeList.filter(a => a.globalScore > 0 && (a.battles || 0) > 0);
+  if (scored.length >= 5) {
+    const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
+    const withRank  = scored.map(a => {
+      const eloRank  = eloSorted.findIndex(x => x.id === a.id) / animeList.length;
+      const commRank = 1 - (a.globalScore / 100);
+      return { a, gap: commRank - eloRank };
+    }).sort((x, y) => Math.abs(y.gap) - Math.abs(x.gap));
+
+    const biggest = withRank[0];
+    if (biggest && Math.abs(biggest.gap) > 0.1) {
+      const higher    = biggest.gap > 0;
+      const tierLabel = getTier(eloSorted.findIndex(x => x.id === biggest.a.id), animeList.length);
+      cards.push({
+        type:     'contrarian',
+        label:    'Your hottest take',
+        headline: displayTitle(biggest.a),
+        sub:      higher
+          ? `AniList gives it ${(biggest.a.globalScore / 10).toFixed(1)}/10. You have it in ${tierLabel} tier. Certified hot take.`
+          : `You buried it in ${tierLabel} tier. AniList users disagree — ${(biggest.a.globalScore / 10).toFixed(1)}/10 community average. Bold.`,
+        accent: '#f85149',
+      });
+    }
+  }
+
+  // ── Insight 4: The endless rivalry ─────────────────────────────────────
+  const rivalries = Object.values(matchupStats)
+    .filter(m => m.total >= 3)
+    .map(m => {
+      const [idA, idB] = Object.keys(m.wins).map(Number);
+      const wA = m.wins[idA] || 0;
+      const wB = m.wins[idB] || 0;
+      const balance = Math.abs(wA - wB) / m.total; // 0 = perfectly split
+      return { ...m, wA, wB, balance };
+    })
+    .filter(m => m.balance < 0.4)
+    .sort((a, b) => b.total - a.total);
+
+  if (rivalries.length > 0) {
+    const r       = rivalries[0];
+    const leader  = r.wA >= r.wB ? r.titleA : r.titleB;
+    const trailer = r.wA >= r.wB ? r.titleB : r.titleA;
+    const lWins   = Math.max(r.wA, r.wB);
+    const tWins   = Math.min(r.wA, r.wB);
+    cards.push({
+      type:     'rivalry',
+      label:    'The endless war',
+      headline: `${r.titleA} vs ${r.titleB}`,
+      sub:      `${r.total} battles and still no clear winner. ${leader} leads ${lWins}–${tWins}. This debate has no end in sight.`,
+      accent:   '#f85149',
+    });
+  }
+
+  // ── Insight 5: Studio loyalty ───────────────────────────────────────────
+  const top10       = sorted.slice(0, 10);
+  const hasStudios  = top10.some(a => Array.isArray(a.studios) && a.studios.length);
+  if (hasStudios) {
+    const studioCount = {};
+    top10.forEach(a => (a.studios || []).forEach(s => {
+      studioCount[s] = (studioCount[s] || 0) + 1;
+    }));
+    const topStudio = Object.entries(studioCount).sort((a, b) => b[1] - a[1])[0];
+    if (topStudio && topStudio[1] >= 3) {
+      const [studio, count] = topStudio;
+      const quip = _STUDIO_QUIPS[studio] || "Your rankings don't lie.";
+      cards.push({
+        type:     'studio',
+        label:    'Studio loyalty',
+        headline: studio,
+        sub:      `${count} of your top 10 are ${studio} productions. ${quip}`,
+        accent:   '#3fb950',
+      });
+    }
+  }
+
+  // ── Insight 6: Era bias ─────────────────────────────────────────────────
+  const topWithYear = top20.filter(a => a.seasonYear);
+  if (topWithYear.length >= 5) {
+    const avgYear     = Math.round(topWithYear.reduce((s, a) => s + a.seasonYear, 0) / topWithYear.length);
+    const decade      = Math.floor(avgYear / 10) * 10;
+    const decadeCount = top20.filter(a => a.seasonYear && Math.floor(a.seasonYear / 10) * 10 === decade).length;
+    const eraName     = _ERA_NICKNAMES[decade] || `${decade}s`;
+    const eraCopy     = _ERA_COPY[decade] || `${decadeCount} of your top 20 are from the ${decade}s.`;
+    cards.push({
+      type:     'era',
+      label:    'Your era',
+      headline: eraName,
+      sub:      `${decadeCount} of your top 20 are from the ${decade}s. ${eraCopy}`,
+      accent:   '#f0c040',
+    });
+  }
+
+  // ── Insight 7: Episode length pattern ──────────────────────────────────
+  const shortAnime = battled.filter(a => a.format !== 'MOVIE' && a.episodes > 0 && a.episodes <= 12);
+  const longAnime  = battled.filter(a => a.episodes > 24);
+  if (shortAnime.length >= 3 && longAnime.length >= 3) {
+    const shortAvg = shortAnime.reduce((s, a) => s + a.elo, 0) / shortAnime.length;
+    const longAvg  = longAnime.reduce((s, a) => s + a.elo, 0) / longAnime.length;
+    const diff     = Math.abs(Math.round(shortAvg - longAvg));
+    const prefers  = shortAvg > longAvg ? 'short' : 'long';
+    cards.push({
+      type:     'pattern',
+      label:    'Your commitment level',
+      headline: prefers === 'short' ? 'Less is more' : 'Built for the long haul',
+      sub:      prefers === 'short'
+        ? `12-episode runs average ${diff} ELO higher in your rankings. You don't need a 500-episode saga to be convinced something is good.`
+        : `Long-runners (25+ episodes) average ${diff} ELO above your shorter watches. You don't just watch anime — you commit.`,
+      accent: '#3fb950',
+    });
+  }
+
+  // ── Final: Top 3 share card ─────────────────────────────────────────────
+  const top3 = sorted.slice(0, 3);
+  cards.push({
+    type:            'share',
+    label:           'Your ranking, defined',
+    headline:        archetype,
+    top3,
+    battleMilestone,
+    accent:          '#58a6ff',
+  });
+
+  return cards;
 }
 
-function shareMilestone() {
-  const msTitle = byId(IDS.msTitle).textContent || 'Milestone';
-  const msEmoji = byId(IDS.msEmoji).textContent || '🎉';
-  const top5 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 5);
-  const user = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
-  const payload = {
-    u: user,
-    b: battleCount,
-    ms: msEmoji + ' ' + msTitle,
-    top: top5.map((a, i) => ({ r: i + 1, t: a.title, e: a.elo, c: a.cover }))
-  };
-  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  const url = location.href.split('#')[0] + '#r=' + encoded;
-  // Close milestone first so share modal isn't obscured behind it
-  closeMilestone();
-  byId(IDS.shareUrl).value = url;
-  const copyBtn = byId(IDS.copyBtn);
-  if (copyBtn) copyBtn.textContent = '📋 Copy link';
-  // Update share modal description for milestone context
-  const subEl = byId(IDS.shareModal)?.querySelector('.share-subtitle');
-  if (subEl) subEl.textContent = `You've hit ${msTitle}! Share your top 5 snapshot.`;
-  _updateShareModalCapabilities();
-  byId(IDS.shareModal).style.display = 'flex';
+let _tasteStoryCards  = [];
+let _tasteStoryIndex  = 0;
+
+function showTasteStory(battleMilestone) {
+  _tasteStoryCards = _computeTasteInsights(battleMilestone);
+  _tasteStoryIndex = 0;
+  _renderTasteStoryCard();
+  byId('taste-story-modal').style.display = 'flex';
+}
+
+function _renderTasteStoryCard() {
+  const card  = _tasteStoryCards[_tasteStoryIndex];
+  const total = _tasteStoryCards.length;
+  const el    = byId('taste-story-modal');
+  if (!el || !card) return;
+
+  // Dots
+  el.querySelector('.ts-dots').innerHTML = _tasteStoryCards
+    .map((_, i) => `<span class="ts-dot ${i === _tasteStoryIndex ? 'active' : ''}"></span>`)
+    .join('');
+
+  const body = el.querySelector('.ts-body');
+  if (card.type === 'share') {
+    const top3Html = card.top3.map(a => `
+      <div class="ts-cover-wrap">
+        <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}" />
+        <div class="ts-cover-title">${esc(displayTitle(a))}</div>
+      </div>`).join('');
+    body.innerHTML = `
+      <div class="ts-label">After ${card.battleMilestone} battles</div>
+      <div class="ts-headline ts-archetype" style="color:${card.accent}">${card.headline}</div>
+      <div class="ts-covers">${top3Html}</div>
+      <div class="ts-share-actions">
+        <button class="btn-primary" onclick="exportTasteStoryCard()">📸 Save image</button>
+        <button class="btn-secondary" onclick="closeTasteStory();showResults();switchResultsTab('profile')" style="margin-left:8px">🎨 Full profile →</button>
+      </div>`;
+  } else if (card.type === 'champion' && card.cover) {
+    body.innerHTML = `
+      <div class="ts-label">${card.label}</div>
+      <div class="ts-champion-wrap">
+        <img class="ts-champion-cover" src="${esc(card.cover)}" alt="${esc(card.headline)}" onerror="this.style.display='none'" />
+        <div class="ts-champion-info">
+          <div class="ts-headline" style="color:${card.accent}">${esc(card.headline)}</div>
+          <div class="ts-sub">${card.sub}</div>
+        </div>
+      </div>
+      <button class="ts-profile-link" onclick="closeTasteStory();showResults();switchResultsTab('profile')">🎨 See full profile →</button>`;
+  } else {
+    body.innerHTML = `
+      <div class="ts-label">${card.label}</div>
+      <div class="ts-headline" style="color:${card.accent}">${esc(card.headline)}</div>
+      <div class="ts-sub">${card.sub}</div>
+      <button class="ts-profile-link" onclick="closeTasteStory();showResults();switchResultsTab('profile')">🎨 See full profile →</button>`;
+  }
+
+  el.querySelector('.ts-prev').style.visibility = _tasteStoryIndex > 0 ? 'visible' : 'hidden';
+  el.querySelector('.ts-next').textContent = _tasteStoryIndex < total - 1 ? 'Next →' : 'Done';
+}
+
+function tasteStoryNav(dir) {
+  const total = _tasteStoryCards.length;
+  if (dir > 0 && _tasteStoryIndex >= total - 1) {
+    closeTasteStory(); return;
+  }
+  _tasteStoryIndex = Math.max(0, Math.min(total - 1, _tasteStoryIndex + dir));
+  _renderTasteStoryCard();
+}
+
+function closeTasteStory() {
+  byId('taste-story-modal').style.display = 'none';
+}
+
+async function exportTasteStoryCard() {
+  const card = _tasteStoryCards.find(c => c.type === 'share');
+  if (!card) return;
+
+  const CW = 600, CH = 400;
+  const canvas = document.createElement('canvas');
+  canvas.width = CW; canvas.height = CH;
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, CW, CH);
+
+  // Accent stripe
+  ctx.fillStyle = '#58a6ff22';
+  ctx.fillRect(0, 0, CW, 4);
+
+  // Archetype label
+  ctx.fillStyle = '#58a6ff';
+  ctx.font = 'bold 28px ui-sans-serif, system-ui, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(card.headline, CW / 2, 54);
+
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '14px ui-sans-serif, system-ui, Arial, sans-serif';
+  ctx.fillText(`${card.battleMilestone} battles · kessen.co.uk`, CW / 2, 82);
+
+  // Top 3 covers
+  const coverW = 110, coverH = 154;
+  const coverY = 108;
+  const spacing = 130;
+  const startX  = CW / 2 - spacing;
+
+  for (let i = 0; i < Math.min(3, card.top3.length); i++) {
+    const a   = card.top3[i];
+    const cx  = startX + i * spacing - coverW / 2;
+    try {
+      const img = await _loadCoverForCanvas(a.cover);
+      if (img) ctx.drawImage(img, cx, coverY, coverW, coverH);
+    } catch { /* skip broken covers */ }
+    // Rank badge
+    ctx.fillStyle = '#0d1117cc';
+    ctx.fillRect(cx, coverY, 26, 22);
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = 'bold 12px ui-sans-serif, system-ui, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`#${i + 1}`, cx + 4, coverY + 15);
+    // Title
+    ctx.fillStyle = '#c9d1d9';
+    ctx.font = '11px ui-sans-serif, system-ui, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    const title = (displayTitle(a) || '').slice(0, 18);
+    ctx.fillText(title, cx + coverW / 2, coverY + coverH + 16);
+  }
+
+  // Footer
+  ctx.fillStyle = '#30363d';
+  ctx.fillRect(0, CH - 36, CW, 1);
+  ctx.fillStyle = '#6e7681';
+  ctx.font = '12px ui-sans-serif, system-ui, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('kessen.co.uk · rank your anime, discover your taste', CW / 2, CH - 12);
+
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'kessen-taste.png'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  showToast('📸 Taste card saved!');
 }
 
 // ─── SHARE LINK ───────────────────────────────────────────────────────────────
@@ -5581,8 +6034,8 @@ function _tryUnlock(id, condition, toastName) {
   saveState();
   showToast(`🏆 Achievement unlocked: ${toastName}`, 4000);
   // Refresh tab if open
-  if (byId(IDS.tabPanelAchievements)?.style.display !== 'none') {
-    renderAchievementsTab();
+  if (byId(IDS.tabPanelManage)?.style.display !== 'none') {
+    renderAchievementsTab(); // refresh in place whether on settings or achievements sub-tab
   }
 }
 
@@ -5684,7 +6137,7 @@ function renderAchievementsTab() {
   el.innerHTML = `
     <div class="achievements-summary">
       ${unlockedCount} / ${totalTiers} unlocked
-      <div style="height:6px;background:#21262d;border-radius:4px;margin:8px auto;max-width:200px">
+      <div style="height:6px;background:var(--border-subtle);border-radius:4px;margin:8px auto;max-width:200px">
         <div style="height:100%;border-radius:4px;background:#3fb950;width:${Math.round((unlockedCount/totalTiers)*100)}%"></div>
       </div>
     </div>
@@ -5738,16 +6191,88 @@ function switchResultsTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => {
     p.style.display = p.id === 'tab-panel-' + tab ? '' : 'none';
   });
-  if (tab === 'rankings')     renderExcluded();
-  if (tab === 'stats')        renderStatsTab();
-  if (tab === 'history')      renderHistoryTab();
-  if (tab === 'discover')     renderDiscoverTab();
-  if (tab === 'social')       renderSocialTab();
-  if (tab === 'achievements') renderAchievementsTab();
+  if (tab === 'rankings') renderExcluded();
+  if (tab === 'battles')  renderBattlesTab();
+  if (tab === 'profile')  renderProfileTab();
+  if (tab === 'discover') renderDiscoverTab();
+  if (tab === 'social')   renderSocialTab();
+  if (tab === 'manage')   renderManageTab();
 }
+
+function renderBattlesTab() {
+  // ── Battle stats ────────────────────────────────────────────────────────────
+  byId(IDS.statTotalBattles).textContent = battleCount;
+  const stable = animeList.length
+    ? Math.round((animeList.filter(a => (a.battles || 0) >= TARGET_BATTLES_PER_ANIME).length / animeList.length) * 100)
+    : 0;
+  byId(IDS.statStability).textContent = stable + '%';
+  byId(IDS.statFuzzy).textContent = animeList.filter(a => a.fuzzy).length;
+
+  const mostBattled = [...animeList].sort((a, b) => (b.battles || 0) - (a.battles || 0)).slice(0, 5);
+  byId(IDS.statMostBattled).innerHTML = mostBattled.map(a =>
+    `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${a.battles || 0}</span></div>`
+  ).join('');
+
+  const eligible = [...animeList]
+    .filter(a => (a.wins + a.losses) >= 5)
+    .map(a => ({ ...a, rate: a.wins / (a.wins + a.losses) }))
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 5);
+  byId(IDS.statBestWinrate).innerHTML = eligible.length
+    ? eligible.map(a =>
+        `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${Math.round(a.rate * 100)}%</span></div>`
+      ).join('')
+    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Not enough battles yet.</div>';
+
+  const upsets = [...battleHistory]
+    .filter(h => h.eloDiffBefore > 0)
+    .sort((a, b) => b.eloDiffBefore - a.eloDiffBefore)
+    .slice(0, 5);
+  byId(IDS.statUpsets).innerHTML = upsets.length
+    ? upsets.map(h =>
+        `<div class="stat-anime-row">
+          <span><span style="color:#3fb950">${h.winnerTitle}</span> beat ${h.loserTitle}</span>
+          <span>+${h.eloDiffBefore} ELO gap</span>
+        </div>`
+      ).join('')
+    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No upsets recorded yet.</div>';
+
+  // ── History & rivalries ─────────────────────────────────────────────────────
+  renderHistory();
+  renderRivalries();
+}
+
+function renderProfileTab() {
+  renderTasteProfile();
+  renderFormatSplit();
+  renderScoreDistribution();
+  renderGenreStats();
+  renderDisagreements();
+}
+
+let _activeManageSub = 'settings';
+
+function switchManageTab(sub) {
+  _activeManageSub = sub;
+  ['settings', 'achievements'].forEach(s => {
+    const btn   = document.getElementById('manage-sub-' + s);
+    const panel = document.getElementById('manage-panel-' + s);
+    if (btn)   btn.classList.toggle('active', s === sub);
+    if (panel) panel.style.display = s === sub ? '' : 'none';
+  });
+  if (sub === 'achievements') renderAchievementsTab();
+}
+
+function renderManageTab() {
+  // Re-apply whichever sub-tab was last active (default: settings)
+  switchManageTab(_activeManageSub);
+}
+
+let _moodRecActive = false; // suppresses normal discover load when mood rec is running
 
 function renderDiscoverTab() {
   if (recsTab === 'predict') return; // predictor is search-driven, no pre-loading needed
+  if (_moodRecActive) return; // mood rec will populate the grid itself
 
   const grid = byId(IDS.recsGrid);
 
@@ -5870,6 +6395,26 @@ function dismissKbTip() {
   localStorage.setItem(KESSEN_KEYS.ui.kbSeen, '1');
   byId(IDS.kbFirstTip).style.display = 'none';
 }
+
+// ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
+function _applyTheme(light) {
+  document.body.classList.toggle('light-mode', light);
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn) btn.textContent = light ? '☀️' : '🌙';
+}
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-mode');
+  localStorage.setItem('kessen.ui.theme', isLight ? 'light' : 'dark');
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn) btn.textContent = isLight ? '☀️' : '🌙';
+}
+
+// Apply saved theme immediately on load
+(function () {
+  const saved = localStorage.getItem('kessen.ui.theme');
+  if (saved === 'light') _applyTheme(true);
+})();
 
 // ─── SESSION SUMMARY ──────────────────────────────────────────────────────────
 let sessionStartElo    = {};
@@ -6044,55 +6589,8 @@ function filterRankings() {
   if (rankingView === 'list') renderRankingTable();
 }
 
-// ─── STATS ────────────────────────────────────────────────────────────────────
-function toggleStats() { switchResultsTab('stats'); }
-
-function renderStatsTab() {
-  // Numbers
-  byId(IDS.statTotalBattles).textContent = battleCount;
-  const stable = Math.round(
-    (animeList.filter(a => (a.battles || 0) >= TARGET_BATTLES_PER_ANIME).length / animeList.length) * 100
-  );
-  byId(IDS.statStability).textContent = stable + '%';
-  byId(IDS.statFuzzy).textContent = animeList.filter(a => a.fuzzy).length;
-
-  // Most battled
-  const mostBattled = [...animeList].sort((a, b) => (b.battles || 0) - (a.battles || 0)).slice(0, 5);
-  byId(IDS.statMostBattled).innerHTML = mostBattled.map(a =>
-    `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${a.battles || 0}</span></div>`
-  ).join('');
-
-  // Best win rate (5+ battles minimum)
-  const eligible = [...animeList]
-    .filter(a => (a.wins + a.losses) >= 5)
-    .map(a => ({ ...a, rate: a.wins / (a.wins + a.losses) }))
-    .sort((a, b) => b.rate - a.rate)
-    .slice(0, 5);
-  byId(IDS.statBestWinrate).innerHTML = eligible.length
-    ? eligible.map(a =>
-        `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${Math.round(a.rate * 100)}%</span></div>`
-      ).join('')
-    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Not enough battles yet.</div>';
-
-  // Biggest upsets (winner was underdog — eloDiffBefore > 0, largest first)
-  const upsets = [...battleHistory]
-    .filter(h => h.eloDiffBefore > 0)
-    .sort((a, b) => b.eloDiffBefore - a.eloDiffBefore)
-    .slice(0, 5);
-  byId(IDS.statUpsets).innerHTML = upsets.length
-    ? upsets.map(h =>
-        `<div class="stat-anime-row">
-          <span><span style="color:#3fb950">${h.winnerTitle}</span> beat ${h.loserTitle}</span>
-          <span>+${h.eloDiffBefore} ELO gap</span>
-        </div>`
-      ).join('')
-    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No upsets recorded yet.</div>';
-
-  renderFormatSplit();
-  renderScoreDistribution();
-  renderGenreStats();       // async — enriches genres/studios if needed, then calls renderStudioAffinity
-  renderDisagreements();
-}
+// ─── STATS (kept for backwards compat; logic now lives in renderBattlesTab/renderProfileTab) ──
+function toggleStats() { switchResultsTab('battles'); }
 
 async function renderGenreStats() {
   const chartEl = byId(IDS.statGenreChart);
@@ -6275,8 +6773,10 @@ function renderStudioAffinity() {
     <p style="color:#6e7681;font-size:0.75rem;margin-top:10px">ELO difference from your overall average (${overallAvg})</p>`;
 }
 
-// Silently fetch genres + seasonYear for existing anime that predate those fields
-async function _enrichGenresAndEras() {
+// Silently fetch genres + seasonYear + studios for existing anime that predate
+// those fields. Used by the Stats tab; the Taste Profile tab further extends
+// this via _enrichTasteMetadata() to also pull tags + source.
+async function _enrichGenresAndEras(onProgress) {
   const ids = animeList.map(a => a.id);
   const PAGE_SIZE = 50;
   for (let i = 0; i < ids.length; i += PAGE_SIZE) {
@@ -6288,7 +6788,9 @@ async function _enrichGenresAndEras() {
             id
             genres
             seasonYear
+            source
             studios(isMain: true) { nodes { name } }
+            tags { name rank isAdult isGeneralSpoiler }
           }
         }
       }`;
@@ -6303,15 +6805,803 @@ async function _enrichGenresAndEras() {
     const enrichMap = new Map((data?.data?.Page?.media ?? []).map(m => [m.id, m]));
     animeList.forEach(a => {
       const m = enrichMap.get(a.id);
-      if (m) {
-        if (!Array.isArray(a.genres)) a.genres = m.genres || [];
-        if (!a.seasonYear)            a.seasonYear = m.seasonYear || null;
-        if (!Array.isArray(a.studios)) a.studios = (m.studios?.nodes || []).map(n => n.name).filter(Boolean);
+      if (!m) return;
+      if (!Array.isArray(a.genres)) a.genres = m.genres || [];
+      if (!a.seasonYear)            a.seasonYear = m.seasonYear || null;
+      if (!Array.isArray(a.studios)) a.studios = (m.studios?.nodes || []).map(n => n.name).filter(Boolean);
+      if (!a.source)                a.source = m.source || null;
+      if (!Array.isArray(a.tags)) {
+        // Keep name+rank only, drop spoilery/adult tags. The rank is AniList's
+        // 0-100 relevance score — we weight contributions by it in taste calcs.
+        a.tags = (m.tags || [])
+          .filter(t => !t.isAdult && !t.isGeneralSpoiler)
+          .map(t => ({ name: t.name, rank: t.rank ?? 0 }));
       }
     });
+    if (typeof onProgress === 'function') {
+      onProgress({ done: Math.min(i + PAGE_SIZE, ids.length), total: ids.length });
+    }
     if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 350));
   }
   saveState();
+}
+
+// Returns true if any item on animeList is missing tags/studios/genres — i.e.
+// needs a Taste-Profile enrichment pass. Source and seasonYear come from the
+// same GraphQL query so we don't need to check them explicitly.
+function _needsTasteEnrichment() {
+  return animeList.some(a =>
+    !Array.isArray(a.tags) ||
+    !Array.isArray(a.genres) ||
+    !Array.isArray(a.studios)
+  );
+}
+
+// ─── TASTE PROFILE (§6.4.1) ───────────────────────────────────────────────────
+// Aggregates ELO across AniList's tag graph + studios / genres / sources / eras /
+// formats to surface *why* a user rates things the way they do. The headline
+// insight targets the single strongest affinity (highest |diff| at sufficient
+// sample size). Tag aggregation is rank-weighted — AniList tags carry a 0-100
+// relevance score, so "Time Loop" contributing +80 to one title and +20 to
+// another pulls the average proportionally.
+const _TASTE_SOURCE_LABELS = Object.freeze({
+  ORIGINAL:           'Original',
+  MANGA:              'Manga',
+  LIGHT_NOVEL:        'Light Novel',
+  VISUAL_NOVEL:       'Visual Novel',
+  NOVEL:              'Novel',
+  WEB_NOVEL:          'Web Novel',
+  VIDEO_GAME:         'Video Game',
+  GAME:               'Game',
+  OTHER:              'Other',
+  DOUJINSHI:          'Doujinshi',
+  ANIME:              'Anime',
+  LIVE_ACTION:        'Live Action',
+  COMIC:              'Comic',
+  MULTIMEDIA_PROJECT: 'Multimedia',
+  PICTURE_BOOK:       'Picture Book',
+});
+
+const _TASTE_FORMAT_LABELS = Object.freeze({
+  TV:       'TV Series',
+  MOVIE:    'Movie',
+  OVA:      'OVA',
+  ONA:      'ONA',
+  TV_SHORT: 'Short',
+  SPECIAL:  'Special',
+  MUSIC:    'Music',
+});
+
+// Core aggregator — pure over animeList. Returns a structured object the
+// renderer paints section-by-section. Deterministic + side-effect-free so it
+// can be unit-tested without touching the DOM.
+function computeTasteProfile() {
+  const list = animeList.filter(a => typeof a.elo === 'number');
+  if (list.length === 0) {
+    return { empty: true, reason: 'no-data' };
+  }
+
+  const overallAvg = list.reduce((s, a) => s + a.elo, 0) / list.length;
+
+  // ── Tags (rank-weighted mean ELO) ───────────────────────────────────────
+  // Only tags with rank >= 40 contribute — below that, AniList considers them
+  // fringe and they add noise. Weight each contribution by rank/100.
+  const TAG_MIN_RANK  = 40;
+  const TAG_MIN_COUNT = 3;
+  const tagMap = new Map();
+  list.forEach(a => {
+    (a.tags || []).forEach(t => {
+      if (!t || (t.rank ?? 0) < TAG_MIN_RANK) return;
+      const w = (t.rank ?? 0) / 100;
+      let bucket = tagMap.get(t.name);
+      if (!bucket) { bucket = { sum: 0, weight: 0, count: 0 }; tagMap.set(t.name, bucket); }
+      bucket.sum    += a.elo * w;
+      bucket.weight += w;
+      bucket.count  += 1;
+    });
+  });
+  const tags = [...tagMap.entries()]
+    .filter(([, v]) => v.count >= TAG_MIN_COUNT && v.weight > 0)
+    .map(([name, v]) => ({
+      name,
+      avg:   Math.round(v.sum / v.weight),
+      count: v.count,
+      diff:  Math.round(v.sum / v.weight - overallAvg),
+    }))
+    .sort((a, b) => b.diff - a.diff);
+
+  // ── Studios ───────────────────────────────────────────────────────────────
+  const studioMap = new Map();
+  list.forEach(a => {
+    (a.studios || []).forEach(s => {
+      if (!s) return;
+      let bucket = studioMap.get(s);
+      if (!bucket) { bucket = { sum: 0, count: 0 }; studioMap.set(s, bucket); }
+      bucket.sum   += a.elo;
+      bucket.count += 1;
+    });
+  });
+  const studios = [...studioMap.entries()]
+    .filter(([, v]) => v.count >= 3)
+    .map(([name, v]) => ({
+      name, avg: Math.round(v.sum / v.count), count: v.count,
+      diff: Math.round(v.sum / v.count - overallAvg),
+    }))
+    .sort((a, b) => b.diff - a.diff);
+
+  // ── Genres ────────────────────────────────────────────────────────────────
+  const genreMap = new Map();
+  list.forEach(a => {
+    (a.genres || []).forEach(g => {
+      let bucket = genreMap.get(g);
+      if (!bucket) { bucket = { sum: 0, count: 0 }; genreMap.set(g, bucket); }
+      bucket.sum   += a.elo;
+      bucket.count += 1;
+    });
+  });
+  const genres = [...genreMap.entries()]
+    .filter(([, v]) => v.count >= 3)
+    .map(([name, v]) => ({
+      name, avg: Math.round(v.sum / v.count), count: v.count,
+      diff: Math.round(v.sum / v.count - overallAvg),
+    }))
+    .sort((a, b) => b.diff - a.diff);
+
+  // ── Sources ───────────────────────────────────────────────────────────────
+  const sourceMap = new Map();
+  list.forEach(a => {
+    if (!a.source) return;
+    let bucket = sourceMap.get(a.source);
+    if (!bucket) { bucket = { sum: 0, count: 0 }; sourceMap.set(a.source, bucket); }
+    bucket.sum   += a.elo;
+    bucket.count += 1;
+  });
+  const sources = [...sourceMap.entries()]
+    .filter(([, v]) => v.count >= 3)
+    .map(([key, v]) => ({
+      key,
+      label: _TASTE_SOURCE_LABELS[key] || key,
+      avg:   Math.round(v.sum / v.count),
+      count: v.count,
+      diff:  Math.round(v.sum / v.count - overallAvg),
+    }))
+    .sort((a, b) => b.diff - a.diff);
+
+  // ── Eras (by decade) ──────────────────────────────────────────────────────
+  const eraMap = new Map();
+  list.forEach(a => {
+    if (!a.seasonYear) return;
+    const decade = Math.floor(a.seasonYear / 10) * 10;
+    const label  = decade + 's';
+    let bucket = eraMap.get(label);
+    if (!bucket) { bucket = { sum: 0, count: 0, decade }; eraMap.set(label, bucket); }
+    bucket.sum   += a.elo;
+    bucket.count += 1;
+  });
+  const eras = [...eraMap.entries()]
+    .filter(([, v]) => v.count >= 2)
+    .map(([label, v]) => ({
+      label, avg: Math.round(v.sum / v.count), count: v.count, decade: v.decade,
+      diff: Math.round(v.sum / v.count - overallAvg),
+    }))
+    .sort((a, b) => a.decade - b.decade);
+
+  // ── Formats ───────────────────────────────────────────────────────────────
+  const formatMap = new Map();
+  list.forEach(a => {
+    const key = a.format || 'UNKNOWN';
+    let bucket = formatMap.get(key);
+    if (!bucket) { bucket = { sum: 0, count: 0 }; formatMap.set(key, bucket); }
+    bucket.sum   += a.elo;
+    bucket.count += 1;
+  });
+  const formats = [...formatMap.entries()]
+    .filter(([, v]) => v.count >= 2)
+    .map(([key, v]) => ({
+      key,
+      label: _TASTE_FORMAT_LABELS[key] || key,
+      avg:   Math.round(v.sum / v.count),
+      count: v.count,
+      diff:  Math.round(v.sum / v.count - overallAvg),
+    }))
+    .sort((a, b) => b.diff - a.diff);
+
+  // ── Headline insight ──────────────────────────────────────────────────────
+  // Pick the strongest-signal bucket (max |diff|) across the richer dimensions.
+  // Prefer tags over studios over genres because tags are most diagnostic.
+  const headlineCandidates = [];
+  const strong = tags.filter(t => t.count >= 5);
+  if (strong.length) {
+    const top = strong[0], bot = strong[strong.length - 1];
+    if (top.diff > 30) headlineCandidates.push({ kind: 'tag-love', item: top, score: top.diff });
+    if (bot.diff < -30) headlineCandidates.push({ kind: 'tag-hate', item: bot, score: -bot.diff });
+  }
+  const strongStudios = studios.filter(s => s.count >= 4);
+  if (strongStudios.length) {
+    const top = strongStudios[0];
+    if (top.diff > 40) headlineCandidates.push({ kind: 'studio-love', item: top, score: top.diff * 0.8 });
+  }
+  const strongGenres = genres.filter(g => g.count >= 5);
+  if (strongGenres.length) {
+    const top = strongGenres[0];
+    if (top.diff > 20) headlineCandidates.push({ kind: 'genre-love', item: top, score: top.diff * 0.7 });
+  }
+  headlineCandidates.sort((a, b) => b.score - a.score);
+
+  let headline = 'Your Taste Profile';
+  let summary  = '';
+  if (headlineCandidates.length) {
+    const h = headlineCandidates[0];
+    if (h.kind === 'tag-love') {
+      headline = `You're drawn to "${h.item.name}"`;
+      summary  = `Titles tagged ${h.item.name} average ${h.item.avg} ELO (+${h.item.diff} vs. your overall ${Math.round(overallAvg)}) across ${h.item.count} anime.`;
+    } else if (h.kind === 'tag-hate') {
+      headline = `"${h.item.name}" isn't for you`;
+      summary  = `Titles tagged ${h.item.name} average ${h.item.avg} ELO (${h.item.diff} vs. your overall ${Math.round(overallAvg)}) across ${h.item.count} anime.`;
+    } else if (h.kind === 'studio-love') {
+      headline = `${h.item.name} delivers for you`;
+      summary  = `Their titles average ${h.item.avg} ELO (+${h.item.diff} vs. your overall ${Math.round(overallAvg)}) across ${h.item.count} works.`;
+    } else if (h.kind === 'genre-love') {
+      headline = `${h.item.name} is your comfort zone`;
+      summary  = `Your ${h.item.name.toLowerCase()} picks average ${h.item.avg} ELO (+${h.item.diff} vs. your overall ${Math.round(overallAvg)}).`;
+    }
+  } else if (list.length < 15) {
+    headline = 'Your Taste Profile';
+    summary  = `Rank a few more anime — we need stronger signal before we can call out your preferences.`;
+  } else {
+    headline = 'An evenly balanced palate';
+    summary  = `Your ratings sit within a narrow band — no single tag or studio dominates your top tier.`;
+  }
+
+  return {
+    empty:       false,
+    overallAvg:  Math.round(overallAvg),
+    totalRanked: list.length,
+    headline, summary,
+    tags, studios, genres, sources, eras, formats,
+  };
+}
+
+// Renders the Taste tab. Called by switchResultsTab('profile') and by the
+// Refresh button. When `forceRefetch` is true, clears cached tag/studio/source
+// data on animeList items and re-pulls from AniList — this is what the ↻
+// Refresh button hits so users can pick up new AniList tags or studio
+// attributions without a full metadata refresh.
+async function renderTasteProfile(forceRefetch = false) {
+  const emptyEl   = byId(IDS.tasteEmpty);
+  const loadingEl = byId(IDS.tasteLoading);
+  const bodyEl    = byId(IDS.tasteBody);
+  if (!emptyEl || !loadingEl || !bodyEl) return;
+
+  const hide = el => { if (el) el.style.display = 'none'; };
+  const show = (el, disp = 'block') => { if (el) el.style.display = disp; };
+
+  // No data yet — show empty state
+  if (!animeList.length) {
+    show(emptyEl);
+    hide(loadingEl);
+    hide(bodyEl);
+    return;
+  }
+
+  // Force refetch: blow away tag/source/studio caches so _needsTasteEnrichment
+  // returns true. Keep genres + seasonYear untouched — those are used by the
+  // Stats tab and don't need a Taste refresh to pick up.
+  if (forceRefetch) {
+    animeList.forEach(a => {
+      delete a.tags;
+      delete a.source;
+      delete a.studios;
+    });
+  }
+
+  // Missing tag/studio/genre metadata — run enrichment first
+  if (_needsTasteEnrichment()) {
+    hide(emptyEl);
+    show(loadingEl);
+    hide(bodyEl);
+    const msgEl = byId(IDS.tasteLoadingMsg);
+    if (msgEl) msgEl.textContent = forceRefetch
+      ? 'Refreshing tag data from AniList…'
+      : 'Loading tag data from AniList…';
+    try {
+      await _enrichGenresAndEras(({ done, total }) => {
+        if (msgEl) msgEl.textContent = `${forceRefetch ? 'Refreshing' : 'Loading'} tag data… ${done}/${total}`;
+      });
+      if (forceRefetch) showToast('Taste profile refreshed.');
+    } catch (e) {
+      if (msgEl) {
+        msgEl.innerHTML = `<span style="color:#f85149">Could not load tag data: ${esc(e.message || 'unknown error')}</span>
+          <br><button class="util-btn" onclick="renderTasteProfile(true)" style="margin-top:10px">↻ Retry</button>`;
+      }
+      return;
+    }
+  } else if (forceRefetch) {
+    // Guard: forceRefetch + enrichment not needed would be an oxymoron; this
+    // branch is unreachable after the delete above, but kept for clarity.
+    showToast('Taste profile refreshed.');
+  }
+
+  const profile = computeTasteProfile();
+  hide(emptyEl);
+  hide(loadingEl);
+  show(bodyEl);
+
+  if (profile.empty) {
+    show(emptyEl);
+    hide(bodyEl);
+    return;
+  }
+
+  // ── Section 1: Identity card ───────────────────────────────────────────
+  // Only show archetype + insights once the user has hit the first taste story
+  // milestone (50 battles). Before that, ELO values are seeded from ratings
+  // rather than earned, so the archetype isn't meaningful.
+  const identityEl = document.getElementById('taste-identity-card');
+  if (battleCount >= TASTE_STORY_MILESTONES[0]) {
+    if (identityEl) identityEl.style.display = '';
+    const insights = _computeTasteInsights(battleCount);
+    const archetype = insights.find(c => c.type === 'archetype');
+    byId(IDS.tasteHeadline).textContent = archetype?.headline || profile.headline;
+
+    const insightsEl = document.getElementById('taste-identity-insights');
+    if (insightsEl) {
+      const cards = insights.filter(c => c.type !== 'share' && c.type !== 'archetype');
+      insightsEl.innerHTML = cards.map(c => `
+        <div class="taste-insight-pill">
+          <span class="taste-insight-label">${c.label}</span>
+          ${c.headline ? `<span class="taste-insight-headline">${c.headline}</span>` : ''}
+          <span class="taste-insight-text">${c.sub}</span>
+        </div>`).join('');
+    }
+  } else {
+    if (identityEl) {
+      identityEl.style.display = '';
+      const remaining = TASTE_STORY_MILESTONES[0] - battleCount;
+      identityEl.innerHTML = `<p class="taste-drift-placeholder">Battle ${remaining} more anime to unlock your taste type — Kessen needs a few matchups before it can read you properly.</p>`;
+    }
+  }
+
+  const metaEl = byId(IDS.tasteMeta);
+  if (metaEl) {
+    metaEl.innerHTML =
+      `<span>${profile.totalRanked} anime ranked</span><span>·</span><span>${battleCount} battles</span>`;
+  }
+
+  // ── Section 2: Drift ───────────────────────────────────────────────────
+  _paintTasteDrift(document.getElementById('taste-drift'));
+
+  // ── Section 4: Evolution ───────────────────────────────────────────────
+  _paintTasteEvolution(document.getElementById('taste-evolution'));
+
+
+  // Save snapshot for drift tracking (keyed by battle count milestone)
+  _maybeSaveTasteSnapshot();
+}
+
+const _MOOD_DEFS = [
+  { key: 'comforting',      label: 'Comforting',       emoji: '☕', genres: ['Slice of Life', 'Comedy', 'Music', 'Shoujo'] },
+  { key: 'devastating',     label: 'Devastating',      emoji: '💔', genres: ['Drama', 'Psychological', 'Tragedy', 'Horror'] },
+  { key: 'intense',         label: 'Intense',          emoji: '⚡', genres: ['Action', 'Sports', 'Thriller', 'Shounen'] },
+  { key: 'thoughtProvoking',label: 'Thought-provoking',emoji: '🧠', genres: ['Sci-Fi', 'Mystery', 'Psychological', 'Mecha'] },
+  { key: 'beautiful',       label: 'Beautiful',        emoji: '✨', genres: ['Fantasy', 'Romance', 'Slice of Life', 'Music'] },
+];
+
+// Cache of affinity-assigned cover anime per mood key — populated by _paintTasteMoods,
+// consumed by applyMoodRec so recommendations seed from exactly the shown covers.
+const _moodCoverCache = {};
+
+function _paintTasteMoods(el) {
+  if (!el) return;
+  const top60 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 60);
+
+  // ── Affinity scoring ────────────────────────────────────────────────────────
+  const eloMax = top60[0]?.elo || 1500;
+  const pairs = [];
+  top60.forEach(anime => {
+    const animeGenres = anime.genres || [];
+    if (!animeGenres.length) return;
+    _MOOD_DEFS.forEach(mood => {
+      const matchCount = animeGenres.filter(g => mood.genres.includes(g)).length;
+      if (!matchCount) return;
+      const specificity = matchCount / animeGenres.length;
+      const eloWeight   = anime.elo / eloMax;
+      pairs.push({ anime, moodKey: mood.key, score: specificity * eloWeight });
+    });
+  });
+  pairs.sort((a, b) => b.score - a.score);
+
+  // ── Greedy cover assignment ─────────────────────────────────────────────────
+  const usedAnime  = new Set();
+  const moodCovers = Object.fromEntries(_MOOD_DEFS.map(m => [m.key, []]));
+  for (const { anime, moodKey } of pairs) {
+    if (usedAnime.has(anime.id))         continue;
+    if (moodCovers[moodKey].length >= 3) continue;
+    moodCovers[moodKey].push(anime);
+    usedAnime.add(anime.id);
+  }
+
+  // Persist to cache so applyMoodRec seeds from the exact same anime
+  Object.assign(_moodCoverCache, moodCovers);
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  const moodHtml = _MOOD_DEFS.map(mood => {
+    const covers = moodCovers[mood.key];
+    if (covers.length < 2) return '';
+    const coversHtml = covers.map(a => `
+      <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
+           title="${esc(displayTitle(a))}"
+           onerror="this.style.display='none'" />`).join('');
+    return `
+      <div class="taste-mood-tile" onclick="applyMoodRec('${mood.key}')">
+        <div class="taste-mood-covers">${coversHtml}</div>
+        <div class="taste-mood-footer">
+          <span class="taste-mood-emoji">${mood.emoji}</span>
+          <span class="taste-mood-label">${mood.label}</span>
+          <span class="taste-mood-arrow">→</span>
+        </div>
+      </div>`;
+  }).filter(Boolean).join('');
+
+  el.innerHTML = moodHtml || '<p style="color:#8b949e;font-size:0.85rem">Battle more anime to unlock mood clusters.</p>';
+}
+
+async function applyMoodRec(moodKey) {
+  const mood = _MOOD_DEFS.find(m => m.key === moodKey);
+  if (!mood) return;
+
+  _moodRecActive = true;
+  // Clear foryou cache so normal recs don't flash in
+  delete _recsCache['foryou'];
+
+  showResults();
+  switchResultsTab('discover');
+  // Highlight the Moods tab but keep recs-grid visible (not the mood tile section)
+  recsTab = 'moods';
+  byId(IDS.recsTabForyou).classList.remove('active');
+  byId(IDS.recsTabSeasonal).classList.remove('active');
+  byId(IDS.recsTabPredict).classList.remove('active');
+  document.getElementById('recs-tab-moods')?.classList.add('active');
+  document.getElementById('predictor-section').style.display = 'none';
+  document.getElementById('moods-section').style.display = '';
+  byId(IDS.recsSubText).style.display = 'none';
+  byId(IDS.discoverRefreshBtn).style.display = 'none';
+
+  // Ensure the discover mood grid is populated (may be empty if arriving from taste tab)
+  const discoverMoodGrid = document.getElementById('discover-mood-grid');
+  if (discoverMoodGrid && !discoverMoodGrid.hasChildNodes()) _paintTasteMoods(discoverMoodGrid);
+
+  // Highlight the active mood tile
+  document.querySelectorAll('.taste-mood-tile').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('onclick') === `applyMoodRec('${moodKey}')`);
+  });
+
+  const grid = byId(IDS.recsGrid);
+  if (!grid) return;
+  // Use block so groups stack vertically; cards inside use flex rows
+  grid.style.display = 'block';
+  grid.style.gridTemplateColumns = 'none';
+  grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
+    ${mood.emoji} Finding ${mood.label.toLowerCase()} recommendations…</p>`;
+
+  // Seed from exactly the anime shown in the cover tiles.
+  // If the mood grid hasn't rendered yet, fall back to painting it now so the
+  // cache is populated before we read from it.
+  if (!_moodCoverCache[moodKey]?.length) {
+    const discoverMoodGrid = document.getElementById('discover-mood-grid');
+    _paintTasteMoods(discoverMoodGrid || document.createElement('div'));
+  }
+  const seeds = _moodCoverCache[moodKey] || [];
+
+  if (!seeds.length) {
+    grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
+      Not enough ${mood.label.toLowerCase()} anime in your rankings yet.</p>`;
+    return;
+  }
+
+  const ownIds  = new Set(animeList.map(a => a.id));
+  const usedIds = new Set();
+  const groups  = [];
+  const query = `query ($id: Int) {
+    Media(id: $id) {
+      recommendations(perPage: 25, sort: RATING_DESC) {
+        nodes {
+          rating
+          mediaRecommendation {
+            id idMal title { romaji english } coverImage { large medium }
+            averageScore format status
+          }
+        }
+      }
+    }
+  }`;
+
+  for (const seed of seeds) {
+    try {
+      const res  = await fetch('https://graphql.anilist.co', {
+        method: 'POST', headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { id: seed.id } })
+      });
+      const json = await res.json();
+      const nodes = json?.data?.Media?.recommendations?.nodes ?? [];
+      const recs  = [];
+      for (const n of nodes) {
+        const rec = n.mediaRecommendation;
+        if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        // Prefer recs that also match the mood genres
+        recs.push({ media: rec, score: n.rating || 1 });
+        usedIds.add(rec.id);
+        if (recs.length >= 4) break;
+      }
+      if (recs.length) groups.push({ seed, recs });
+    } catch { /* skip */ }
+  }
+
+  if (!groups.length) {
+    grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
+      Couldn't find recommendations right now. Try again later.</p>`;
+    _moodRecActive = false;
+    return;
+  }
+
+  // Fetch relations for all rec IDs (same pattern as fetchRecommendationsForYou)
+  const allRecIds = groups.flatMap(g => g.recs.map(r => r.media.id));
+  if (allRecIds.length) {
+    try { await _fetchRecRelations(allRecIds); } catch { /* non-critical */ }
+  }
+
+  // Render with mood header
+  const titleHtml = `<div style="margin-bottom:16px">
+    <h3 style="color:var(--text-bright);margin:0 0 4px">${mood.emoji} ${mood.label} picks</h3>
+    <p style="color:#8b949e;font-size:0.82rem;margin:0">
+      Based on your top-ranked ${mood.label.toLowerCase()} anime</p>
+  </div>`;
+  const cardsHtml = groups.map(({ seed, recs }) => `
+    <div class="recs-group">
+      <div class="recs-group-label">Because you liked <strong>${esc(displayTitle(seed))}</strong></div>
+      <div class="recs-row">
+        ${recs.map(r => recCardHtml(r.media, {})).join('')}
+      </div>
+    </div>`).join('');
+
+  grid.innerHTML = titleHtml + cardsHtml;
+  _recsCache['foryou'] = { html: grid.innerHTML, gridDisplay: grid.style.display };
+  _moodRecActive = false;
+  grid.style.gridTemplateColumns = '';
+}
+
+// ── Taste snapshots (for drift tracking) ────────────────────────────────────
+const TASTE_SNAPSHOT_KEY = 'kessen.data.tasteSnapshots';
+
+function _maybeSaveTasteSnapshot() {
+  try {
+    const snaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    // Save a snapshot every 50 battles, keep last 5
+    const milestone = Math.floor(battleCount / 50) * 50;
+    if (milestone < 50) return;
+    if (snaps.some(s => s.battleCount === milestone)) return;
+
+    const genreMap = {};
+    animeList.forEach(a => {
+      (a.genres || []).forEach(g => {
+        if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
+        genreMap[g].sum += a.elo;
+        genreMap[g].count++;
+      });
+    });
+    const genreAvgs = {};
+    Object.entries(genreMap).forEach(([g, v]) => {
+      if (v.count >= 3) genreAvgs[g] = Math.round(v.sum / v.count);
+    });
+
+    snaps.push({
+      battleCount: milestone,
+      timestamp: new Date().toISOString(),
+      genreAvgs,
+      top10: [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 10).map(a => a.id),
+    });
+    // Keep up to 40 snapshots — covers 2000 battles at 50-battle intervals.
+    // Each snapshot is ~200 bytes, so 40 ≈ 8 KB, well within localStorage limits.
+    if (snaps.length > 40) snaps.splice(0, snaps.length - 40);
+    localStorage.setItem(TASTE_SNAPSHOT_KEY, JSON.stringify(snaps));
+  } catch { /* storage full — skip */ }
+}
+
+function _paintTasteDrift(el) {
+  if (!el) return;
+  try {
+    const snaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    if (snaps.length < 2) {
+      const needed = Math.max(0, 50 - battleCount);
+      el.innerHTML = needed > 0
+        ? `<p class="taste-drift-placeholder">Battle ${needed} more anime and come back — Kessen will start tracking how your taste shifts over time.</p>`
+        : `<p class="taste-drift-placeholder">Check back after a few more sessions to see how your taste is evolving.</p>`;
+      return;
+    }
+
+    const oldest  = snaps[0];
+    const current = {};
+    const globalAvg = animeList.reduce((s, a) => s + a.elo, 0) / (animeList.length || 1);
+    animeList.forEach(a => {
+      (a.genres || []).forEach(g => {
+        if (!current[g]) current[g] = { sum: 0, count: 0 };
+        current[g].sum += a.elo;
+        current[g].count++;
+      });
+    });
+
+    const shifts = Object.entries(current)
+      .filter(([, v]) => v.count >= 3)
+      .map(([g, v]) => {
+        const now  = v.sum / v.count;
+        const then = oldest.genreAvgs[g];
+        if (!then) return null;
+        return { genre: g, delta: Math.round(now - then) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 6);
+
+    if (!shifts.length) {
+      el.innerHTML = `<p class="taste-drift-placeholder">Not enough change yet — keep battling to see your taste evolve.</p>`;
+      return;
+    }
+
+    const battlesSince = battleCount - oldest.battleCount;
+    const notable = shifts.filter(s => Math.abs(s.delta) >= 5);
+
+    if (!notable.length) {
+      el.innerHTML = `<p class="taste-drift-placeholder">Your taste has stayed consistent since battle ${oldest.battleCount} — no notable genre shifts yet.</p>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <p class="taste-drift-since">Since battle ${oldest.battleCount} (${battlesSince} battles ago):</p>
+      <div class="taste-drift-rows">
+        ${notable.map(s => `
+          <div class="taste-drift-row ${s.delta > 0 ? 'up' : 'down'}">
+            <span class="drift-genre">${s.genre}</span>
+            <span class="drift-arrow">${s.delta > 0 ? '▲' : '▼'}</span>
+            <span class="drift-delta">${s.delta > 0 ? '+' : ''}${s.delta} ELO</span>
+          </div>`).join('')}
+      </div>`;
+  } catch {
+    el.innerHTML = '';
+  }
+}
+
+// ─── TASTE EVOLUTION ──────────────────────────────────────────────────────────
+// Renders a timeline of top-10 snapshots so the user can see how their ranking
+// has shifted. Snapshots are saved every 50 battles (up to 40 kept).
+// When there are many snapshots, picks a spread-out representative subset so
+// the timeline stays readable regardless of how many battles someone has done.
+function _paintTasteEvolution(el) {
+  if (!el) return;
+  try {
+    const allSnaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    if (!allSnaps.length) {
+      const needed = Math.max(0, 50 - battleCount);
+      el.innerHTML = `<p class="taste-drift-placeholder">${
+        needed > 0
+          ? `Battle ${needed} more times and Kessen will start tracking how your top 10 shifts.`
+          : `Check back after a few more battles to see your evolution timeline.`
+      }</p>`;
+      return;
+    }
+
+    // Build id → display title map from current list
+    const titleMap = {};
+    animeList.forEach(a => { titleMap[a.id] = displayTitle(a); });
+
+    // Current top 10 as a synthetic "now" point
+    const currentTop = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 10).map(a => a.id);
+    const allPoints  = [...allSnaps, { battleCount, top10: currentTop, isCurrent: true }];
+
+    // Cap display at 7 cards: always include first + last (now), spread the rest
+    const MAX_DISPLAY = 7;
+    let points;
+    if (allPoints.length <= MAX_DISPLAY) {
+      points = allPoints;
+    } else {
+      points = [allPoints[0]];
+      const step = (allPoints.length - 2) / (MAX_DISPLAY - 2);
+      for (let i = 1; i <= MAX_DISPLAY - 2; i++) {
+        points.push(allPoints[Math.round(i * step)]);
+      }
+      points.push(allPoints[allPoints.length - 1]);
+    }
+
+    const cards = points.map((snap, i) => {
+      const prevSet = new Set(i > 0 ? points[i - 1].top10 : []);
+      const top5    = snap.top10.slice(0, 5);
+      const rows    = top5.map((id, rank) => {
+        const title = titleMap[id] ? esc(titleMap[id]) : '<span style="color:#6e7681">Unknown</span>';
+        const isNew = i > 0 && !prevSet.has(id);
+        return `<div class="evo-entry${isNew ? ' evo-new' : ''}">
+          <span class="evo-rank">${rank + 1}</span>
+          <span class="evo-title">${title}</span>
+          ${isNew ? '<span class="evo-badge">new</span>' : ''}
+        </div>`;
+      }).join('');
+
+      const label = snap.isCurrent ? `Now · ${battleCount} battles` : `Battle ${snap.battleCount}`;
+      return `<div class="evo-card${snap.isCurrent ? ' evo-card-current' : ''}">
+        <div class="evo-card-label">${label}</div>
+        ${rows}
+      </div>`;
+    });
+
+    const totalSnaps = allSnaps.length;
+    const note = totalSnaps > MAX_DISPLAY - 1
+      ? `<p class="taste-drift-placeholder" style="margin-top:10px">Showing ${points.length} of ${totalSnaps + 1} snapshots — evenly spread across your ${battleCount} battles.</p>`
+      : '';
+
+    el.innerHTML = `<div class="evo-timeline">${cards.join('<div class="evo-arrow">→</div>')}</div>${note}`;
+  } catch {
+    el.innerHTML = '';
+  }
+}
+
+// Two-column grid: top-N positive affinities on the left, top-N negative on
+// the right. Bar width encodes |diff| scaled against the max across both sides.
+function _paintTastePair(el, data, cap, kind) {
+  if (!el) return;
+  if (!data || !data.length) {
+    el.innerHTML = `<div class="taste-empty-row">Not enough data yet — need 3+ anime per ${kind}.</div>`;
+    return;
+  }
+  const positives = data.filter(d => d.diff > 0).slice(0, cap);
+  const negatives = data.filter(d => d.diff < 0).slice(-cap).reverse();
+  const maxAbs = Math.max(
+    positives[0]?.diff ?? 0,
+    negatives[0] ? -negatives[0].diff : 0,
+    1
+  );
+  const row = (d, positive) => {
+    const pct  = Math.min(100, Math.round((Math.abs(d.diff) / maxAbs) * 100));
+    const sign = d.diff > 0 ? '+' : '';
+    return `<div class="taste-bar-row ${positive ? 'taste-pos' : 'taste-neg'}">
+      <div class="taste-bar-label">${esc(d.name || d.label || '')}</div>
+      <div class="taste-bar-track"><div class="taste-bar-fill" style="width:${pct}%"></div></div>
+      <div class="taste-bar-value">${sign}${d.diff} <span class="taste-bar-sub">(${d.count})</span></div>
+    </div>`;
+  };
+  el.innerHTML = `
+    <div class="taste-col">
+      <div class="taste-col-hdr pos">🟢 You rate higher</div>
+      ${positives.length ? positives.map(d => row(d, true)).join('') : '<div class="taste-empty-row">No standout positives yet.</div>'}
+    </div>
+    <div class="taste-col">
+      <div class="taste-col-hdr neg">🔴 You rate lower</div>
+      ${negatives.length ? negatives.map(d => row(d, false)).join('') : '<div class="taste-empty-row">No standout negatives yet.</div>'}
+    </div>`;
+}
+
+// Single-column list: each bucket rendered as a delta-ELO bar, signed.
+function _paintTasteBarCol(el, data) {
+  if (!el) return;
+  if (!data || !data.length) {
+    el.innerHTML = `<div class="taste-empty-row">Not enough data yet.</div>`;
+    return;
+  }
+  const maxAbs = Math.max(...data.map(d => Math.abs(d.diff)), 1);
+  el.innerHTML = data.map(d => {
+    const pct  = Math.min(100, Math.round((Math.abs(d.diff) / maxAbs) * 100));
+    const sign = d.diff > 0 ? '+' : '';
+    const cls  = d.diff > 0 ? 'taste-pos' : d.diff < 0 ? 'taste-neg' : '';
+    return `<div class="taste-bar-row ${cls}">
+      <div class="taste-bar-label">${esc(d.name || d.label || '')}</div>
+      <div class="taste-bar-track"><div class="taste-bar-fill" style="width:${pct}%"></div></div>
+      <div class="taste-bar-value">${sign}${d.diff} <span class="taste-bar-sub">(${d.count})</span></div>
+    </div>`;
+  }).join('');
+}
+
+// Era column is already decade-sorted; keep that order but render diff-aware
+// colors so you can see the shape of an era preference across time.
+function _paintTasteEras(el, data /*, overallAvg */) {
+  if (!el) return;
+  _paintTasteBarCol(el, data);
 }
 
 // ─── ANIME DETAIL MODAL ───────────────────────────────────────────────────────
@@ -6519,16 +7809,25 @@ function toggleFormat(fmt) {
   } else {
     hiddenFormats.add(fmt);
   }
-  // Sync button appearance (guard against ep-range buttons which share the class)
-  document.querySelectorAll('.format-btn').forEach(b => {
-    if (!b.dataset.format) return;
-    const isHidden = hiddenFormats.has(b.dataset.format);
-    b.classList.toggle('active',      !isHidden);
-    b.classList.toggle('hidden-fmt',   isHidden);
-  });
+  // Sync all format button appearances and the filter-btn highlight in one pass
+  syncFormatButtons();
   saveState();
   renderRankingList();
   filterRankings();
+
+  // If the battle screen is active, immediately swap out any card whose format
+  // is now filtered — don't wait for the user to make a pick
+  const battleVisible = byId(IDS.battleScreen)?.style.display !== 'none';
+  if (!battleVisible || towerMode) return;
+
+  if (trioMode) {
+    const hasFiltered = currentTrio.some(idx => hiddenFormats.has(animeList[idx]?.format));
+    if (hasFiltered) renderTrio();
+  } else {
+    const aFiltered = currentA != null && hiddenFormats.has(animeList[currentA]?.format);
+    const bFiltered = currentB != null && hiddenFormats.has(animeList[currentB]?.format);
+    if (aFiltered || bFiltered) renderBattle();
+  }
 }
 
 function toggleMobileFilters() {
@@ -6590,7 +7889,7 @@ function syncEpRangeButtons() {
 }
 
 // ─── DISAGREEMENTS ───────────────────────────────────────────────────────────
-function toggleDisagreements() { switchResultsTab('stats'); }
+function toggleDisagreements() { switchResultsTab('profile'); }
 
 function renderDisagreements() {
   // Need globalScore to compare against community rating
@@ -6995,30 +8294,41 @@ function _renderPrediction(media, pred, container) {
 // `settleMode` and `blindMode` are kept as derived globals for any legacy
 // call-site that reads them directly; all writes funnel through setMode.
 function setMode(name) {
-  if (name !== 'normal' && name !== 'settle' && name !== 'blind') name = 'normal';
+  if (!['normal', 'settle', 'blind', 'trio'].includes(name)) name = 'normal';
 
   const prevSettle = settleMode;
+  const prevTrio   = trioMode;
   settleMode = (name === 'settle');
   blindMode  = (name === 'blind');
+  trioMode   = (name === 'trio');
 
   // Mode button visual state + label
   const btn = byId(IDS.modeBtn);
   if (btn) {
     btn.classList.toggle('active-settle', settleMode);
     btn.classList.toggle('active-blind',  blindMode);
+    btn.classList.toggle('active-trio',   trioMode);
     btn.textContent =
       settleMode ? '🎯 Mode: Settle' :
       blindMode  ? '🙈 Mode: Blind'  :
+      trioMode   ? '🎲 Mode: Trio'   :
                    '⚙ Mode';
   }
 
-  // Banners (already mutually exclusive because the modes are)
+  // Banners (mutually exclusive)
   byId(IDS.settleBanner)?.classList.toggle('active', settleMode);
   byId(IDS.blindBanner)?.classList.toggle('active', blindMode);
+  byId(IDS.trioBanner)?.classList.toggle('active', trioMode);
 
   // Blind CSS class on the battle screen
   const screen = byId(IDS.battleScreen);
   if (screen) screen.classList.toggle('blind', blindMode);
+
+  // Toggle between standard battle arena and trio arena
+  const stdArena  = document.querySelector('.battle-arena');
+  const trioArena = byId(IDS.trioArena);
+  if (stdArena)  stdArena.style.display  = trioMode ? 'none'  : '';
+  if (trioArena) trioArena.style.display = trioMode ? 'block' : 'none';
 
   // Popover radio state
   document.querySelectorAll('#mode-popover [role="menuitemradio"]').forEach(el => {
@@ -7027,9 +8337,11 @@ function setMode(name) {
 
   _closeModeMenu();
 
-  // Re-pick immediately on fresh entry to settle so the user sees an
-  // uncertain matchup without waiting for the next battle.
-  if (settleMode && !prevSettle) renderBattle();
+  // Re-pick immediately on mode switch
+  if (settleMode && !prevSettle) { renderBattle(); return; }
+  if (trioMode   && !prevTrio)   { renderTrio();   return; }
+  // Exiting trio → back to normal pair
+  if (!trioMode  && prevTrio)    { renderBattle();           }
 }
 
 // Toggles the popover. Uses a one-shot outside-click listener (registered on
@@ -7069,15 +8381,24 @@ function toggleFilterMenu(event) {
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
     syncFormatButtons();
-    setTimeout(() => document.addEventListener('click', _closeFilterMenu, { once: true }), 0);
+    setTimeout(() => document.addEventListener('click', _filterOutsideClick), 0);
     document.addEventListener('keydown', _filterMenuEscHandler);
   }
+}
+function _filterOutsideClick(e) {
+  const pop = document.getElementById('filter-popover');
+  const btn = document.getElementById('filter-btn');
+  // Clicks inside the popover (e.g. format buttons) keep it open
+  if (pop && pop.contains(e.target)) return;
+  if (btn && btn.contains(e.target)) return;
+  _closeFilterMenu();
 }
 function _closeFilterMenu() {
   const pop = document.getElementById('filter-popover');
   const btn = document.getElementById('filter-btn');
   if (pop) pop.classList.remove('open');
   if (btn) btn.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('click', _filterOutsideClick);
   document.removeEventListener('keydown', _filterMenuEscHandler);
 }
 function _filterMenuEscHandler(e) {
@@ -7087,6 +8408,320 @@ function _filterMenuEscHandler(e) {
 // Backward-compat shims for banner "Stop" buttons and the settle-fallback path.
 function toggleSettleMode() { setMode(settleMode ? 'normal' : 'settle'); }
 function toggleBlindMode()  { setMode(blindMode  ? 'normal' : 'blind');  }
+
+// ─── TRIO MODE ────────────────────────────────────────────────────────────────
+// Picks 3 anime from the active battle pool using the same weighted sampling
+// as normal matchmaking. Returns [idxA, idxB, idxC] or null if pool < 3.
+function pickTrio() {
+  const pool    = [];
+  const weights = [];
+  animeList.forEach((a, i) => {
+    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return;
+    pool.push(i);
+    const base = 1 / ((a.comparisons || 0) + 1);
+    weights.push(a.fuzzy ? base * 0.1 : base);
+  });
+  if (pool.length < 3) return null;
+
+  const availW = weights.slice();
+  const chosen = [];
+  for (let p = 0; p < 3; p++) {
+    const total = availW.reduce((s, w) => s + w, 0);
+    if (total <= 0) return null;
+    let r = Math.random() * total;
+    for (let i = 0; i < pool.length; i++) {
+      if (availW[i] === 0) continue;
+      r -= availW[i];
+      if (r <= 0) { chosen.push(pool[i]); availW[i] = 0; break; }
+    }
+  }
+  return chosen.length === 3 ? chosen : null;
+}
+
+// Picks a fresh trio and resets pick state.
+function renderTrio() {
+  let trio;
+  if (nextTrioOverride && nextTrioOverride.length > 0) {
+    trio = nextTrioOverride.shift();
+    if (nextTrioOverride.length === 0) nextTrioOverride = null;
+  } else {
+    trio = pickTrio();
+  }
+  if (!trio) { setMode('normal'); return; }
+  currentTrio = trio;
+  trioOrder   = [];
+
+  const h2 = byId(IDS.battlePromptH2);
+  const p  = byId(IDS.battlePromptP);
+  if (h2) h2.textContent = 'Rank these three';
+  if (p)  p.textContent  = 'Tap in order of preference — 🥇 first, 🥈 second, 🥉 third.';
+
+  _paintTrio();
+  updateProgress();
+  saveState();
+}
+
+// Redraws the trio arena from current state (currentTrio + trioOrder).
+// Cards reuse .anime-card styling so they look identical to normal battle cards.
+function _paintTrio() {
+  const arena = byId(IDS.trioArena);
+  if (!arena) return;
+
+  const BADGES     = ['', '🥇', '🥈', '🥉'];
+  const RANK_CLASS = ['', 'trio-ranked-1', 'trio-ranked-2', 'trio-ranked-3'];
+
+  arena.innerHTML = '<div class="trio-grid">' +
+    currentTrio.map((animeIdx, pos) => {
+      const a       = animeList[animeIdx];
+      const rankPos = trioOrder.indexOf(pos);
+      const rank    = rankPos >= 0 ? rankPos + 1 : 0;
+      const badgeEl = rank > 0 ? `<div class="trio-badge">${BADGES[rank]}</div>` : '';
+      const rankCls = rank > 0 ? RANK_CLASS[rank] : '';
+
+      const eloEl = !blindMode
+        ? `<div class="elo-badge">ELO ${a.elo}</div>`
+        : '';
+
+      const epMeta =
+        (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
+          : a.episodes         ? `<span class="ep-badge">${a.episodes} ep</span>`
+          : '') +
+        _statusBadge(a.status);
+
+      const extUrl    = esc(_animeExternalUrl(a));
+      const extLabel  = esc(_animeExternalLabel(a));
+      const fuzzyText = a.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+      const fuzzyCls  = a.fuzzy ? ' active' : '';
+
+      return `
+        <div class="anime-card trio-card ${rankCls}" id="trio-card-${pos}" onclick="trioTap(${pos})">
+          ${badgeEl}
+          <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
+               decoding="async"
+               onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
+          <div class="anime-card-body">
+            <div class="title">${esc(displayTitle(a))}</div>
+            ${eloEl}
+            <div class="ep-meta-trio">${epMeta}</div>
+            <button type="button" class="card-more-chip"
+                    onclick="trioToggleCardActions(event,${pos})"
+                    aria-expanded="false"
+                    aria-controls="trio-card-actions-${pos}">⋯ More</button>
+            <div class="card-actions" id="trio-card-actions-${pos}">
+              <button class="fuzzy-btn${fuzzyCls}"
+                      onclick="trioFlagFuzzy(event,${pos})"
+                      title="I don't remember this well enough">${fuzzyText}</button>
+              <button class="synopsis-btn"
+                      onclick="trioToggleSynopsis(event,${pos})"
+                      title="About this show">ℹ About</button>
+              <a class="card-anilist-link" href="${extUrl}" target="_blank"
+                 onclick="event.stopPropagation()">↗ ${extLabel}</a>
+              <button class="exclude-btn"
+                      onclick="trioExcludeAnime(event,${pos})"
+                      title="Remove from ranking pool permanently">✗ Not seen</button>
+            </div>
+            <div class="synopsis-panel" id="synopsis-trio-${pos}" style="display:none">${esc(a.description || 'No description available.')}</div>
+          </div>
+        </div>`;
+    }).join('') +
+  '</div>';
+}
+
+// Trio-specific card action handlers (can't reuse the normal ones since those
+// resolve side 0/1 against currentA/currentB rather than currentTrio[pos]).
+function trioToggleCardActions(event, pos) {
+  if (event) { event.preventDefault(); event.stopPropagation(); }
+  const card = document.getElementById(`trio-card-${pos}`);
+  if (!card) return;
+  const expanded = card.classList.toggle('actions-expanded');
+  const chip = card.querySelector('.card-more-chip');
+  if (chip) chip.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+
+function trioFlagFuzzy(event, pos) {
+  event.stopPropagation();
+  const idx = currentTrio[pos];
+  animeList[idx].fuzzy = !animeList[idx].fuzzy;
+  saveState();
+  // Update button text in-place so the card-actions panel stays open
+  const card = document.getElementById(`trio-card-${pos}`);
+  if (card) {
+    const btn = card.querySelector('.fuzzy-btn');
+    if (btn) {
+      const isFuzzy = animeList[idx].fuzzy;
+      btn.classList.toggle('active', isFuzzy);
+      btn.textContent = isFuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+    }
+  }
+}
+
+function trioToggleSynopsis(event, pos) {
+  event.stopPropagation();
+  const panel = document.getElementById(`synopsis-trio-${pos}`);
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function trioExcludeAnime(event, pos) {
+  event.stopPropagation();
+  excludedIds.add(animeList[currentTrio[pos]].id);
+  prevState = null;
+  undoStack = [];
+  _updateUndoBtn();
+
+  // Pick a single replacement, keeping the other two cards in place
+  const keepIndices = new Set(currentTrio.filter((_, i) => i !== pos));
+  const candidates = [];
+  const weights    = [];
+  animeList.forEach((a, i) => {
+    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return;
+    if (keepIndices.has(i)) return;
+    candidates.push(i);
+    const base = 1 / ((a.comparisons || 0) + 1);
+    weights.push(a.fuzzy ? base * 0.1 : base);
+  });
+
+  if (candidates.length > 0) {
+    const total = weights.reduce((s, w) => s + w, 0);
+    let r = Math.random() * total;
+    let replacement = candidates[0];
+    for (let i = 0; i < candidates.length; i++) {
+      r -= weights[i];
+      if (r <= 0) { replacement = candidates[i]; break; }
+    }
+    currentTrio[pos] = replacement;
+  }
+
+  // Any existing pick order is now invalid since a card changed
+  trioOrder = [];
+  saveState();
+  _paintTrio();
+}
+
+// Called when user taps a trio card (pos = 0/1/2).
+function trioTap(pos) {
+  const existingRank = trioOrder.indexOf(pos);
+  if (existingRank >= 0) {
+    // Cascade-clear: remove this rank and all subsequent picks
+    trioOrder = trioOrder.slice(0, existingRank);
+    _paintTrio();
+    return;
+  }
+
+  // Add to pick order
+  trioOrder.push(pos);
+  _paintTrio();
+
+  // Auto-resolve when all three are ranked
+  if (trioOrder.length === 3) {
+    // Brief delay so the 🥉 badge renders visibly before we move on
+    setTimeout(applyTrioResult, 150);
+  }
+}
+
+// Applies 3 implied ELO battles from the trio ranking and advances state.
+// Order: 1st beats 2nd, 1st beats 3rd, 2nd beats 3rd (each at 0.6× K).
+function applyTrioResult() {
+  if (trioOrder.length !== 3) return;
+  const TRIO_K = K * 0.6;
+
+  const idxFirst  = currentTrio[trioOrder[0]];
+  const idxSecond = currentTrio[trioOrder[1]];
+  const idxThird  = currentTrio[trioOrder[2]];
+
+  // Snapshot BEFORE any mutations (for undo)
+  const snap = {
+    type:        'trio',
+    indices:     [idxFirst, idxSecond, idxThird],
+    snaps:       [
+      { ...animeList[idxFirst]  },
+      { ...animeList[idxSecond] },
+      { ...animeList[idxThird]  },
+    ],
+    battleCount,
+    matchupData: [],
+  };
+
+  // 3 implied battles: 1st>2nd, 1st>3rd, 2nd>3rd
+  const pairs = [[idxFirst, idxSecond], [idxFirst, idxThird], [idxSecond, idxThird]];
+  pairs.forEach(([wIdx, lIdx]) => {
+    const w    = animeList[wIdx];
+    const l    = animeList[lIdx];
+    const mKey = [Math.min(w.id, l.id), Math.max(w.id, l.id)].join('-');
+
+    // Snapshot matchup before mutation
+    snap.matchupData.push({
+      key:  mKey,
+      snap: matchupStats[mKey]
+        ? { ...matchupStats[mKey], wins: { ...matchupStats[mKey].wins } }
+        : null,
+    });
+
+    // ELO update at reduced K
+    const ea = expectedScore(w.elo, l.elo);
+    const eb = expectedScore(l.elo, w.elo);
+    const wEloBefore = w.elo;
+    const lEloBefore = l.elo;
+    w.elo = Math.round(w.elo + TRIO_K * (1 - ea));
+    l.elo = Math.max(ELO_FLOOR, Math.round(l.elo + TRIO_K * (0 - eb)));
+    w.wins++;    l.losses++;
+    w.battles    = (w.battles    || 0) + 1;
+    l.battles    = (l.battles    || 0) + 1;
+    w.comparisons++;
+    l.comparisons++;
+    if (!w.eloHistory) w.eloHistory = [1200];
+    w.eloHistory.push(w.elo);
+    if (w.eloHistory.length > 30) w.eloHistory.shift();
+    if (!l.eloHistory) l.eloHistory = [1200];
+    l.eloHistory.push(l.elo);
+    if (l.eloHistory.length > 30) l.eloHistory.shift();
+
+    // Matchup stats (for rivalries)
+    if (!matchupStats[mKey]) {
+      matchupStats[mKey] = {
+        wins: {}, total: 0,
+        titleA: w.id < l.id ? w.title : l.title,
+        titleB: w.id < l.id ? l.title : w.title,
+      };
+    }
+    matchupStats[mKey].wins[w.id] = (matchupStats[mKey].wins[w.id] || 0) + 1;
+    matchupStats[mKey].total++;
+
+    // Battle history (tagged as trio for future display purposes)
+    battleHistory.unshift({
+      winnerId:       w.id,
+      loserId:        l.id,
+      winnerTitle:    w.title,
+      loserTitle:     l.title,
+      winnerEloAfter: w.elo,
+      loserEloAfter:  l.elo,
+      eloSwing:       w.elo - wEloBefore,
+      eloDiffBefore:  lEloBefore - wEloBefore,
+      trio:           true,
+    });
+    if (battleHistory.length > MAX_HISTORY) battleHistory.pop();
+  });
+
+  // Advance battle count by 3 (one per implied pair)
+  const prevCount = battleCount;
+  battleCount += 3;
+  for (let i = 1; i <= 3; i++) checkMilestone(prevCount + i - 1, prevCount + i);
+  checkSessionSummary();
+  _checkAchievements();
+  _maybeSaveTasteSnapshot();
+  saveState();
+
+  // Render the next trio FIRST so we can store it in the snap (mirrors the
+  // two-card flow where renderBattle() runs before _pushUndoSnapshot).
+  renderTrio();
+  snap.nextTrio = currentTrio.slice();
+
+  // Push undo snapshot (treated as one unit)
+  undoStack.push(snap);
+  if (undoStack.length > MAX_UNDO_DEPTH) undoStack.shift();
+  prevState = undoStack[undoStack.length - 1];
+  _updateUndoBtn();
+}
 
 function _applyBlindState() {
   const screen = byId(IDS.battleScreen);
@@ -8359,13 +9994,132 @@ async function checkForNewAnime() {
     // Defensive: an empty fetch on a previously-populated account is almost
     // always a transient API error. Don't flag the whole list as removed.
     if (!entries.length) return;
-    const ownIds   = new Set(animeList.map(a => a.id));
+    const ownIds    = new Set(animeList.map(a => a.id));
     const remoteIds = new Set(entries.map(e => e.id));
-    _pendingNewAnime = entries.filter(e => !ownIds.has(e.id));
-    // Removals: items we track but which are no longer on AniList.
+    _pendingNewAnime    = entries.filter(e => !ownIds.has(e.id));
     _pendingRemovedAnime = animeList.filter(a => !remoteIds.has(a.id));
+
+    // ── Post-finish detection ────────────────────────────────────────────────
+    // Build a map of fresh statuses from AniList, then look for any tracked
+    // anime that just flipped from CURRENT/REPEATING → COMPLETED.
+    const freshStatusMap = new Map(entries.map(e => [e.id, e.status]));
+    const WATCHING = new Set(['CURRENT', 'REPEATING']);
+    animeList.forEach(a => {
+      const freshStatus = freshStatusMap.get(a.id);
+      if (freshStatus && freshStatus !== a.status) {
+        // Persist the updated status so we don't re-detect next poll
+        if (freshStatus === 'COMPLETED' && WATCHING.has(a.status)) {
+          _queueFinishPrompt(a);
+        }
+        a.status = freshStatus;
+      }
+    });
+
     _refreshListBanners('AniList');
   } catch (e) { console.warn('[checkForNewAnime] poll failed:', e?.message); }
+}
+
+// ─── POST-FINISH TOWER PROMPTS ────────────────────────────────────────────────
+const FINISH_PROMPT_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 hours
+const FINISH_PROMPT_MAX_BATTLES = 10;                   // only prompt for uncertain ranks
+
+function _loadFinishPrompts() {
+  try {
+    _finishPromptQueue = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.finishPrompts) || '[]');
+    // Prune stale prompts (older than 24 h)
+    const now = Date.now();
+    _finishPromptQueue = _finishPromptQueue.filter(p => now - p.detectedAt < FINISH_PROMPT_MAX_AGE_MS);
+    _saveFinishPrompts();
+  } catch { _finishPromptQueue = []; }
+  _showNextFinishPrompt();
+}
+
+function _saveFinishPrompts() {
+  try { localStorage.setItem(KESSEN_KEYS.data.finishPrompts, JSON.stringify(_finishPromptQueue)); } catch {}
+}
+
+function _getPromptedIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(KESSEN_KEYS.data.finishPromptedIds) || '[]')); }
+  catch { return new Set(); }
+}
+
+function _addPromptedId(id) {
+  try {
+    const ids = _getPromptedIds();
+    ids.add(id);
+    localStorage.setItem(KESSEN_KEYS.data.finishPromptedIds, JSON.stringify([...ids]));
+  } catch {}
+}
+
+function _queueFinishPrompt(anime) {
+  // Don't prompt if: already prompted, too many battles (rank is settled), excluded
+  if (_getPromptedIds().has(anime.id)) return;
+  if ((anime.battles || 0) >= FINISH_PROMPT_MAX_BATTLES) return;
+  if (excludedIds.has(anime.id)) return;
+  // Don't duplicate if already queued
+  if (_finishPromptQueue.some(p => p.id === anime.id)) return;
+
+  _finishPromptQueue.push({
+    id:         anime.id,
+    title:      displayTitle(anime),
+    cover:      anime.cover || '',
+    detectedAt: Date.now(),
+  });
+  _saveFinishPrompts();
+  _showNextFinishPrompt();
+}
+
+function _showNextFinishPrompt() {
+  const banner = byId(IDS.finishPromptBanner);
+  const msg    = byId(IDS.finishPromptMsg);
+  if (!banner) return;
+
+  if (_finishPromptQueue.length === 0) {
+    banner.classList.remove('active');
+    return;
+  }
+
+  // Prune anything that's gone stale while sitting in the queue
+  const now = Date.now();
+  _finishPromptQueue = _finishPromptQueue.filter(p => now - p.detectedAt < FINISH_PROMPT_MAX_AGE_MS);
+  _saveFinishPrompts();
+
+  if (_finishPromptQueue.length === 0) {
+    banner.classList.remove('active');
+    return;
+  }
+
+  const next = _finishPromptQueue[0];
+  if (msg) msg.textContent =
+    `⚡ You just finished ${next.title} — battle in the Tower while the feelings are fresh?`;
+  banner.classList.add('active');
+}
+
+function dismissFinishPrompt() {
+  if (_finishPromptQueue.length === 0) return;
+  const dismissed = _finishPromptQueue.shift();
+  _addPromptedId(dismissed.id);
+  _saveFinishPrompts();
+  _showNextFinishPrompt();
+}
+
+function startFinishTower() {
+  if (_finishPromptQueue.length === 0) return;
+  const prompt = _finishPromptQueue[0];
+
+  // Find the anime in the current list
+  const idx = animeList.findIndex(a => a.id === prompt.id);
+
+  dismissFinishPrompt(); // remove from queue before opening Tower
+
+  if (idx === -1) return; // show was excluded or removed — silently skip
+
+  // If on the results screen, head to battle first
+  const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
+  if (resultsVisible) resumeBattle();
+
+  // Bypass the Tower selection modal and launch directly
+  startTower(idx);
 }
 
 // MAL variant: fetch current list, diff against animeList by AniList ID
