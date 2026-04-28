@@ -5078,30 +5078,31 @@ function closeChallengeModal() {
 }
 
 // ─── COLLABORATIVE "WATCH TOGETHER" MODE ──────────────────────────────────────
-// Firebase config — fill in your project details to enable multi-device mode.
-// Get these from: Firebase Console → Project Settings → Your apps → SDK snippet.
-// Single-device mode works without any Firebase configuration.
-const _FIREBASE_CONFIG = {
-  apiKey:            '%%FIREBASE_API_KEY%%',
-  authDomain:        '%%FIREBASE_AUTH_DOMAIN%%',
-  databaseURL:       '%%FIREBASE_DATABASE_URL%%',
-  projectId:         '%%FIREBASE_PROJECT_ID%%',
-  storageBucket:     '%%FIREBASE_STORAGE_BUCKET%%',
-  messagingSenderId: '%%FIREBASE_MESSAGING_SENDER_ID%%',
-  appId:             '%%FIREBASE_APP_ID%%',
-};
-// Values starting with %% are un-substituted placeholders (local dev without build step).
-// Firebase features (collab, real-time sync) are silently disabled in that case.
-const _FIREBASE_READY = !!(
-  _FIREBASE_CONFIG.apiKey &&
-  !_FIREBASE_CONFIG.apiKey.startsWith('%%') &&
-  _FIREBASE_CONFIG.databaseURL &&
-  !_FIREBASE_CONFIG.databaseURL.startsWith('%%')
-);
-let _firebaseApp = null;
+// Firebase config is loaded at runtime from /.netlify/functions/firebase-config
+// so the API key is never present in the static bundle or source control.
+// _FIREBASE_READY flips to true once the fetch resolves successfully.
+// Firebase features (collab, real-time sync) silently no-op until then.
+let _FIREBASE_CONFIG = null;
+let _FIREBASE_READY  = false;
+let _firebaseApp     = null;
+
+// Kick off the config fetch immediately on script parse — it resolves long
+// before any user interaction can trigger a Firebase operation.
+(async function _loadFirebaseConfig() {
+  try {
+    const res = await fetch('/.netlify/functions/firebase-config');
+    if (!res.ok) return;
+    const cfg = await res.json();
+    if (!cfg.apiKey || !cfg.databaseURL) return;
+    _FIREBASE_CONFIG = cfg;
+    _FIREBASE_READY  = true;
+  } catch {
+    // Local dev or function unavailable — Firebase features stay disabled.
+  }
+})();
 
 function _initFirebase() {
-  if (_firebaseApp || !_FIREBASE_READY) return;
+  if (_firebaseApp || !_FIREBASE_READY || !_FIREBASE_CONFIG) return;
   try { _firebaseApp = firebase.initializeApp(_FIREBASE_CONFIG); } catch (e) { /* already initialised */ }
 }
 
