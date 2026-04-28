@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.7" />
+  <meta name="version" content="1.0.8" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -52,6 +52,10 @@
   <link rel="preconnect" href="https://cdn.myanimelist.net" crossorigin />
 
   <link rel="stylesheet" href="styles.css" />
+  <!-- Firebase SDK — only needed for multi-device Watch Together mode.
+       Remove these two lines if you don't plan to use multi-device. -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
 
@@ -94,7 +98,10 @@
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
     <span id="cloud-sync-indicator" style="display:none;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
-    <button id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle light/dark mode" style="background:none;border:none;cursor:pointer;font-size:1.1rem;padding:4px;line-height:1;color:var(--text-secondary)">🌙</button>
+    <button id="notif-bell" onclick="openNotifCentre()" title="Notification Centre" aria-label="Notification Centre" style="display:none">
+      🔔
+      <span id="notif-badge" style="display:none"></span>
+    </button>
     <div id="auth-header-badge">
       <img id="auth-hdr-avatar" src="" alt="" />
       <span class="auth-hdr-name" id="auth-hdr-name"></span>
@@ -105,7 +112,6 @@
       <span class="auth-hdr-name" id="mal-hdr-name"></span>
       <button class="auth-hdr-logout" onclick="logoutMAL()">Logout</button>
     </div>
-    <button id="lang-toggle-btn" onclick="toggleLanguage()" title="Switch the language of anime titles (doesn't change UI language)">Titles: EN</button>
     <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄ Change User</button>
   </div>
 </header>
@@ -113,7 +119,7 @@
 <div id="new-anime-banner">
   <span id="new-anime-msg">🆕 New anime found on your list</span>
   <div style="display:flex;gap:6px">
-    <button onclick="addPendingNewAnime()" style="background:none;border:1px solid #388bfd;color:#58a6ff;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Add to ranking</button>
+    <button onclick="addPendingNewAnime()" style="background:none;border:1px solid #388bfd;color:#58a6ff;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Review</button>
     <button onclick="dismissNewAnimeBanner()" style="background:none;border:none;color:#58a6ff;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:0.78rem" aria-label="Dismiss">✕</button>
   </div>
 </div>
@@ -136,6 +142,15 @@
   </div>
 </div>
 
+<!-- Real-time cross-device sync banner — shown when another device has newer rankings -->
+<div id="realtime-sync-banner">
+  <span id="realtime-sync-msg">📱 Your other device updated your rankings</span>
+  <div style="display:flex;gap:6px">
+    <button onclick="applyRealtimeSync()" style="background:none;border:1px solid #388bfd;color:#58a6ff;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Apply</button>
+    <button onclick="dismissRealtimeSync()" style="background:none;border:none;color:#58a6ff;padding:3px 6px;border-radius:6px;cursor:pointer;font-size:0.78rem" aria-label="Dismiss">✕</button>
+  </div>
+</div>
+
 <!-- §5.2.12 — Guest→OAuth merge confirmation modal -->
 <div id="guest-merge-modal" role="dialog" aria-modal="true" aria-labelledby="guest-merge-title" onclick="closeGuestMergeOverlay(event)">
   <div class="archive-confirm-box">
@@ -152,6 +167,239 @@
     <div class="archive-confirm-actions">
       <button class="btn-primary"   onclick="acceptGuestMerge()">🔀 Merge guest progress</button>
       <button class="btn-secondary" onclick="declineGuestMerge()">No, start fresh</button>
+    </div>
+  </div>
+</div>
+
+<!-- New anime review modal -->
+<div id="new-anime-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="new-anime-confirm-title" onclick="closeNewAnimeConfirmOverlay(event)" style="display:none">
+  <div class="archive-confirm-box">
+    <button class="share-close" onclick="closeNewAnimeConfirm()" aria-label="Close">✕</button>
+    <h3 id="new-anime-confirm-title">🆕 New anime on your list</h3>
+    <p id="new-anime-confirm-subtitle" class="archive-confirm-sub">These shows are on your external list but haven't been added to your Kessen rankings yet:</p>
+    <ul id="new-anime-confirm-list" class="archive-confirm-list"></ul>
+    <p class="archive-confirm-hint">
+      <b>Add to rankings</b> brings them into your battle pool with a starting ELO.
+      <b>Skip</b> ignores them — they won't appear again unless your list is re-synced.
+    </p>
+    <div class="archive-confirm-actions">
+      <button class="btn-primary" onclick="confirmAddNewAnime()">➕ Add to rankings</button>
+      <button class="btn-secondary" onclick="dismissNewAnimeConfirm()">Skip</button>
+    </div>
+  </div>
+</div>
+
+<!-- Watch Together / Collaborative Mode modal -->
+<div id="collab-modal" role="dialog" aria-modal="true" style="display:none"
+     onclick="if(event.target===this)closeCollabModal()">
+  <div class="collab-box">
+    <button class="share-close" onclick="closeCollabModal()" aria-label="Close">✕</button>
+
+    <!-- Mode selection -->
+    <div id="collab-panel-mode">
+      <h3 style="margin:0 0 6px">🤝 Watch Together</h3>
+      <p style="font-size:0.82rem;color:#8b949e;margin:0 0 24px">Nominate shows, battle them head-to-head, and let the votes decide what you watch.</p>
+      <div class="collab-mode-btns">
+        <button class="collab-mode-btn" onclick="collabChooseMode('single')">
+          <span style="font-size:2rem">📱</span>
+          <strong>One device</strong>
+          <span>Pass the phone between votes</span>
+        </button>
+        <button class="collab-mode-btn" id="collab-mode-multi-btn" onclick="collabChooseMode('multi')">
+          <span style="font-size:2rem">📲</span>
+          <strong>Multiple devices</strong>
+          <span>Each person votes on their own phone</span>
+        </button>
+      </div>
+      <p id="collab-multi-note" style="font-size:0.75rem;color:#8b949e;margin-top:12px;text-align:center;display:none">
+        Multi-device requires Firebase — see app.js to configure.
+      </p>
+      <!-- Rejoin banner — shown only when sessionStorage has an active session -->
+      <div id="collab-rejoin-banner" style="display:none;margin-top:14px">
+        <div class="collab-rejoin-box">
+          <span class="collab-rejoin-icon">🔌</span>
+          <div class="collab-rejoin-text">
+            <strong>Looks like you got disconnected</strong>
+            <span id="collab-rejoin-desc"></span>
+          </div>
+          <button class="btn-primary collab-rejoin-btn" onclick="collabRejoinSession()">Rejoin</button>
+        </div>
+        <button class="collab-rejoin-dismiss" onclick="collabDismissRejoin()">Start fresh instead</button>
+      </div>
+    </div>
+
+    <!-- Single device: player names -->
+    <div id="collab-panel-setup" style="display:none">
+      <h3 style="margin:0 0 16px">Who's playing?</h3>
+      <div class="collab-name-row">
+        <label>Player 1</label>
+        <input id="collab-p1-name" class="collab-name-input" placeholder="Your name" onkeydown="if(event.key==='Enter')document.getElementById('collab-p2-name').focus()" />
+      </div>
+      <div class="collab-name-row" style="margin-top:10px">
+        <label>Player 2</label>
+        <input id="collab-p2-name" class="collab-name-input" placeholder="Friend's name" onkeydown="if(event.key==='Enter')collabStartSingle()" />
+      </div>
+      <button class="btn-primary" style="width:100%;margin-top:20px" onclick="collabStartSingle()">Start →</button>
+    </div>
+
+    <!-- Multi device: create or join -->
+    <div id="collab-panel-multi-setup" style="display:none">
+      <h3 style="margin:0 0 16px">Multi-device</h3>
+      <div class="collab-name-row" style="margin-bottom:16px">
+        <label>Your name</label>
+        <input id="collab-multi-name" class="collab-name-input" placeholder="Your name" />
+      </div>
+      <div class="collab-mode-btns">
+        <button class="collab-mode-btn" onclick="collabMultiShowRole('host')">
+          <span style="font-size:1.6rem">🏠</span>
+          <strong>Create session</strong>
+          <span>Get a code to share</span>
+        </button>
+        <button class="collab-mode-btn" onclick="collabMultiShowRole('guest')">
+          <span style="font-size:1.6rem">🚪</span>
+          <strong>Join session</strong>
+          <span>Enter a friend's code</span>
+        </button>
+      </div>
+      <div id="collab-multi-create" style="display:none;margin-top:16px">
+        <button class="btn-primary" style="width:100%" onclick="collabCreateSession()">Create session →</button>
+      </div>
+      <div id="collab-multi-join" style="display:none;margin-top:16px">
+        <input id="collab-join-input" class="collab-name-input" placeholder="Enter 6-character code"
+               style="width:100%;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1.1rem"
+               maxlength="6" onkeydown="if(event.key==='Enter')collabJoinSession()" />
+        <button class="btn-primary" style="width:100%;margin-top:10px" onclick="collabJoinSession()">Join →</button>
+      </div>
+    </div>
+
+    <!-- Multi device: lobby (waiting for friends) -->
+    <div id="collab-panel-multi-lobby" style="display:none">
+      <h3 style="margin:0 0 4px">Share this code</h3>
+      <p style="font-size:0.78rem;color:#8b949e;margin:0 0 10px;text-align:center">Others enter this on the Join screen</p>
+      <div id="collab-lobby-code" class="collab-session-code"></div>
+      <div id="collab-player-list" class="collab-player-list" style="margin-top:14px"></div>
+      <!-- Host only -->
+      <button id="collab-start-noms-btn" class="btn-primary"
+              style="display:none;width:100%;margin-top:16px" onclick="collabHostStartNominations()">
+        Everyone's in — start nominations →
+      </button>
+      <!-- Guest only -->
+      <p id="collab-lobby-guest-status" style="display:none;font-size:0.82rem;color:#8b949e;text-align:center;margin-top:12px">
+        Waiting for host to start…
+      </p>
+    </div>
+
+    <!-- Nominations (shared by both modes) -->
+    <div id="collab-panel-nominate" style="display:none">
+      <h4 id="collab-nominate-title" style="margin:0 0 4px"></h4>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span id="collab-nominate-count" style="font-size:0.78rem;color:#8b949e;font-weight:600"></span>
+      </div>
+      <div id="collab-friend-nom-count" style="font-size:0.75rem;color:#8b949e;margin-bottom:10px"></div>
+      <div class="collab-search-wrap">
+        <input id="collab-search" class="collab-name-input" placeholder="Search your list or type a title…"
+               oninput="collabSearch()" style="width:100%" />
+        <div id="collab-search-results" class="collab-search-results"></div>
+      </div>
+      <div id="collab-nominations-list" class="collab-nominations-list" style="margin-top:10px"></div>
+      <button id="collab-confirm-btn" class="btn-primary" style="width:100%;margin-top:16px" onclick="collabConfirmNominations()">Confirm nominations →</button>
+    </div>
+
+    <!-- Round picker (host/single picks before voting begins) -->
+    <div id="collab-panel-rounds" style="display:none">
+      <h4 style="margin:0 0 4px">How many rounds?</h4>
+      <p style="font-size:0.8rem;color:#8b949e;margin:0 0 16px">
+        <span id="collab-rounds-pool-count"></span> shows in the mix — we recommend
+        <strong id="collab-rounds-rec-val"></strong> rounds.
+      </p>
+      <div class="collab-rounds-picker">
+        <button class="collab-rounds-btn" onclick="collabAdjustRounds(-1)">−</button>
+        <span id="collab-rounds-value" class="collab-rounds-display">10</span>
+        <button class="collab-rounds-btn" onclick="collabAdjustRounds(1)">+</button>
+      </div>
+      <div id="collab-rounds-stats" class="collab-rounds-stats"></div>
+      <button class="btn-primary" style="width:100%;margin-top:20px" onclick="collabStartWithRounds()">Start voting →</button>
+    </div>
+
+    <!-- Pass screen (single device only) -->
+    <div id="collab-panel-pass" style="display:none">
+      <div class="collab-pass-screen">
+        <div style="font-size:3rem">📱</div>
+        <h4 style="margin:12px 0 6px">Pass to <span id="collab-pass-name"></span></h4>
+        <p style="font-size:0.82rem;color:#8b949e;margin:0 0 24px">Hand the phone over — their nominations are next.</p>
+        <button class="btn-primary" onclick="collabPassReveal()">I'm ready →</button>
+      </div>
+    </div>
+
+    <!-- Voting (shared by both modes) -->
+    <div id="collab-panel-vote" style="display:none">
+      <div class="collab-vote-header">
+        <span id="collab-vote-progress" class="challenge-round"></span>
+      </div>
+      <div id="collab-vote-who" class="collab-vote-who"></div>
+      <div id="collab-vote-sub" class="collab-vote-sub"></div>
+      <div class="challenge-pair" style="margin:12px 0">
+        <button class="challenge-card collab-vote-card" id="collab-card-a" onclick="collabVoteBtn('a')"></button>
+        <div class="challenge-vs">VS</div>
+        <button class="challenge-card collab-vote-card" id="collab-card-b" onclick="collabVoteBtn('b')"></button>
+      </div>
+      <button id="collab-p2-ready-btn" class="btn-secondary" style="display:none;width:100%;margin-bottom:10px" onclick="collabP2Ready()">I'm ready to vote →</button>
+      <div id="collab-vote-reveal" style="display:none">
+        <div id="collab-vote-reveal-text" class="challenge-reveal-text"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button id="collab-tiebreak-btn" class="btn-secondary" style="display:none;flex:1" onclick="collabTiebreaker()">Vote again</button>
+          <button id="collab-vote-next-btn" class="btn-primary" style="display:none;flex:1" onclick="collabNextPair()">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="collab-panel-results" style="display:none">
+      <h3 style="margin:0 0 4px;text-align:center">🎬 Tonight's pick</h3>
+      <p style="font-size:0.78rem;color:#8b949e;text-align:center;margin:0 0 16px">Ranked by votes</p>
+      <div id="collab-results-list" class="collab-results-list"></div>
+      <button class="btn-secondary" style="width:100%;margin-top:16px" onclick="closeCollabModal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Challenge Mode modal -->
+<div id="challenge-modal" role="dialog" aria-modal="true" aria-labelledby="challenge-modal-title"
+     style="display:none" onclick="if(event.target===this)closeChallengeModal()">
+  <div class="challenge-box">
+    <button class="share-close" onclick="closeChallengeModal()" aria-label="Close">✕</button>
+    <h3 id="challenge-modal-title" style="margin:0 0 4px">🎮 Challenge Mode</h3>
+    <p style="font-size:0.78rem;color:#8b949e;margin:0 0 16px">
+      Guess which anime <strong id="challenge-friend-name"></strong> ranked higher
+    </p>
+
+    <!-- Loading -->
+    <div id="challenge-loading"></div>
+
+    <!-- Game -->
+    <div id="challenge-game" style="display:none">
+      <div class="challenge-hud">
+        <span id="challenge-progress" class="challenge-round"></span>
+        <span id="challenge-diff-badge" class="challenge-diff"></span>
+        <span id="challenge-score-live" class="challenge-pts-live"></span>
+      </div>
+      <div class="challenge-pair">
+        <button class="challenge-card" id="challenge-card-a" onclick="challengeAnswer('a')"></button>
+        <div class="challenge-vs">VS</div>
+        <button class="challenge-card" id="challenge-card-b" onclick="challengeAnswer('b')"></button>
+      </div>
+      <div id="challenge-reveal" style="display:none">
+        <div id="challenge-reveal-text" class="challenge-reveal-text"></div>
+        <button id="challenge-next-btn" class="btn-primary" style="margin-top:12px;width:100%" onclick="challengeNext()">Next →</button>
+      </div>
+    </div>
+
+    <!-- End screen -->
+    <div id="challenge-end" style="display:none">
+      <div id="challenge-end-score" class="challenge-end-score"></div>
+      <h4 style="margin:18px 0 8px;font-size:0.82rem;color:#8b949e">Round breakdown</h4>
+      <div id="challenge-breakdown" class="challenge-breakdown"></div>
+      <button class="btn-secondary" style="margin-top:16px;width:100%" onclick="closeChallengeModal()">Close</button>
     </div>
   </div>
 </div>
@@ -425,6 +673,11 @@
             <span class="mode-icon" aria-hidden="true">🎲</span>
             <span class="mode-text"><span class="mode-name">Trio</span><span class="mode-desc">Rank three at once</span></span>
           </button>
+          <hr class="mode-popover-divider" />
+          <button type="button" class="mode-popover-action" onclick="openTowerModal();_closeModeMenu()">
+            <span class="mode-icon" aria-hidden="true">⚡</span>
+            <span class="mode-text"><span class="mode-name">Tower</span><span class="mode-desc">Pick a champion — face 10 opponents</span></span>
+          </button>
         </div>
       </div>
       <div class="mode-control">
@@ -442,7 +695,6 @@
           <p class="filter-popover-hint">Hidden formats are excluded from battles and rankings.</p>
         </div>
       </div>
-      <button class="btn-secondary" onclick="openTowerModal()" title="Pick a champion to face 10 opponents">⚡ Tower</button>
     </div>
     <div class="kb-hints">
       <kbd>←</kbd> left &nbsp;·&nbsp; <kbd>→</kbd> right &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>U</kbd> undo
@@ -739,27 +991,68 @@
         <button id="sp-mal"     class="sp-btn"        onclick="setSocialPlatform('mal')">📋 MAL</button>
       </div>
 
-      <div id="friend-recs-section">
-        <h3>👀 What Should I Watch Next?</h3>
-        <p class="recs-sub">Anime your friend loved that fit your taste profile — ordered by how well they match your genres</p>
-        <div class="compat-input-row">
-          <input type="text" id="friend-recs-input" placeholder="Enter a friend's AniList username…" style="width:220px"
-                 onkeydown="if(event.key==='Enter')runFriendRecs()" />
-          <button class="btn-primary" onclick="runFriendRecs()">Get Recs</button>
+      <!-- ── PLAY WITH FRIENDS ─────────────────────────────────────── -->
+      <div class="social-group">
+        <h3 class="social-group-title">Play with friends</h3>
+        <div class="social-play-grid">
+
+          <!-- Watch Together -->
+          <div class="social-play-card" id="collab-section">
+            <div class="social-play-card-top">
+              <span class="social-play-icon">🤝</span>
+              <div class="social-play-text">
+                <strong>Watch Together</strong>
+                <span>Nominate shows, battle head-to-head, and let the votes decide what to watch.</span>
+              </div>
+            </div>
+            <button class="btn-primary social-play-action-btn" onclick="openCollabMode()">Start a session →</button>
+          </div>
+
+          <!-- Challenge Mode -->
+          <div class="social-play-card" id="challenge-section">
+            <div class="social-play-card-top">
+              <span class="social-play-icon">🎮</span>
+              <div class="social-play-text">
+                <strong>Challenge Mode</strong>
+                <span>Guess how a friend ranked their anime — see how well you know their taste.</span>
+              </div>
+            </div>
+            <div class="social-challenge-row">
+              <input id="social-challenge-input" class="social-challenge-input"
+                     placeholder="Friend's username…"
+                     onkeydown="if(event.key==='Enter')openChallengeFromInput()" />
+              <button class="btn-primary" onclick="openChallengeFromInput()">Challenge →</button>
+            </div>
+          </div>
+
         </div>
+      </div>
+
+      <!-- ── COMPARE WITH FRIENDS ──────────────────────────────────── -->
+      <div class="social-group" style="margin-top:28px">
+        <h3 class="social-group-title">Compare with friends</h3>
+        <p class="recs-sub social-group-sub">See how your taste stacks up and get recommendations from their list — all in one lookup.</p>
+
+        <!-- Saved comparisons -->
+        <div id="saved-comparisons"></div>
+
+        <!-- Unified input -->
+        <div class="compat-input-row" style="margin-top:10px">
+          <input type="text" id="social-compare-input"
+                 placeholder="Enter a friend's username…"
+                 onkeydown="if(event.key==='Enter')runSocialCompare()" />
+          <button class="btn-primary" onclick="runSocialCompare()">Look up</button>
+        </div>
+
+        <!-- Inputs kept for internal functions — visually hidden but readable -->
+        <input type="text" id="compat-username-input" style="display:none" aria-hidden="true" />
+        <input type="text" id="friend-recs-input"     style="display:none" aria-hidden="true" />
+
+        <!-- Results: compatibility above, recs below -->
+        <div id="compat-results"></div>
         <div id="friend-recs-results"></div>
       </div>
 
-      <div id="compat-section" style="margin-top:32px;border-top:1px solid #21262d;padding-top:24px">
-        <h3>👥 Taste Compatibility</h3>
-        <div id="saved-comparisons"></div>
-        <div class="compat-input-row">
-          <input type="text" id="compat-username-input" placeholder="Enter AniList username…" style="width:220px"
-               onkeydown="if(event.key==='Enter')runCompatibility()" />
-          <button class="btn-primary" onclick="runCompatibility()">Compare</button>
-        </div>
-        <div id="compat-results"></div>
-      </div>
     </div>
 
     <!-- ── MANAGE panel ──────────────────────────────────────────────── -->
@@ -773,6 +1066,12 @@
 
       <!-- Settings sub-panel -->
       <div id="manage-panel-settings" class="manage-tab-content">
+        <div class="manage-section">
+          <div class="manage-section-title">Appearance</div>
+          <button id="theme-toggle-btn" class="manage-btn" onclick="toggleTheme()" title="Toggle light/dark mode">🌙 Dark mode</button>
+          <button id="lang-toggle-btn" class="manage-btn" onclick="toggleLanguage()" title="Switch between English and Romaji anime titles">🈯 Titles: EN</button>
+        </div>
+
         <div class="manage-section">
           <div class="manage-section-title">Backup, Sync &amp; Export</div>
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Save a backup to transfer to another device, or export your rankings as text or CSV.</p>
@@ -1161,6 +1460,20 @@
   }
 </script>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<!-- NOTIFICATION CENTRE MODAL -->
+<div id="notif-centre-modal" onclick="if(event.target===this)closeNotifCentre()">
+  <div class="nc-box">
+    <div class="nc-header">
+      <h3>🔔 Notifications</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="nc-clear-btn" onclick="ncClearAll()">Clear all</button>
+        <button class="nc-close-btn" onclick="closeNotifCentre()" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div id="notif-centre-list" class="nc-list"></div>
+  </div>
+</div>
 
 <!-- Confirm modal (replaces browser confirm() dialogs) -->
 <div id="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-body" onclick="if(event.target===this)_confirmCancel()">

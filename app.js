@@ -119,6 +119,8 @@ const IDS = Object.freeze({
   modePopover:            'mode-popover',
   newAnimeBanner:         'new-anime-banner',
   newAnimeMsg:            'new-anime-msg',
+  newAnimeConfirmModal:   'new-anime-confirm-modal',
+  newAnimeConfirmList:    'new-anime-confirm-list',
   oauthSeedNote:          'oauth-seed-note',
   poolWarningBanner:      'pool-warning-banner',
   poolWarningText:        'pool-warning-text',
@@ -143,6 +145,8 @@ const IDS = Object.freeze({
   refreshMetadataMsg:     'refresh-metadata-msg',
   finishPromptBanner:     'finish-prompt-banner',
   finishPromptMsg:        'finish-prompt-msg',
+  realtimeSyncBanner:     'realtime-sync-banner',
+  realtimeSyncMsg:        'realtime-sync-msg',
   removedAnimeBanner:     'removed-anime-banner',
   removedAnimeMsg:        'removed-anime-msg',
   reseedAnilistBtn:       'reseed-anilist-btn',
@@ -218,6 +222,57 @@ const IDS = Object.freeze({
   towerSummaryTitle:      'tower-summary-title',
   trioBanner:             'trio-banner',
   trioArena:              'trio-arena',
+  notifBell:              'notif-bell',
+  notifBadge:             'notif-badge',
+  notifCentreModal:       'notif-centre-modal',
+  notifCentreList:        'notif-centre-list',
+  collabModal:              'collab-modal',
+  collabPanelMode:          'collab-panel-mode',
+  collabPanelSetup:         'collab-panel-setup',
+  collabPanelMultiSetup:    'collab-panel-multi-setup',
+  collabPanelMultiLobby:    'collab-panel-multi-lobby',
+  collabPanelNominate:      'collab-panel-nominate',
+  collabPanelRounds:        'collab-panel-rounds',
+  collabPanelPass:          'collab-panel-pass',
+  collabPanelVote:          'collab-panel-vote',
+  collabPanelResults:       'collab-panel-results',
+  collabP1Name:             'collab-p1-name',
+  collabP2Name:             'collab-p2-name',
+  collabNominateTitle:      'collab-nominate-title',
+  collabNominateCount:      'collab-nominate-count',
+  collabSearch:             'collab-search',
+  collabSearchResults:      'collab-search-results',
+  collabNominationsList:    'collab-nominations-list',
+  collabPassName:           'collab-pass-name',
+  collabPlayerList:         'collab-player-list',
+  collabStartNomsBtn:       'collab-start-noms-btn',
+  collabLobbyGuestStatus:   'collab-lobby-guest-status',
+  collabVoteProgress:       'collab-vote-progress',
+  collabCardA:              'collab-card-a',
+  collabCardB:              'collab-card-b',
+  collabVoteReveal:         'collab-vote-reveal',
+  collabVoteRevealText:     'collab-vote-reveal-text',
+  collabVoteNextBtn:        'collab-vote-next-btn',
+  collabResultsList:        'collab-results-list',
+  collabMultiName:          'collab-multi-name',
+  collabJoinInput:          'collab-join-input',
+  collabLobbyCode:          'collab-lobby-code',
+  collabLobbyStatus:        'collab-lobby-status',
+  challengeModal:           'challenge-modal',
+  challengeLoading:       'challenge-loading',
+  challengeGame:          'challenge-game',
+  challengeEnd:           'challenge-end',
+  challengeFriendName:    'challenge-friend-name',
+  challengeProgress:      'challenge-progress',
+  challengeScoreLive:     'challenge-score-live',
+  challengeCardA:         'challenge-card-a',
+  challengeCardB:         'challenge-card-b',
+  challengeDiffBadge:     'challenge-diff-badge',
+  challengeReveal:        'challenge-reveal',
+  challengeRevealText:    'challenge-reveal-text',
+  challengeNextBtn:       'challenge-next-btn',
+  challengeEndScore:      'challenge-end-score',
+  challengeBreakdown:     'challenge-breakdown',
   undoBtn:                'undo-btn',
   usernameInput:          'username-input',
   viewGridBtn:            'view-grid-btn',
@@ -253,6 +308,7 @@ let hiddenEpRanges  = new Set(); // episode-length buckets hidden from rankings
 let _pendingNewAnime    = [];    // anime on AniList not yet in rankings (new anime detection)
 let _pendingRemovedAnime = [];   // anime in rankings but no longer on the external list (§5.2.7)
 let _finishPromptQueue  = [];   // queue of {id, title, cover, detectedAt} for post-finish Tower prompts
+let _notifCentre        = [];   // persisted notification centre entries
 let _newAnimePollingTimer = null;
 let preferRomaji    = false;     // title language preference
 let currentSort     = 'elo';     // active sort in rankings view
@@ -328,6 +384,18 @@ function safeUrl(u) {
 let authToken = null;
 let authUser  = null; // { id, name, avatar }
 
+// When a fetch to AniList fails at the network level the browser gives us only
+// TypeError "Failed to fetch" — no status code, no body — because the CORS
+// preflight itself is blocked (e.g. AniList returns 503/403 with no CORS
+// headers during an outage). Convert that opaque error into something a real
+// user can act on. Everything else (HTTP errors, API errors) is passed through.
+function _anilistErrMsg(err) {
+  if (err.message === 'Failed to fetch') {
+    return 'AniList appears to be temporarily unavailable — this isn\'t an issue with the app. Try again in a few minutes, or check AniList\'s status on their Discord.';
+  }
+  return err.message;
+}
+
 function anilistHeaders() {
   const h = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
   if (authToken) h['Authorization'] = 'Bearer ' + authToken;
@@ -398,6 +466,9 @@ const KESSEN_KEYS = {
     finishPrompts:    'kessen.data.finishPrompts',
     // Set of anime IDs already prompted so we never fire twice for the same show
     finishPromptedIds: 'kessen.data.finishPromptedIds',
+    // Notification Centre — persisted list of {id, type, msg, timestamp, read, data}
+    // Keyed per user so switching accounts shows the right notifications.
+    notifCentre: (key) => `kessen.data.notifCentre.${key || 'guest'}`,
   },
   _migrationFlagV1: 'kessen.meta.migratedV1',
 };
@@ -514,6 +585,7 @@ function _clearRankingState() {
   // Cancel any in-flight save debounces — they would fire against stale state.
   clearTimeout(_cloudSaveTimer);
   _cloudSaveTimer = null;
+  _stopFirebaseSync(); // detach real-time listener so stale data can't overwrite a new session
   clearInterval(_newAnimePollingTimer);
   _newAnimePollingTimer = null;
   byId(IDS.newAnimeBanner)?.classList.remove('active');
@@ -773,7 +845,7 @@ async function _handleOAuthCode(code) {
     console.error('AniList OAuth token exchange failed:', err);
     authToken = null;
     if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
-    if (errEl) { errEl.textContent = 'Login failed: ' + (err.message || 'unknown error'); errEl.style.display = 'block'; }
+    if (errEl) { errEl.textContent = 'Login failed: ' + _anilistErrMsg(err); errEl.style.display = 'block'; }
   }
 }
 
@@ -1506,6 +1578,15 @@ let _cloudSaveTimer    = null;  // debounce handle
 let _cloudSyncEnabled  = false; // true when AniList or MAL authenticated
 let _suppressCloudSave = false; // true while applying a cloud save to avoid an immediate re-save
 
+// ─── REAL-TIME CROSS-DEVICE SYNC ────────────────────────────────────────────
+// Each browser tab/session gets a random device ID so we can tell whether an
+// incoming Firebase snapshot was written by this tab (ignore) or another device.
+const _deviceId = 'dev-' + Math.random().toString(36).slice(2, 10);
+let _firebaseSyncRef      = null; // Firebase DatabaseReference for the user's sync path
+let _firebaseSyncListener = null; // 'value' listener handle (needed to detach cleanly)
+let _lastFirebaseSyncTs   = 0;    // ms timestamp of the last snapshot we applied or pushed
+let _pendingSyncData      = null; // remote snapshot queued for user confirmation (banner)
+
 // ─── LOADING CANCELLATION ─────────────────────────────────────────────────────
 // Each load function increments _loadGeneration and captures the value.
 // cancelLoading() increments it so in-flight async checks fail → no battle-screen nav.
@@ -1521,6 +1602,104 @@ function _setSyncIndicator(state) {
   if (state === 'saving') { el.textContent = '☁️ Saving…';  el.style.color = '#8b949e'; }
   if (state === 'saved')  { el.textContent = '☁️ Synced';   el.style.color = '#3fb950'; }
   if (state === 'error')  { el.textContent = '☁️ Sync err'; el.style.color = '#f85149'; }
+}
+
+// ── Real-time sync helpers ────────────────────────────────────────────────────
+
+// Returns the Firebase path for this user's real-time state node.
+function _getFirebaseSyncPath() {
+  const u = _activeCloudUser();
+  if (!u) return null;
+  const prefix = _isMalCloudSession() ? 'mal' : 'al';
+  const id = u.id || u.name || u.username;
+  return `users/${prefix}_${id}/state`;
+}
+
+// Detach any active Firebase listener and clear pending sync state.
+function _stopFirebaseSync() {
+  if (_firebaseSyncRef && _firebaseSyncListener) {
+    _firebaseSyncRef.off('value', _firebaseSyncListener);
+  }
+  _firebaseSyncRef      = null;
+  _firebaseSyncListener = null;
+  _pendingSyncData      = null;
+  byId(IDS.realtimeSyncBanner)?.classList.remove('active');
+}
+
+// Attach a Firebase 'value' listener for this user's state path.
+// Safe to call multiple times — re-attaches only if the path changed.
+function _startFirebaseSync() {
+  if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser()) return;
+  _initFirebase();
+
+  const path = _getFirebaseSyncPath();
+  if (!path) return;
+
+  // Already listening on the correct path — nothing to do.
+  if (_firebaseSyncRef && _firebaseSyncRef.key === path.split('/').pop()) return;
+
+  _stopFirebaseSync();
+  _firebaseSyncRef = firebase.database().ref(path);
+
+  _firebaseSyncListener = _firebaseSyncRef.on('value', snap => {
+    const data = snap.val();
+    if (!data || !data.animeList || !data.savedBy || !data.savedAt) return;
+    if (data.savedBy === _deviceId) return; // our own write — skip
+
+    const remoteTs      = new Date(data.savedAt).getTime();
+    const remoteBattles = data.battleCount || 0;
+
+    // Ignore if we've already seen this snapshot or if our local state is ahead
+    if (remoteTs <= _lastFirebaseSyncTs) return;
+    if (remoteBattles <= battleCount) {
+      _lastFirebaseSyncTs = remoteTs; // mark seen so we don't re-prompt
+      return;
+    }
+
+    const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
+    if (!onBattle || !animeList.length) {
+      // Not actively battling (or no session loaded yet) — apply silently
+      _lastFirebaseSyncTs = remoteTs;
+      if (animeList.length) {
+        _applyCloudSaveToMemory(data);
+        showToast('✅ Synced from your other device');
+        syncFormatButtons(); syncEpRangeButtons();
+      }
+    } else {
+      // User is mid-battle — show a non-disruptive banner so they can choose when to apply
+      _pendingSyncData = data;
+      const msg = byId(IDS.realtimeSyncMsg);
+      const count = remoteBattles - battleCount;
+      if (msg) msg.textContent = `📱 Your other device ranked ${count} more anime`;
+      byId(IDS.realtimeSyncBanner)?.classList.add('active');
+    }
+  }, err => {
+    console.warn('Firebase real-time sync error:', err.message);
+  });
+}
+
+// Called by the "Apply" button in the realtime-sync-banner.
+function applyRealtimeSync() {
+  byId(IDS.realtimeSyncBanner)?.classList.remove('active');
+  if (!_pendingSyncData) return;
+  const data = _pendingSyncData;
+  _pendingSyncData = null;
+  _lastFirebaseSyncTs = new Date(data.savedAt).getTime();
+  _applyCloudSaveToMemory(data);
+  showToast('✅ Rankings synced from your other device');
+  const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
+  if (onBattle) {
+    syncFormatButtons(); syncEpRangeButtons();
+    if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+  }
+}
+
+// Called by the "✕" button in the realtime-sync-banner.
+function dismissRealtimeSync() {
+  _pendingSyncData = null;
+  // Mark this remote snapshot's timestamp as seen so we don't re-show the banner
+  // when Firebase fires the listener again on reconnect.
+  byId(IDS.realtimeSyncBanner)?.classList.remove('active');
 }
 
 // Call this after saveState() for anything battle-related.
@@ -1569,6 +1748,21 @@ async function _doCloudSave() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     _setSyncIndicator('saved');
     setTimeout(() => _setSyncIndicator('hidden'), 3000);
+
+    // Mirror to Firebase for real-time cross-device sync.
+    // Tag with _deviceId so other devices know this snapshot is from us.
+    if (_FIREBASE_READY) {
+      try {
+        const path = _getFirebaseSyncPath();
+        if (path) {
+          _initFirebase();
+          firebase.database().ref(path).set({ ...session, savedBy: _deviceId });
+          _lastFirebaseSyncTs = new Date(session.savedAt).getTime();
+        }
+      } catch (fbErr) {
+        console.warn('Firebase real-time sync write failed:', fbErr.message);
+      }
+    }
   } catch (err) {
     console.warn('Cloud save failed:', err);
     _setSyncIndicator('error');
@@ -1738,9 +1932,8 @@ async function manualCloudPull() {
 // objects, patching them in place without touching any battle data.
 async function refreshAnimeMetadata() {
   if (!animeList.length) return;
+  // Show a loading state on the language button in Settings while metadata fetches.
   const btn = byId(IDS.langToggleBtn);
-  // The finally block below restores the label from `preferRomaji`, so there's
-  // no need to stash the original text here.
   if (btn) { btn.textContent = '⏳ Loading…'; btn.disabled = true; }
 
   const ids = animeList.map(a => a.id);
@@ -1799,10 +1992,8 @@ async function refreshAnimeMetadata() {
   } catch (err) {
     console.warn('refreshAnimeMetadata failed:', err);
   } finally {
-    if (btn) {
-      btn.textContent = preferRomaji ? 'Titles: Romaji' : 'Titles: EN';
-      btn.disabled = false;
-    }
+    _syncLangBtn();
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -2477,6 +2668,16 @@ function _buildFranchiseGroups(sorted) {
     if (group.members.length === 1) {
       group.name = displayTitle(group.members[0]);
     }
+    // Coherence — how consistently the user ranks entries within this franchise.
+    // Only meaningful for franchises with 2+ entries.
+    if (group.members.length >= 2) {
+      const elos    = group.members.map(a => a.elo);
+      const mean    = elos.reduce((s, e) => s + e, 0) / elos.length;
+      const stdDev  = Math.sqrt(elos.reduce((s, e) => s + Math.pow(e - mean, 2), 0) / elos.length);
+      group.eloStdDev  = Math.round(stdDev);
+      group.eloRange   = Math.round(Math.max(...elos) - Math.min(...elos));
+      group.coherence  = stdDev < 30 ? 'consistent' : stdDev < 80 ? 'mixed' : 'divisive';
+    }
     result.push(group);
   }
   // Compute ELO rank for each group (used for tier badge regardless of sort order)
@@ -2564,6 +2765,11 @@ function _buildFranchiseCard(group, rank, totalGroups) {
         </div>`).join('')}
     </div>` : '';
 
+  const coh = _coherenceLabel(group);
+  const cohBadge = coh
+    ? `<span class="franchise-coherence ${coh.cls}" title="${esc(coh.title)}">${coh.icon} ${coh.label}</span>`
+    : '';
+
   if (rankingView === 'grid') {
     card.classList.add('franchise-grid-card');
     card.style.cursor = 'pointer';
@@ -2579,6 +2785,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
       ${countBadge ? `<div class="franchise-grid-meta">${countBadge}</div>` : ''}
       <div class="rank-elo">ELO ${group.bestElo}</div>
       <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
+      ${cohBadge}
       ${!isSingle ? `<button class="franchise-expand-btn" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))">▸ See all entries</button>` : ''}
       ${membersHtml}
     `;
@@ -2593,6 +2800,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
             <span class="franchise-elo">ELO ${group.bestElo}</span>
             <span class="franchise-elo">${wrStr} WR · ${group.totalBattles} battles</span>
             ${countBadge}
+            ${cohBadge}
           </div>
         </div>
         ${!isSingle ? '<span class="franchise-chevron">▸</span>' : ''}
@@ -2642,7 +2850,11 @@ function showFranchiseDetail(groupName) {
   byId(IDS.modalTitle).textContent = group.name;
   const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
   byId(IDS.modalRankLine).innerHTML = `${tierHtml}${group.members.length} entries · Avg ELO ${group.bestElo}`;
-  byId(IDS.modalMetaLine).textContent = `${wrStr} win rate · ${group.totalBattles} total battles · ${conf.label}`;
+  const cohDetail = _coherenceLabel(group);
+  const cohHtml   = cohDetail
+    ? ` · <span class="franchise-coherence ${cohDetail.cls}" style="font-size:0.78rem" title="${esc(cohDetail.title)}">${cohDetail.icon} ${cohDetail.label} <span style="color:#8b949e;font-weight:400">(±${group.eloStdDev} ELO)</span></span>`
+    : '';
+  byId(IDS.modalMetaLine).innerHTML = `${esc(wrStr)} win rate · ${group.totalBattles} total battles · ${conf.label}${cohHtml}`;
   byId(IDS.modalGenres).style.display = 'none';
   const totalWins   = group.members.reduce((s,a) => s + (a.wins||0), 0);
   const totalLosses = group.members.reduce((s,a) => s + (a.losses||0), 0);
@@ -2825,6 +3037,10 @@ function showResults() {
   if ((authToken && authUser) || (malAuthToken && malAuthUser)) setTimeout(_startNewAnimePolling, 2000);
   // Load any queued post-finish prompts (prunes stale ones, shows banner if pending)
   _loadFinishPrompts();
+  // Load notification centre and update bell badge; reveal the bell now that a session is active
+  _ncLoad();
+  _ncUpdateBell();
+  byId(IDS.notifBell).style.display = 'flex';
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
@@ -2834,6 +3050,16 @@ function confidenceLabel(battles) {
   if (battles < 3)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${battles} battles — fewer than 3, ranking not reliable yet` };
   if (battles < TARGET_BATTLES_PER_ANIME) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${battles} battles — ranking is stabilising` };
   return                                         { cls: 'confident', dot: '●', label: 'Confident', title: `${battles} battles — ranking is well established` };
+}
+
+function _coherenceLabel(group) {
+  if (!group.coherence) return null;
+  const map = {
+    consistent: { cls: 'coherence-consistent', icon: '✓', label: 'Consistent',     title: `ELO spread of ${group.eloRange} — you feel similarly about every entry` },
+    mixed:      { cls: 'coherence-mixed',      icon: '~', label: 'Mixed',           title: `ELO spread of ${group.eloRange} — some entries rank noticeably higher than others` },
+    divisive:   { cls: 'coherence-divisive',   icon: '⚡', label: 'Divisive',       title: `ELO spread of ${group.eloRange} — your opinions swing wildly across this franchise` },
+  };
+  return map[group.coherence] || null;
 }
 
 // ─── STREAKS ─────────────────────────────────────────────────────────────────
@@ -3300,8 +3526,11 @@ function resetAll() {
       localStorage.removeItem(KESSEN_KEYS.data.savedComparisons);
       localStorage.removeItem(KESSEN_KEYS.data.finishPrompts);
       localStorage.removeItem(KESSEN_KEYS.data.finishPromptedIds);
+      localStorage.removeItem(KESSEN_KEYS.data.notifCentre(saveKey));
       _finishPromptQueue = [];
+      _notifCentre = [];
       byId(IDS.finishPromptBanner)?.classList.remove('active');
+      _ncUpdateBell();
       // Remember who was logged in so we can re-trigger their list load
       // without asking them to sign in again. We capture BEFORE clearing
       // ranking state since saveKey / tokens may be touched downstream.
@@ -3410,6 +3639,10 @@ function _doChangeUser() {
   byId(IDS.progressInfo).textContent = '';
   byId(IDS.usernameInput).value = '';
   byId(IDS.kbFirstTip).style.display = 'none';
+  byId(IDS.notifBell).style.display = 'none';
+  closeNotifCentre();
+  _notifCentre = [];
+  _ncUpdateBell();
   showFlex('username-screen');
 }
 
@@ -4158,6 +4391,71 @@ async function _loadRecsGrid() {
 
 async function toggleRecommendations() { switchResultsTab('discover'); }
 
+// ─── SHARED FRIEND-LIST FETCH ─────────────────────────────────────────────────
+// runCompatibility and runFriendRecs both need the same friend's MediaListCollection.
+// Rather than two back-to-back AniList requests (which triggers CORS-preflight
+// rate limits → "Failed to fetch"), we fetch once and cache for 30 s so both
+// callers share the result within a single "Look up" flow.
+let _friendListCache = { username: null, platform: null, data: null, ts: 0 };
+const FRIEND_CACHE_TTL = 30_000; // 30 seconds
+
+async function _fetchFriendList(username) {
+  const now = Date.now();
+  if (
+    _friendListCache.username === username &&
+    _friendListCache.platform === _socialPlatform &&
+    _friendListCache.data &&
+    now - _friendListCache.ts < FRIEND_CACHE_TTL
+  ) {
+    return _friendListCache.data; // reuse — saves an AniList round-trip
+  }
+
+  const query = `
+    query ($username: String) {
+      MediaListCollection(userName: $username, type: ANIME) {
+        lists {
+          entries {
+            score status
+            media {
+              id idMal
+              title { romaji english }
+              coverImage { large medium }
+              averageScore genres format
+            }
+          }
+        }
+      }
+    }`;
+
+  const retryDelays = [1000, 2000, 3000];
+  let data;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { username } }),
+      });
+      if (res.status === 429) {
+        if (attempt === 2) throw new Error('AniList rate limit — please wait a moment and try again.');
+        await new Promise(r => setTimeout(r, retryDelays[attempt]));
+        continue;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      data = await res.json();
+      break;
+    } catch (err) {
+      if (attempt === 2) throw new Error(_anilistErrMsg(err));
+      await new Promise(r => setTimeout(r, retryDelays[attempt]));
+    }
+  }
+
+  if (data.errors) throw new Error(data.errors[0].message);
+
+  _friendListCache = { username, platform: _socialPlatform, data, ts: Date.now() };
+  return data;
+}
+
 // ─── COMPATIBILITY ────────────────────────────────────────────────────────────
 async function runCompatibility() {
   const username2 = byId(IDS.compatUsernameInput).value.trim();
@@ -4168,37 +4466,9 @@ async function runCompatibility() {
   resultsEl.innerHTML = '<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ' + username2 + '\'s list…</p>';
 
   try {
-    // Fetch other user's completed list
-    const query = `
-      query ($username: String) {
-        MediaListCollection(userName: $username, type: ANIME) {
-          lists {
-            entries {
-              score status
-              media { id title { romaji english } coverImage { medium } }
-            }
-          }
-        }
-      }`;
-    // Retry up to 2 times — the computer:// origin occasionally drops the first request
-    let data;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const res = await fetch('https://graphql.anilist.co', {
-          method: 'POST',
-          headers: anilistHeaders(),
-          body: JSON.stringify({ query, variables: { username: username2 } })
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        data = await res.json();
-        break; // success
-      } catch (fetchErr) {
-        if (attempt === 2) throw fetchErr;
-        resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Retrying…</p>`;
-        await new Promise(r => setTimeout(r, 800));
-      }
-    }
-    if (data.errors) throw new Error(data.errors[0].message);
+    // Use shared cache — avoids a second AniList round-trip when called right
+    // after runFriendRecs (or vice-versa) within the same "Look up" flow.
+    const data = await _fetchFriendList(username2);
 
     const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
     const otherEntries = data.data.MediaListCollection.lists
@@ -4319,23 +4589,44 @@ async function runCompatibility() {
         </div>
       </div>`;
 
-    // Save comparison to localStorage
-    const savedComps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.savedComparisons) || '[]');
+    // Save comparison to localStorage — maintain a history array so we can
+    // show taste-drift labels on subsequent runs.
+    const savedComps  = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.savedComparisons) || '[]');
     const existingIdx = savedComps.findIndex(c => c.username.toLowerCase() === username2.toLowerCase());
+    const prevEntry   = existingIdx >= 0 ? savedComps[existingIdx] : null;
+    const prevScore   = prevEntry?.score ?? null;
+    const prevHistory = prevEntry?.history ?? [];
+    const today       = new Date().toISOString().split('T')[0];
+    const delta       = prevScore !== null ? pct - prevScore : null;
     const entry = {
       username: username2,
       score: pct,
       label: labelFor(pct),
       emoji: emojiFor(pct),
-      date: new Date().toISOString().split('T')[0]
+      date: today,
+      history: [{ score: pct, date: today }, ...prevHistory].slice(0, 12),
     };
     if (existingIdx >= 0) savedComps[existingIdx] = entry;
     else savedComps.unshift(entry);
     localStorage.setItem(KESSEN_KEYS.data.savedComparisons, JSON.stringify(savedComps.slice(0, 10)));
+
+    // Inject delta into the result box now that we know it
+    const dLabel = _compatDeltaLabel(delta);
+    if (dLabel) {
+      const box = resultsEl.querySelector('.compat-score-box');
+      if (box) {
+        const dEl = document.createElement('div');
+        dEl.className = 'compat-delta';
+        dEl.style.color = dLabel.color;
+        dEl.textContent = `${dLabel.arrow} ${delta > 0 ? '+' : ''}${delta}% since last check · ${dLabel.text}`;
+        box.appendChild(dEl);
+      }
+    }
+
     _renderSavedComparisons();
 
   } catch (err) {
-    renderErrorInto(resultsEl, err.message, 'padding:16px 0');
+    renderErrorInto(resultsEl, _anilistErrMsg(err), 'padding:16px 0');
   }
 }
 
@@ -4451,18 +4742,50 @@ async function _runCompatibilityMal(username2) {
       </div>`;
 
     // Save comparison (with platform tag so re-run sets the right mode)
-    const savedComps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.savedComparisons) || '[]');
-    const storageKey = `${username2} [MAL]`;
+    const savedComps  = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.savedComparisons) || '[]');
+    const storageKey  = `${username2} [MAL]`;
     const existingIdx = savedComps.findIndex(c => c.username.toLowerCase() === storageKey.toLowerCase());
-    const entry = { username: storageKey, platform: 'mal', score: pct, label: labelFor(pct), emoji: emojiFor(pct), date: new Date().toISOString().split('T')[0] };
+    const prevEntry   = existingIdx >= 0 ? savedComps[existingIdx] : null;
+    const prevScore   = prevEntry?.score ?? null;
+    const prevHistory = prevEntry?.history ?? [];
+    const today       = new Date().toISOString().split('T')[0];
+    const delta       = prevScore !== null ? pct - prevScore : null;
+    const entry = { username: storageKey, platform: 'mal', score: pct, label: labelFor(pct), emoji: emojiFor(pct), date: today,
+      history: [{ score: pct, date: today }, ...prevHistory].slice(0, 12) };
     if (existingIdx >= 0) savedComps[existingIdx] = entry;
     else savedComps.unshift(entry);
     localStorage.setItem(KESSEN_KEYS.data.savedComparisons, JSON.stringify(savedComps.slice(0, 10)));
+
+    // Inject delta into the result box
+    const dLabel = _compatDeltaLabel(delta);
+    if (dLabel) {
+      const box = resultsEl.querySelector('.compat-score-box');
+      if (box) {
+        const dEl = document.createElement('div');
+        dEl.className = 'compat-delta';
+        dEl.style.color = dLabel.color;
+        dEl.textContent = `${dLabel.arrow} ${delta > 0 ? '+' : ''}${delta}% since last check · ${dLabel.text}`;
+        box.appendChild(dEl);
+      }
+    }
+
     _renderSavedComparisons();
 
   } catch (err) {
     renderErrorInto(resultsEl, err.message, 'padding:16px 0');
   }
+}
+
+// Returns an anime-flavoured label for a compatibility delta, or null if the
+// change is too small to be worth calling out (< 3 points).
+function _compatDeltaLabel(delta) {
+  if (delta === null || Math.abs(delta) < 3) return null;
+  if (delta >= 15) return { text: "Fusion arc! You're basically the same person now 🌀",    color: '#3fb950', arrow: '▲▲' };
+  if (delta >=  6) return { text: 'Friendship arc unlocked — your tastes are converging 🌸', color: '#3fb950', arrow: '▲'  };
+  if (delta >=  3) return { text: 'Slowly drifting closer 📈',                               color: '#3fb950', arrow: '↑'  };
+  if (delta <= -15) return { text: 'Forked at the source — totally different arcs 🔀',         color: '#f85149', arrow: '▼▼' };
+  if (delta <=  -6) return { text: "You've transferred to different schools 🏫",              color: '#f85149', arrow: '▼'  };
+  return                  { text: 'Your tastes are heading separate ways 📖',                 color: '#e3a000', arrow: '↓'  };
 }
 
 function _deleteComparison(username) {
@@ -4489,26 +4812,1389 @@ function _renderSavedComparisons() {
           ? `<span style="font-size:0.68rem;background:#2a4a6e;color:#79c0ff;border-radius:4px;padding:1px 5px;margin-left:4px">MAL</span>`
           : '';
         const escapedUsername = c.username.replace(/'/g, "\\'");
+        const hist      = c.history || [];
+        const prevScore = hist.length >= 2 ? hist[1].score : null;
+        const delta     = prevScore !== null ? c.score - prevScore : null;
+        const dLabel    = _compatDeltaLabel(delta);
+        const deltaHtml = dLabel
+          ? `<div class="scc-delta" style="color:${dLabel.color}">${dLabel.arrow} ${delta > 0 ? '+' : ''}${delta}% · ${dLabel.text}</div>`
+          : '';
         return `
         <div class="saved-comp-card">
           <span style="font-size:1.2rem">${c.emoji}</span>
-          <div>
+          <div style="min-width:0;flex:1">
             <div class="scc-name">${displayName}${platBadge}</div>
             <div class="scc-meta">${c.score}% · ${c.label} · ${c.date}</div>
+            ${deltaHtml}
           </div>
           <button class="btn-small" onclick="_rerunComparison('${escapedUsername}','${platform}')">Re-run</button>
+          <button class="btn-small challenge-pill-btn" onclick="openChallengeMode('${escapedUsername}','${platform}')" title="Challenge mode">🎮</button>
           <button class="btn-small" onclick="_deleteComparison('${escapedUsername}')" aria-label="Remove saved comparison">×</button>
         </div>`;
       }).join('')}
     </div>`;
 }
 
-function _rerunComparison(username, platform) {
+// ─── CHALLENGE MODE ───────────────────────────────────────────────────────────
+let _challengeState = null;
+
+async function openChallengeMode(username, platform) {
+  const modal = byId(IDS.challengeModal);
+  modal.style.display = 'flex';
+  const displayName = username.replace(/ \[MAL\]$/i, '');
+  byId(IDS.challengeLoading).style.display = 'block';
+  byId(IDS.challengeLoading).innerHTML =
+    `<p style="color:#8b949e;text-align:center;padding:32px 0">⏳ Loading ${esc(displayName)}'s rankings…</p>`;
+  byId(IDS.challengeGame).style.display = 'none';
+  byId(IDS.challengeEnd).style.display  = 'none';
+
+  try {
+    // Map<id, {rank, score}> — rank 1 = their top pick; score kept so we can
+    // discard tied pairs (same score = no genuine preference signal).
+    let friendRankMap;
+
+    if (platform === 'mal') {
+      const entries = await _fetchMalUserList(displayName, null);
+      const sorted  = [...entries].sort((a, b) => (b.score || 0) - (a.score || 0));
+      friendRankMap = new Map(sorted.map((e, i) => [e.malId, { rank: i + 1, score: e.score || 0 }]));
+    } else {
+      // AniList — same query as compatibility, minus the cover/title (we have those locally)
+      const query = `
+        query ($username: String) {
+          MediaListCollection(userName: $username, type: ANIME) {
+            lists { entries { score status media { id } } }
+          }
+        }`;
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST', headers: anilistHeaders(),
+        body: JSON.stringify({ query, variables: { username } })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.errors) throw new Error(data.errors[0].message);
+      const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
+      const entries = data.data.MediaListCollection.lists
+        .flatMap(l => l.entries).filter(e => WATCHED.has(e.status));
+      const sorted  = [...entries].sort((a, b) => (b.score || 0) - (a.score || 0));
+      friendRankMap = new Map(sorted.map((e, i) => [e.media.id, { rank: i + 1, score: e.score || 0 }]));
+    }
+
+    const { pairs, mutualCount, reason } = _buildChallengePairs(friendRankMap, platform);
+
+    if (reason !== 'ok') {
+      const msg = reason === 'no_overlap'
+        ? `You've only got ${mutualCount} anime in common — need at least 10 to play. Try running a compatibility check first to see your overlap.`
+        : `${esc(displayName)} hasn't scored enough shows differently to make a fair game. Challenge mode needs clear preferences to work — if they rate everything the same score it can't tell what they actually prefer.`;
+      byId(IDS.challengeLoading).innerHTML = `
+        <p style="color:#8b949e;text-align:center;padding:24px 16px">${msg}</p>
+        <div style="text-align:center;margin-top:12px">
+          <button class="btn-secondary" onclick="closeChallengeModal()">Close</button>
+        </div>`;
+      return;
+    }
+
+    _challengeState = { username, platform, displayName, pairs, current: 0, score: 0, answers: [] };
+    byId(IDS.challengeLoading).style.display = 'none';
+    byId(IDS.challengeGame).style.display    = 'block';
+    byId(IDS.challengeFriendName).textContent = displayName;
+    _challengeRenderPair();
+
+  } catch (err) {
+    byId(IDS.challengeLoading).innerHTML = `
+      <p style="color:#f85149;text-align:center;padding:24px 0">Error: ${esc(err.message)}</p>
+      <div style="text-align:center;margin-top:12px">
+        <button class="btn-secondary" onclick="closeChallengeModal()">Close</button>
+      </div>`;
+  }
+}
+
+function _buildChallengePairs(friendRankMap, platform) {
+  const mutual = platform === 'mal'
+    ? animeList.filter(a => a.idMal && friendRankMap.has(a.idMal))
+    : animeList.filter(a => friendRankMap.has(a.id));
+
+  if (mutual.length < 10) return { pairs: [], mutualCount: mutual.length, reason: 'no_overlap' };
+
+  const withRank = mutual.map(a => {
+    const entry = platform === 'mal' ? friendRankMap.get(a.idMal) : friendRankMap.get(a.id);
+    return { anime: a, friendRank: entry.rank, friendScore: entry.score };
+  });
+
+  const n = withRank.length;
+  // Sample up to 60 entries to keep pair generation fast (still gives 1770 candidate pairs)
+  const pool = [...withRank].sort(() => Math.random() - 0.5).slice(0, 60);
+
+  const buckets = { hard: [], medium: [], easy: [] };
+  for (let i = 0; i < pool.length; i++) {
+    for (let j = i + 1; j < pool.length; j++) {
+      const a = pool[i], b = pool[j];
+      // Skip pairs where the friend scored both shows identically — no genuine preference
+      if (a.friendScore === b.friendScore) continue;
+      const gap    = Math.abs(a.friendRank - b.friendRank);
+      const pctGap = gap / n;
+      const pair   = {
+        cardA:       a.anime,
+        cardB:       b.anime,
+        aFriendRank: a.friendRank,
+        bFriendRank: b.friendRank,
+        correct:     a.friendRank < b.friendRank ? 'a' : 'b',
+        tight:       pctGap < 0.15,
+      };
+      if      (pctGap < 0.15) buckets.hard.push(pair);
+      else if (pctGap < 0.35) buckets.medium.push(pair);
+      else                    buckets.easy.push(pair);
+    }
+  }
+
+  const shuffle = arr => arr.sort(() => Math.random() - 0.5);
+  // Target mix: 2 hard (2pts each), 5 medium (1pt), 3 easy (1pt)
+  let selected = [
+    ...shuffle(buckets.hard).slice(0, 2),
+    ...shuffle(buckets.medium).slice(0, 5),
+    ...shuffle(buckets.easy).slice(0, 3),
+  ];
+  // Top up to 10 if any tier was short
+  if (selected.length < 10) {
+    const usedSet = new Set(selected);
+    const extras  = shuffle([...buckets.hard, ...buckets.medium, ...buckets.easy]
+      .filter(p => !usedSet.has(p)));
+    selected = [...selected, ...extras].slice(0, 10);
+  }
+  const finalPairs = shuffle(selected);
+  return {
+    pairs:       finalPairs,
+    mutualCount: mutual.length,
+    reason:      finalPairs.length < 5 ? 'too_many_ties' : 'ok',
+  };
+}
+
+function _challengeRenderPair() {
+  const state = _challengeState;
+  const pair  = state.pairs[state.current];
+  const total = state.pairs.length;
+
+  byId(IDS.challengeProgress).textContent  = `Round ${state.current + 1} of ${total}`;
+  byId(IDS.challengeScoreLive).textContent = `${state.score} pts`;
+  byId(IDS.challengeReveal).style.display  = 'none';
+  byId(IDS.challengeNextBtn).textContent   = state.current + 1 < total ? 'Next →' : 'See Results →';
+
+  const badge = byId(IDS.challengeDiffBadge);
+  badge.textContent = pair.tight ? '🔥 Tight call — worth 2 pts' : '';
+  badge.style.color = '#f85149';
+
+  const renderCard = (elId, anime) => {
+    const el        = byId(elId);
+    el.className    = 'challenge-card';
+    el.disabled     = false;
+    el.innerHTML    = `
+      <img src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" />
+      <div class="challenge-card-title">${esc(anime.title)}</div>
+      <div class="challenge-card-elo">Your ELO ${Math.round(anime.elo)}</div>`;
+  };
+  renderCard(IDS.challengeCardA, pair.cardA);
+  renderCard(IDS.challengeCardB, pair.cardB);
+}
+
+function challengeAnswer(side) {
+  const state = _challengeState;
+  if (!state || byId(IDS.challengeCardA).disabled) return;
+  const pair = state.pairs[state.current];
+
+  byId(IDS.challengeCardA).disabled = true;
+  byId(IDS.challengeCardB).disabled = true;
+
+  const correct = side === pair.correct;
+  const pts     = correct ? (pair.tight ? 2 : 1) : 0;
+  state.score  += pts;
+  state.answers.push({ pair, chosen: side, correct, pts });
+
+  byId(pair.correct === 'a' ? IDS.challengeCardA : IDS.challengeCardB).classList.add('challenge-correct');
+  if (!correct) byId(side === 'a' ? IDS.challengeCardA : IDS.challengeCardB).classList.add('challenge-wrong');
+
+  const higherAnime = pair.correct === 'a' ? pair.cardA : pair.cardB;
+  const lowerAnime  = pair.correct === 'a' ? pair.cardB : pair.cardA;
+  const hi = Math.min(pair.aFriendRank, pair.bFriendRank);
+  const lo = Math.max(pair.aFriendRank, pair.bFriendRank);
+
+  byId(IDS.challengeRevealText).innerHTML = correct
+    ? `<span class="ch-correct-msg">✓ Correct${pair.tight ? ' +2 pts!' : ''}</span>
+       ${esc(state.displayName)} had <strong>${esc(higherAnime.title)}</strong> at #${hi}
+       and <strong>${esc(lowerAnime.title)}</strong> at #${lo}`
+    : `<span class="ch-wrong-msg">✗ Wrong</span>
+       They actually preferred <strong>${esc(higherAnime.title)}</strong> — #${hi} vs #${lo}`;
+  byId(IDS.challengeReveal).style.display = 'block';
+  byId(IDS.challengeScoreLive).textContent = `${state.score} pts`;
+}
+
+function challengeNext() {
+  const state = _challengeState;
+  if (!state) return;
+  state.current++;
+  if (state.current >= state.pairs.length) _challengeShowEnd();
+  else _challengeRenderPair();
+}
+
+function _challengeShowEnd() {
+  byId(IDS.challengeGame).style.display = 'none';
+  byId(IDS.challengeEnd).style.display  = 'block';
+
+  const state   = _challengeState;
+  const correct = state.answers.filter(a => a.correct).length;
+  const total   = state.answers.length;
+  const maxPts  = state.answers.reduce((s, a) => s + (a.pair.tight ? 2 : 1), 0);
+  const pct     = Math.round((correct / total) * 100);
+
+  const label = pct >= 90 ? "You've been watching their watchlist 👀"
+              : pct >= 70 ? "You know them well 🎯"
+              : pct >= 50 ? "You think you know them 🤔"
+              :             "Have you actually met? 😅";
+
+  byId(IDS.challengeEndScore).innerHTML = `
+    <div class="ch-end-score">${correct} <span style="font-size:1.2rem;color:#8b949e">/ ${total}</span></div>
+    <div class="ch-end-pts">${state.score} / ${maxPts} pts</div>
+    <div class="ch-end-label">${esc(label)}</div>
+    <p style="font-size:0.78rem;color:#8b949e;margin:6px 0 0">Guessing ${esc(state.displayName)}'s rankings</p>`;
+
+  byId(IDS.challengeBreakdown).innerHTML = state.answers.map(a => {
+    const hi = Math.min(a.pair.aFriendRank, a.pair.bFriendRank);
+    const lo = Math.max(a.pair.aFriendRank, a.pair.bFriendRank);
+    const winner = a.pair.correct === 'a' ? a.pair.cardA : a.pair.cardB;
+    const loser  = a.pair.correct === 'a' ? a.pair.cardB : a.pair.cardA;
+    return `<div class="ch-breakdown-item ${a.correct ? 'ch-b-correct' : 'ch-b-wrong'}">
+      <span class="ch-b-icon">${a.correct ? '✓' : '✗'}</span>
+      <span class="ch-b-text">
+        <span class="ch-b-winner">${esc(winner.title)}</span>
+        <span class="ch-b-ranks">#${hi} › #${lo}</span>
+        <span class="ch-b-loser">${esc(loser.title)}</span>
+      </span>
+      <span class="ch-b-pts">${a.pts > 0 ? '+' + a.pts : '—'}</span>
+    </div>`;
+  }).join('');
+}
+
+function closeChallengeModal() {
+  byId(IDS.challengeModal).style.display = 'none';
+  _challengeState = null;
+}
+
+// ─── COLLABORATIVE "WATCH TOGETHER" MODE ──────────────────────────────────────
+// Firebase config — fill in your project details to enable multi-device mode.
+// Get these from: Firebase Console → Project Settings → Your apps → SDK snippet.
+// Single-device mode works without any Firebase configuration.
+const _FIREBASE_CONFIG = {
+  apiKey:            'AIzaSyCiwTSipP89Q3XWO4hXHAH-5GtCH-NcksE',
+  authDomain:        'kessen-95631.firebaseapp.com',
+  databaseURL:       'https://kessen-95631-default-rtdb.europe-west1.firebasedatabase.app',
+  projectId:         'kessen-95631',
+  storageBucket:     'kessen-95631.firebasestorage.app',
+  messagingSenderId: '1092517113834',
+  appId:             '1:1092517113834:web:db20628a6f9eb99f8a0c93',
+};
+const _FIREBASE_READY = !!(_FIREBASE_CONFIG.apiKey && _FIREBASE_CONFIG.databaseURL);
+let _firebaseApp = null;
+
+function _initFirebase() {
+  if (_firebaseApp || !_FIREBASE_READY) return;
+  try { _firebaseApp = firebase.initializeApp(_FIREBASE_CONFIG); } catch (e) { /* already initialised */ }
+}
+
+let _collab = null;
+
+const _COLLAB_PANELS = [
+  'collabPanelMode', 'collabPanelSetup', 'collabPanelMultiSetup',
+  'collabPanelMultiLobby', 'collabPanelNominate', 'collabPanelRounds',
+  'collabPanelPass', 'collabPanelVote', 'collabPanelResults',
+];
+
+function _collabGeneratePlayerId() {
+  return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// ── SESSION STORAGE (for rejoin) ──────────────────────────────────────────────
+function _collabSaveSession() {
+  try {
+    sessionStorage.setItem('kessen-collab', JSON.stringify({
+      code:     _collab.sessionCode,
+      playerId: _collab.myPlayerId,
+      name:     _collab.myName,
+    }));
+  } catch {}
+}
+
+function _collabClearSession() {
+  try { sessionStorage.removeItem('kessen-collab'); } catch {}
+}
+
+function _collabGetStoredSession() {
+  try { return JSON.parse(sessionStorage.getItem('kessen-collab')); } catch { return null; }
+}
+
+function openCollabMode() {
+  if (_collab?.unsubscribe) _collab.unsubscribe();
+  _collab = {
+    mode: null,
+    // Single-device fields
+    p1Name: 'Player 1', p2Name: 'Player 2',
+    nominees: [[], []],
+    currentNominator: 0,
+    // Multi-device fields
+    myPlayerId: _collabGeneratePlayerId(),
+    myName: '',
+    isHost: false,
+    players: {},
+    myNominees: [],
+    sessionCode: null,
+    firebaseRef: null,
+    unsubscribe: null,
+    presenceUnsub: null,
+    // Shared voting state
+    pool: [], pairs: [], currentPair: 0,
+    votingPhase: 'p1', currentVote: {}, tieCount: 0, battles: [],
+  };
+  byId(IDS.collabModal).style.display = 'flex';
+  _collabPanel(IDS.collabPanelMode);
+
+  const multiBtn  = document.getElementById('collab-mode-multi-btn');
+  const multiNote = document.getElementById('collab-multi-note');
+  if (multiBtn)  multiBtn.style.display  = _FIREBASE_READY ? '' : 'none';
+  if (multiNote) multiNote.style.display = _FIREBASE_READY ? 'none' : '';
+
+  // Show rejoin banner if there's a saved session
+  _collabCheckRejoinBanner();
+}
+
+function closeCollabModal() {
+  if (_collab?.presenceUnsub) _collab.presenceUnsub();
+  if (_collab?.unsubscribe)   _collab.unsubscribe();
+  _collabClearSession(); // session ended intentionally — don't offer rejoin
+  byId(IDS.collabModal).style.display = 'none';
+  _collab = null;
+}
+
+// ── PRESENCE ──────────────────────────────────────────────────────────────────
+function _collabSetupPresence(ref, pid) {
+  const connRef = firebase.database().ref('.info/connected');
+  const handler = snap => {
+    if (!snap.val()) return;
+    ref.child(`players/${pid}/connected`).set(true);
+    ref.child(`players/${pid}/connected`).onDisconnect().set(false);
+  };
+  connRef.on('value', handler);
+  if (_collab) _collab.presenceUnsub = () => connRef.off('value', handler);
+}
+
+// ── REJOIN BANNER ─────────────────────────────────────────────────────────────
+function _collabCheckRejoinBanner() {
+  if (!_FIREBASE_READY) return;
+  const stored = _collabGetStoredSession();
+  const banner = document.getElementById('collab-rejoin-banner');
+  if (!stored || !banner) return;
+  document.getElementById('collab-rejoin-desc').textContent =
+    `Session ${stored.code} · playing as ${stored.name}`;
+  banner.style.display = '';
+}
+
+function collabDismissRejoin() {
+  _collabClearSession();
+  const banner = document.getElementById('collab-rejoin-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+async function collabRejoinSession() {
+  const stored = _collabGetStoredSession();
+  if (!stored) return;
+  _initFirebase();
+
+  const btn = document.querySelector('#collab-rejoin-banner .collab-rejoin-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Rejoining…'; }
+
+  try {
+    const ref  = firebase.database().ref('collab-sessions/' + stored.code);
+    const snap = await ref.once('value');
+
+    if (!snap.exists() || !snap.val().players?.[stored.playerId]) {
+      // Session gone or player no longer in it
+      _collabClearSession();
+      if (btn) { btn.disabled = false; btn.textContent = 'Rejoin'; }
+      document.getElementById('collab-rejoin-desc').textContent =
+        'Session has ended — please start a new one.';
+      return;
+    }
+
+    const data = snap.val();
+    _collab.myPlayerId  = stored.playerId;
+    _collab.myName      = stored.name;
+    _collab.mode        = 'multi';
+    _collab.sessionCode = stored.code;
+    _collab.firebaseRef = ref;
+    _collab.players     = data.players || {};
+    _collab.isHost      = data.hostId === stored.playerId;
+
+    _collabSetupPresence(ref, stored.playerId);
+    _collabSaveSession();
+    _collabListenToSession(ref);
+
+    // Sync to whatever phase the session is currently in
+    _collabSyncFromFirebase(data);
+
+  } catch (err) {
+    console.error('collabRejoinSession error:', err);
+    if (btn) { btn.disabled = false; btn.textContent = 'Rejoin'; }
+  }
+}
+
+// ── HOST PROMOTION ────────────────────────────────────────────────────────────
+function _collabMaybePromoteHost(data) {
+  const hostId       = data.hostId;
+  const hostPlayer   = data.players?.[hostId];
+  const hostOnline   = hostPlayer?.connected !== false;
+  if (hostOnline) return; // host is fine
+
+  // Host is disconnected — promote the first connected player (by pid sort order)
+  const connected = Object.entries(data.players || {})
+    .filter(([, p]) => p.connected !== false)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  if (!connected.length) return;
+  const [newHostId] = connected[0];
+  if (newHostId !== _collab.myPlayerId) return; // not our turn to promote
+
+  // We are being promoted — write the new hostId once
+  _collab.isHost = true;
+  _collab.firebaseRef.update({ hostId: _collab.myPlayerId });
+}
+
+function _collabPanel(idConstant) {
+  _COLLAB_PANELS.forEach(k => {
+    const el = byId(IDS[k]);
+    if (el) el.style.display = 'none';
+  });
+  const el = byId(idConstant);
+  if (el) el.style.display = 'block';
+}
+
+// ── MODE SELECTION ────────────────────────────────────────────────────────────
+function collabChooseMode(mode) {
+  _collab.mode = mode;
+  _collabPanel(mode === 'single' ? IDS.collabPanelSetup : IDS.collabPanelMultiSetup);
+}
+
+// ── SINGLE DEVICE SETUP ───────────────────────────────────────────────────────
+function collabStartSingle() {
+  _collab.p1Name = byId(IDS.collabP1Name).value.trim() || 'Player 1';
+  _collab.p2Name = byId(IDS.collabP2Name).value.trim() || 'Player 2';
+  _collab.currentNominator = 0;
+  _collabShowNominatePanel();
+}
+
+// ── MULTI DEVICE SETUP ────────────────────────────────────────────────────────
+function collabMultiShowRole(role) {
+  document.getElementById('collab-multi-create').style.display = role === 'host'  ? 'block' : 'none';
+  document.getElementById('collab-multi-join').style.display   = role === 'guest' ? 'block' : 'none';
+}
+
+async function collabCreateSession() {
+  _initFirebase();
+  if (!_FIREBASE_READY) return;
+  const btn = document.getElementById('collab-multi-create')?.querySelector('button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+
+  try {
+    const name = byId(IDS.collabMultiName).value.trim() || 'Host';
+    const code = _collabGenerateCode();
+    _collab.isHost      = true;
+    _collab.myName      = name;
+    _collab.sessionCode = code;
+
+    const pid = _collab.myPlayerId;
+    const initialData = {
+      phase: 'lobby',
+      hostId: pid,
+      players: { [pid]: { name, nominations: null, ready: false } },
+      pairs: null, currentPair: 0,
+      votes: null,
+      results: null,
+      createdAt: Date.now(),
+    };
+
+    const ref = firebase.database().ref('collab-sessions/' + code);
+    await ref.set(initialData);
+    ref.child('createdAt').onDisconnect().remove();
+
+    _collab.firebaseRef = ref;
+    _collab.players     = { [pid]: { name, nominations: [], ready: false } };
+
+    // Show the lobby panel and render the player list immediately (don't wait for Firebase sync)
+    byId(IDS.collabLobbyCode).textContent = code;
+    _collabPanel(IDS.collabPanelMultiLobby);
+    _collabRenderLobby({ phase: 'lobby', hostId: pid, players: _collab.players });
+
+    // Set up presence and save session for rejoin
+    _collabSetupPresence(ref, pid);
+    _collabSaveSession();
+
+    // Then start listening for other players
+    _collabListenToSession(ref);
+  } catch (err) {
+    console.error('collabCreateSession error:', err);
+    if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
+    alert('Could not create session — check your connection and try again.\n\n' + err.message);
+  }
+}
+
+async function collabJoinSession() {
+  _initFirebase();
+  if (!_FIREBASE_READY) return;
+  const code = (byId(IDS.collabJoinInput).value || '').trim().toUpperCase();
+  const name = byId(IDS.collabMultiName).value.trim() || 'Guest';
+  if (code.length !== 6) return;
+
+  const ref  = firebase.database().ref('collab-sessions/' + code);
+  const snap = await ref.once('value');
+  if (!snap.exists()) {
+    byId(IDS.collabJoinInput).style.borderColor = '#f85149';
+    byId(IDS.collabJoinInput).placeholder = 'Code not found — check and try again';
+    return;
+  }
+  const data = snap.val();
+  if (data.phase !== 'lobby') {
+    byId(IDS.collabJoinInput).style.borderColor = '#f85149';
+    byId(IDS.collabJoinInput).placeholder = 'Session already started — too late to join';
+    return;
+  }
+
+  const pid = _collab.myPlayerId;
+  _collab.isHost  = false;
+  _collab.myName  = name;
+  _collab.sessionCode = code;
+  _collab.firebaseRef = ref;
+
+  await ref.update({ [`players/${pid}`]: { name, nominations: null, ready: false } });
+
+  // Snapshot the full player list for immediate local render
+  const freshSnap = await ref.child('players').once('value');
+  _collab.players = freshSnap.val() || {};
+
+  _collabSetupPresence(ref, pid);
+  _collabSaveSession();
+
+  _collabPanel(IDS.collabPanelMultiLobby);
+  byId(IDS.collabLobbyCode).textContent = code;
+  _collabRenderLobby({ phase: 'lobby', hostId: data.hostId, players: _collab.players });
+
+  _collabListenToSession(ref);
+}
+
+function _collabGenerateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function _collabListenToSession(ref) {
+  const handler = snap => {
+    const data = snap.val();
+    if (!data || !_collab) return;
+    _collabSyncFromFirebase(data);
+  };
+  ref.on('value', handler);
+  _collab.unsubscribe = () => ref.off('value', handler);
+}
+
+function collabHostStartNominations() {
+  if (!_collab?.isHost || !_collab.firebaseRef) return;
+  const playerCount = Object.keys(_collab.players || {}).length;
+  if (playerCount < 2) return; // need at least 2
+  _collab.firebaseRef.update({ phase: 'nominating' });
+}
+
+function _collabRenderLobby(data) {
+  const players   = data.players || {};
+  const playerArr = Object.entries(players);
+  const connectedArr = playerArr.filter(([, p]) => p.connected !== false);
+  const listEl    = byId(IDS.collabPlayerList);
+  if (listEl) {
+    listEl.innerHTML = playerArr.map(([pid, p]) => {
+      const isMe      = pid === _collab.myPlayerId;
+      const isH       = pid === data.hostId;
+      const isOffline = p.connected === false;
+      return `<div class="collab-lobby-player ${isOffline ? 'collab-lobby-disconnected' : ''}">
+        <span class="collab-lobby-avatar">${(p.name || '?')[0].toUpperCase()}</span>
+        <span class="collab-lobby-name">
+          ${esc(p.name)}${isMe ? ' <em>(you)</em>' : ''}${isH ? ' 👑' : ''}
+          ${isOffline ? '<span class="collab-disconnected-badge">disconnected</span>' : ''}
+        </span>
+      </div>`;
+    }).join('');
+  }
+  const startBtn    = byId(IDS.collabStartNomsBtn);
+  const guestStatus = byId(IDS.collabLobbyGuestStatus);
+  if (_collab.isHost) {
+    if (startBtn) {
+      startBtn.style.display = '';
+      startBtn.disabled = connectedArr.length < 2;
+      startBtn.textContent = connectedArr.length < 2
+        ? 'Waiting for at least one more player…'
+        : `Everyone's in (${connectedArr.length} players) — start nominations →`;
+    }
+    if (guestStatus) guestStatus.style.display = 'none';
+  } else {
+    if (startBtn)    startBtn.style.display    = 'none';
+    if (guestStatus) guestStatus.style.display = '';
+  }
+}
+
+function _collabSyncFromFirebase(data) {
+  if (!_collab) return;
+  // Always update local players mirror and check for host promotion
+  _collab.players = data.players || {};
+  // Update isHost in case we were promoted
+  if (data.hostId === _collab.myPlayerId) _collab.isHost = true;
+
+  if (data.phase === 'lobby') {
+    _collabRenderLobby(data);
+    _collabMaybePromoteHost(data);
+  }
+
+  if (data.phase === 'nominating') {
+    _collabMaybePromoteHost(data);
+    const myPanel = byId(IDS.collabPanelNominate);
+    if (!myPanel || myPanel.style.display === 'none') {
+      _collabPanel(IDS.collabPanelNominate);
+      _collabRefreshNominatePanel();
+    }
+    // Show other players' nomination progress (connected players only)
+    const pid = _collab.myPlayerId;
+    const others = Object.entries(data.players || {}).filter(([id]) => id !== pid);
+    const friendEl = byId('collab-friend-nom-count');
+    if (friendEl && others.length) {
+      friendEl.innerHTML = others.map(([, p]) => {
+        const n          = (p.nominations || []).length;
+        const isOffline  = p.connected === false;
+        const statusIcon = isOffline ? ' 🔌' : p.ready ? ' ✓' : '';
+        return `<span class="collab-friend-pill ${isOffline ? 'collab-pill-offline' : ''}">${esc(p.name)}: ${n} show${n !== 1 ? 's' : ''}${statusIcon}</span>`;
+      }).join('');
+      friendEl.style.display = '';
+    }
+    // All connected players ready → host starts round picker
+    const connectedPlayers = Object.values(data.players || {}).filter(p => p.connected !== false);
+    const allReady = connectedPlayers.length >= 2 && connectedPlayers.every(p => p.ready);
+    if (allReady && _collab.isHost) {
+      _collab.nominees = Object.values(data.players || {})
+        .filter(p => p.connected !== false)
+        .map(p => p.nominations || []);
+      _collabStartVoting();
+    }
+  }
+
+  if (data.phase === 'voting') {
+    _collab.pairs       = data.pairs       || [];
+    _collab.currentPair = data.currentPair || 0;
+    const votePanel = byId(IDS.collabPanelVote);
+    if (!votePanel || votePanel.style.display === 'none') _collabPanel(IDS.collabPanelVote);
+    _collabRenderVotePairMulti(data);
+  }
+
+  if (data.phase === 'results') {
+    _collab.battles = data.results || [];
+    // Rebuild pool from player nominations if not set
+    if (!_collab.pool?.length) {
+      const seen = new Set();
+      _collab.pool = [];
+      Object.values(data.players || {}).forEach(p => {
+        (p.nominations || []).forEach(n => {
+          if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); _collab.pool.push(n); }
+        });
+      });
+    }
+    _collabPanel(IDS.collabPanelResults);
+    _collabRenderResults();
+  }
+}
+
+// Helper: get this player's local nomination array
+function _collabMyNoms() {
+  if (_collab.mode === 'single') return _collab.nominees[_collab.currentNominator];
+  return _collab.myNominees;
+}
+
+// ── NOMINATIONS ───────────────────────────────────────────────────────────────
+function _collabShowNominatePanel() {
+  _collabPanel(IDS.collabPanelNominate);
+  _collabRefreshNominatePanel();
+  byId(IDS.collabSearch).value = '';
+  byId(IDS.collabSearchResults).innerHTML = '';
+}
+
+function _collabRefreshNominatePanel() {
+  if (_collab.mode === 'single') {
+    const name = _collab.currentNominator === 0 ? _collab.p1Name : _collab.p2Name;
+    byId(IDS.collabNominateTitle).textContent = `${name} — nominate up to 5 shows`;
+  } else {
+    byId(IDS.collabNominateTitle).textContent = `${_collab.myName || 'You'} — nominate up to 5 shows`;
+  }
+  _collabRenderNominations();
+  // Hide friend count in single mode
+  const friendEl = byId('collab-friend-nom-count');
+  if (friendEl) friendEl.style.display = _collab.mode === 'multi' ? '' : 'none';
+}
+
+// Cached search results — avoids passing strings through inline onclick attributes
+let _collabSearchCache = [];
+let _collabSearchDebounce = null;
+let _collabSearchSeq = 0; // prevents stale AniList responses overwriting newer results
+
+// Returns a Map of { titleLower → playerName } for every show already nominated
+// by OTHER players (not the current nominator).
+function _collabOthersNomMap() {
+  const map = new Map();
+  const myNomSet = new Set(_collabMyNoms().map(n => n.title.toLowerCase()));
+
+  if (_collab.mode === 'multi') {
+    const myPid = _collab.myPlayerId;
+    Object.entries(_collab.players || {}).forEach(([pid, p]) => {
+      if (pid === myPid) return;
+      (p.nominations || []).forEach(n => {
+        const key = n.title.toLowerCase();
+        if (!myNomSet.has(key)) map.set(key, p.name || 'Someone');
+      });
+    });
+  } else {
+    // Single device: other nominator's list
+    const otherIdx = _collab.currentNominator === 0 ? 1 : 0;
+    (_collab.nominees[otherIdx] || []).forEach(n => {
+      const key = n.title.toLowerCase();
+      if (!myNomSet.has(key)) map.set(key, otherIdx === 0 ? _collab.p1Name : _collab.p2Name);
+    });
+  }
+  return map;
+}
+
+function collabSearch() {
+  const raw = byId(IDS.collabSearch).value.trim();
+  const q   = raw.toLowerCase();
+  const res = byId(IDS.collabSearchResults);
+  clearTimeout(_collabSearchDebounce);
+
+  if (!q) { res.innerHTML = ''; _collabSearchCache = []; _collabSearchSeq++; return; }
+
+  const already   = new Set(_collabMyNoms().map(n => n.title.toLowerCase()));
+  const takenBy   = _collabOthersNomMap(); // titleLower → playerName
+
+  // ── 1. Instant local results ──────────────────────────────────────────────
+  const localMatches = animeList
+    .filter(a => (a.title || '').toLowerCase().includes(q) || (a.titleEn || '').toLowerCase().includes(q))
+    .slice(0, 5);
+
+  _collabSearchCache = localMatches.map(a => ({ title: a.title, cover: a.cover || '', id: a.id, local: true }));
+
+  _collabRenderSearchRows(res, raw, already, takenBy, /* anilistLoading */ true);
+
+  // ── 2. AniList lookup after debounce ─────────────────────────────────────
+  const seq = ++_collabSearchSeq;
+  _collabSearchDebounce = setTimeout(async () => {
+    const gqlQuery = `
+      query($search: String) {
+        Page(perPage: 8) {
+          media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+            id title { romaji english } coverImage { medium }
+          }
+        }
+      }`;
+    try {
+      const resp = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify({ query: gqlQuery, variables: { search: raw } }),
+      });
+      if (seq !== _collabSearchSeq) return;
+      const json  = await resp.json();
+      const items = json?.data?.Page?.media ?? [];
+
+      const localTitles = new Set(_collabSearchCache.map(c => c.title.toLowerCase()));
+      for (const m of items) {
+        const title = m.title.english || m.title.romaji;
+        if (!title || localTitles.has(title.toLowerCase())) continue;
+        _collabSearchCache.push({ title, cover: m.coverImage?.medium || '', id: m.id, local: false });
+        localTitles.add(title.toLowerCase());
+      }
+    } catch { /* network error — just show local results */ }
+
+    if (seq !== _collabSearchSeq) return;
+    _collabRenderSearchRows(res, raw, already, takenBy, /* anilistLoading */ false);
+  }, 350);
+}
+
+function _collabRenderSearchRows(res, raw, already, takenBy, anilistLoading) {
+  const rows = _collabSearchCache.map((item, idx) => {
+    const titleLower = item.title.toLowerCase();
+    const addedByMe  = already.has(titleLower);
+    const takenName  = takenBy?.get(titleLower);   // name of player who picked it, or undefined
+    const blocked    = addedByMe || !!takenName;
+    const sourceBadge = item.local ? '' : '<span class="collab-search-source">AniList</span>';
+
+    let statusBadge = '';
+    if (addedByMe)  statusBadge = '<span class="collab-added-badge">✓ Added</span>';
+    else if (takenName) statusBadge = `<span class="collab-taken-badge">📌 ${esc(takenName)}</span>`;
+
+    return `<div class="collab-search-item ${blocked ? 'collab-search-added' : ''}"
+      onclick="${blocked ? '' : `collabPickFromSearch(${idx})`}">
+      ${item.cover ? `<img src="${safeUrl(item.cover)}" alt="" />` : '<div class="collab-search-no-cover">🎬</div>'}
+      <span class="collab-search-name">${esc(item.title)}</span>
+      ${sourceBadge}
+      ${statusBadge}
+    </div>`;
+  });
+
+  if (anilistLoading) {
+    rows.push(`<div class="collab-search-loading">🔍 Searching AniList…</div>`);
+  }
+
+  // Manual add — only if not already in pool by anyone
+  const rawLower = raw.toLowerCase();
+  const inCache  = _collabSearchCache.some(c => c.title.toLowerCase() === rawLower);
+  const blocked  = already.has(rawLower) || takenBy?.has(rawLower);
+  if (!inCache && !blocked) {
+    const manualIdx = _collabSearchCache.length;
+    _collabSearchCache.push({ title: raw, cover: '', id: null, local: true });
+    rows.push(`<div class="collab-search-item collab-search-manual"
+      onclick="collabPickFromSearch(${manualIdx})">
+      <span style="font-size:1.2rem">➕</span>
+      <span class="collab-search-name">Add "${esc(raw)}" as custom show</span>
+    </div>`);
+  }
+
+  res.innerHTML = rows.length
+    ? rows.join('')
+    : `<div class="collab-search-empty">No matches found</div>`;
+}
+
+function collabPickFromSearch(idx) {
+  const item = _collabSearchCache[idx];
+  if (item) collabAddNomination(item.title, item.cover, item.id);
+}
+
+function collabAddNomination(title, cover, id) {
+  const noms = _collabMyNoms();
+  if (noms.length >= 5) return;
+  if (noms.some(n => n.title.toLowerCase() === title.toLowerCase())) return;
+  noms.push({ title, cover: cover || '', id: id || null });
+  _collabRenderNominations();
+  byId(IDS.collabSearch).value = '';
+  byId(IDS.collabSearchResults).innerHTML = '';
+  // Sync to Firebase
+  if (_collab.mode === 'multi' && _collab.firebaseRef) {
+    const pid = _collab.myPlayerId;
+    _collab.firebaseRef.update({ [`players/${pid}/nominations`]: noms });
+  }
+}
+
+function collabRemoveNomination(idx) {
+  const noms = _collabMyNoms();
+  noms.splice(idx, 1);
+  _collabRenderNominations();
+  // Sync removal to Firebase too
+  if (_collab.mode === 'multi' && _collab.firebaseRef) {
+    const pid = _collab.myPlayerId;
+    _collab.firebaseRef.update({ [`players/${pid}/nominations`]: noms });
+  }
+}
+
+function _collabRenderNominations() {
+  const noms = _collabMyNoms();
+  byId(IDS.collabNominateCount).textContent = `${noms.length} / 5`;
+  byId(IDS.collabNominationsList).innerHTML = noms.map((n, idx) => `
+    <div class="collab-nom-item">
+      ${n.cover ? `<img src="${safeUrl(n.cover)}" alt="" />` : '<div class="collab-nom-cover-placeholder">🎬</div>'}
+      <span class="collab-nom-title">${esc(n.title)}</span>
+      <button class="collab-nom-remove" onclick="collabRemoveNomination(${idx})" aria-label="Remove">✕</button>
+    </div>`).join('') || '<p class="collab-nom-empty">Nothing yet — search above to add shows</p>';
+}
+
+function collabConfirmNominations() {
+  const noms = _collabMyNoms();
+  if (noms.length === 0) { byId(IDS.collabSearch).focus(); return; }
+
+  if (_collab.mode === 'single') {
+    if (_collab.currentNominator === 0) {
+      _collab.currentNominator = 1;
+      byId(IDS.collabPassName).textContent = _collab.p2Name;
+      _collabPanel(IDS.collabPanelPass);
+    } else {
+      _collabStartVoting();
+    }
+  } else {
+    // Multi: mark self ready in Firebase
+    const pid = _collab.myPlayerId;
+    _collab.firebaseRef.update({ [`players/${pid}/ready`]: true, [`players/${pid}/nominations`]: noms });
+    const btn = document.getElementById('collab-confirm-btn');
+    if (btn) { btn.disabled = true; btn.textContent = `⏳ Waiting for others…`; }
+  }
+}
+
+function collabPassReveal() {
+  // P2 confirms ready to nominate on same device
+  _collabShowNominatePanel();
+}
+
+// ── VOTING ────────────────────────────────────────────────────────────────────
+function _collabBuildPairs(pool, limit) {
+  const all = [];
+  for (let i = 0; i < pool.length; i++)
+    for (let j = i + 1; j < pool.length; j++)
+      all.push({ a: pool[i], b: pool[j] });
+  all.sort(() => Math.random() - 0.5);
+  const cap = (limit != null) ? Math.min(limit, all.length) : all.length;
+  if (all.length <= cap) return all;
+  // Ensure every show appears at least once when trimming
+  const counts   = new Map(pool.map(s => [s.title, 0]));
+  const selected = [];
+  for (const pair of all) {
+    if (selected.length >= cap) break;
+    selected.push(pair);
+    counts.set(pair.a.title, (counts.get(pair.a.title) || 0) + 1);
+    counts.set(pair.b.title, (counts.get(pair.b.title) || 0) + 1);
+  }
+  return selected;
+}
+
+// ── ROUND PICKER ─────────────────────────────────────────────────────────────
+let _collabRoundPool      = [];
+let _collabRoundPlayers   = 2;
+let _collabChosenRounds   = 10;
+let _collabRecommended    = 10;
+
+// Player confidence multiplier — more voters per round = more reliable each matchup
+function _collabPlayerConfidence(playerCount) {
+  const n = playerCount || 2;
+  if (n >= 6) return 2.0;
+  if (n === 5) return 1.75;
+  if (n === 4) return 1.5;
+  if (n === 3) return 1.25;
+  return 1.0; // 2 players
+}
+
+function _collabRecommendRounds(poolSize, playerCount) {
+  const total      = (poolSize * (poolSize - 1)) / 2;
+  if (total <= 6) return total;  // tiny pool → always do full round-robin
+  const confidence = _collabPlayerConfidence(playerCount);
+  const base       = Math.round(poolSize * 1.5);
+  const rec        = Math.max(poolSize, Math.round(base / confidence));
+  return Math.min(rec, total);   // never exceed total possible pairs
+}
+
+function _collabRoundsStats(rounds, poolSize, playerCount) {
+  const n          = playerCount || 2;
+  const totalPairs = (poolSize * (poolSize - 1)) / 2;
+  const coverage   = totalPairs > 0 ? rounds / totalPairs : 1;
+
+  // Effective accuracy improves with more players — more voters = more signal per round
+  const confidence    = _collabPlayerConfidence(n);
+  const effectiveCov  = Math.min(coverage * confidence, 1);
+
+  // Time: more players = longer to collect all votes before reveal
+  const secsPerRound = n <= 2 ? 30 : n === 3 ? 40 : n === 4 ? 50 : 60;
+  const mins = Math.round((rounds * secsPerRound) / 60);
+  const timeStr = mins < 1 ? 'under a minute' : `~${mins} min${mins !== 1 ? 's' : ''}`;
+
+  let accuracyLabel, accuracyDesc, accuracyCls;
+  if (effectiveCov >= 0.9) {
+    accuracyLabel = 'Very High'; accuracyDesc = 'Near-complete coverage — the winner will be clear.'; accuracyCls = 'rounds-acc-high';
+  } else if (effectiveCov >= 0.6) {
+    accuracyLabel = 'High'; accuracyDesc = 'Good coverage — a clear winner should emerge.'; accuracyCls = 'rounds-acc-high';
+  } else if (effectiveCov >= 0.35) {
+    accuracyLabel = 'Good'; accuracyDesc = 'Most shows get a fair shot — result should hold.'; accuracyCls = 'rounds-acc-med';
+  } else if (effectiveCov >= 0.18) {
+    accuracyLabel = 'Fair'; accuracyDesc = 'Quick and decisive, though the winner could vary.'; accuracyCls = 'rounds-acc-low';
+  } else {
+    accuracyLabel = 'Gut-check'; accuracyDesc = 'More of a vibe than a ranking — fast and fun though!'; accuracyCls = 'rounds-acc-gut';
+  }
+
+  const playerBoostNote = n > 2
+    ? `<div class="collab-rounds-stat-row">
+        <span class="collab-rounds-stat-icon">👥</span>
+        <span>${n} voters per round gives <strong class="rounds-acc-high">+${Math.round((confidence - 1) * 100)}% confidence</strong> per matchup vs 2 players</span>
+       </div>`
+    : '';
+
+  const isRec = rounds === _collabRecommended;
+  return `
+    <div class="collab-rounds-stat-row">
+      <span class="collab-rounds-stat-icon">⏱</span>
+      <span>Time estimate: <strong>${timeStr}</strong></span>
+    </div>
+    <div class="collab-rounds-stat-row">
+      <span class="collab-rounds-stat-icon">📊</span>
+      <span>Pair coverage: <strong>${Math.round(coverage * 100)}%</strong> of all possible matchups</span>
+    </div>
+    ${playerBoostNote}
+    <div class="collab-rounds-stat-row">
+      <span class="collab-rounds-stat-icon">🎯</span>
+      <span>Result accuracy: <strong class="${accuracyCls}">${accuracyLabel}</strong> — ${accuracyDesc}</span>
+    </div>
+    ${isRec ? '<div class="collab-rounds-rec-badge">✨ This is our recommended setting</div>' : ''}
+  `;
+}
+
+function _collabShowRoundPicker(pool) {
+  _collabRoundPool    = pool;
+  _collabRoundPlayers = _collab.mode === 'multi'
+    ? Object.keys(_collab.players || {}).length
+    : 2; // single device is always 2
+  _collabRecommended  = _collabRecommendRounds(pool.length, _collabRoundPlayers);
+  _collabChosenRounds = _collabRecommended;
+
+  byId('collab-rounds-pool-count').textContent = pool.length;
+  byId('collab-rounds-rec-val').textContent    = _collabRecommended;
+  byId('collab-rounds-value').textContent      = _collabChosenRounds;
+  byId('collab-rounds-stats').innerHTML        = _collabRoundsStats(_collabChosenRounds, pool.length, _collabRoundPlayers);
+
+  _collabPanel(IDS.collabPanelRounds);
+}
+
+function collabAdjustRounds(delta) {
+  const totalPairs = (_collabRoundPool.length * (_collabRoundPool.length - 1)) / 2;
+  _collabChosenRounds = Math.max(1, Math.min(totalPairs, _collabChosenRounds + delta));
+  byId('collab-rounds-value').textContent = _collabChosenRounds;
+  byId('collab-rounds-stats').innerHTML   = _collabRoundsStats(_collabChosenRounds, _collabRoundPool.length, _collabRoundPlayers);
+}
+
+function collabStartWithRounds() {
+  const pool = _collabRoundPool;
+  _collab.pool    = pool;
+  _collab.pairs   = _collabBuildPairs(pool, _collabChosenRounds);
+  _collab.battles = [];
+  _collab.currentPair = 0;
+
+  if (_collab.mode === 'multi' && _collab.firebaseRef) {
+    // Build a null vote slot for every player
+    const initialVotes = Object.fromEntries(
+      Object.keys(_collab.players).map(pid => [pid, null])
+    );
+    _collab.firebaseRef.update({
+      phase: 'voting', pairs: _collab.pairs, currentPair: 0,
+      votes: initialVotes,
+    });
+  } else {
+    _collabPanel(IDS.collabPanelVote);
+    _collabRenderVotePair();
+  }
+}
+
+function _collabStartVoting() {
+  // Merge and deduplicate nominations into pool
+  const seen = new Set();
+  const pool = [];
+  for (const noms of _collab.nominees)
+    for (const n of noms)
+      if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); pool.push(n); }
+
+  // Show round picker before voting begins
+  _collabShowRoundPicker(pool);
+}
+
+function _collabRenderVotePair() {
+  const pair  = _collab.pairs[_collab.currentPair];
+  const total = _collab.pairs.length;
+  if (!pair) { _collabShowResults(); return; }
+  _collab.votingPhase = 'p1';
+  _collab.currentVote = {};
+  _collab.tieCount    = 0;
+
+  byId(IDS.collabVoteProgress).textContent = `Match ${_collab.currentPair + 1} of ${total}`;
+  byId(IDS.collabVoteReveal).style.display = 'none';
+  byId(IDS.collabVoteNextBtn).style.display = 'none';
+  document.getElementById('collab-tiebreak-btn').style.display  = 'none';
+  document.getElementById('collab-p2-ready-btn').style.display  = 'none';
+  _collabSetVoteHeading('p1');
+  _collabRenderVoteCards(pair);
+}
+
+function _collabSetVoteHeading(who) {
+  const name  = who === 'p1' ? _collab.p1Name : _collab.p2Name;
+  const other = who === 'p1' ? _collab.p2Name : _collab.p1Name;
+  document.getElementById('collab-vote-who').textContent = `${name} — tap your pick`;
+  document.getElementById('collab-vote-sub').textContent = `(${other}, don't look yet!)`;
+}
+
+function _collabRenderVoteCards(pair) {
+  [IDS.collabCardA, IDS.collabCardB].forEach((elId, idx) => {
+    const show = idx === 0 ? pair.a : pair.b;
+    const el   = byId(elId);
+    el.className = 'challenge-card collab-vote-card';
+    el.disabled  = false;
+    el.innerHTML = `
+      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="${esc(show.title)}" />` : '<div class="collab-no-cover">🎬</div>'}
+      <div class="challenge-card-title">${esc(show.title)}</div>`;
+  });
+}
+
+function collabVoteBtn(side) {
+  if (!_collab) return;
+  if (_collab.mode === 'multi') { collabVoteMulti(side); return; }
+  const phase = _collab.votingPhase;
+  if (phase === 'p1') {
+    _collab.currentVote.p1 = side;
+    _collab.votingPhase    = 'pass-to-p2';
+    byId(IDS.collabCardA).disabled = true;
+    byId(IDS.collabCardB).disabled = true;
+    document.getElementById('collab-vote-who').textContent = `✓ ${_collab.p1Name} has voted`;
+    document.getElementById('collab-vote-sub').textContent = `Pass to ${_collab.p2Name}`;
+    document.getElementById('collab-p2-ready-btn').style.display = 'block';
+  } else if (phase === 'p2') {
+    _collab.currentVote.p2 = side;
+    _collab.votingPhase    = 'reveal';
+    _collabRevealVotes();
+  }
+}
+
+function collabP2Ready() {
+  _collab.votingPhase = 'p2';
+  document.getElementById('collab-p2-ready-btn').style.display = 'none';
+  _collabSetVoteHeading('p2');
+  byId(IDS.collabCardA).disabled = false;
+  byId(IDS.collabCardB).disabled = false;
+}
+
+function _collabRevealVotes() {
+  const { p1, p2 } = _collab.currentVote;
+  const pair = _collab.pairs[_collab.currentPair];
+  byId(IDS.collabCardA).disabled = true;
+  byId(IDS.collabCardB).disabled = true;
+  document.getElementById('collab-vote-who').textContent = '';
+  document.getElementById('collab-vote-sub').textContent = '';
+
+  const aEl = byId(IDS.collabCardA);
+  const bEl = byId(IDS.collabCardB);
+  const revealText = byId(IDS.collabVoteRevealText);
+
+  if (p1 === p2) {
+    const winner = p1 === 'a' ? pair.a : pair.b;
+    (p1 === 'a' ? aEl : bEl).classList.add('challenge-correct');
+    (p1 === 'a' ? bEl : aEl).classList.add('challenge-wrong');
+    revealText.innerHTML = `<span class="ch-correct-msg">✓ Unanimous!</span> You both chose <strong>${esc(winner.title)}</strong>`;
+    _collab.battles.push({ a: pair.a, b: pair.b, winner: winner.title });
+    byId(IDS.collabVoteNextBtn).style.display = 'block';
+  } else {
+    const p1Show = p1 === 'a' ? pair.a : pair.b;
+    const p2Show = p2 === 'a' ? pair.a : pair.b;
+    aEl.classList.add('collab-split-a'); bEl.classList.add('collab-split-b');
+    revealText.innerHTML = `<span class="collab-split-msg">⚡ Split!</span>
+      ${esc(_collab.p1Name)} chose <strong>${esc(p1Show.title)}</strong>,
+      ${esc(_collab.p2Name)} chose <strong>${esc(p2Show.title)}</strong>
+      <br><span class="collab-coinflip">Recorded as a tie 🤝</span>`;
+    _collab.battles.push({ a: pair.a, b: pair.b, winner: null });
+    byId(IDS.collabVoteNextBtn).style.display = 'block';
+  }
+  byId(IDS.collabVoteReveal).style.display = 'block';
+}
+
+function collabTiebreaker() {
+  document.getElementById('collab-tiebreak-btn').style.display = 'none';
+  byId(IDS.collabVoteReveal).style.display = 'none';
+  _collab.votingPhase = 'p1'; _collab.currentVote = {};
+  _collabRenderVoteCards(_collab.pairs[_collab.currentPair]);
+  _collabSetVoteHeading('p1');
+}
+
+function collabNextPair() {
+  _collab.currentPair++;
+  byId(IDS.collabVoteNextBtn).style.display = 'none';
+  document.getElementById('collab-tiebreak-btn').style.display = 'none';
+  if (_collab.currentPair >= _collab.pairs.length) _collabShowResults();
+  else _collabRenderVotePair();
+}
+
+// ── MULTI DEVICE VOTING ───────────────────────────────────────────────────────
+async function collabVoteMulti(side) {
+  if (!_collab?.firebaseRef) return;
+  byId(IDS.collabCardA).disabled = true;
+  byId(IDS.collabCardB).disabled = true;
+  const totalPlayers = Object.keys(_collab.players || {}).length;
+  document.getElementById('collab-vote-who').textContent = `✓ Voted — waiting for others…`;
+  document.getElementById('collab-vote-sub').textContent = '';
+  await _collab.firebaseRef.update({ [`votes/${_collab.myPlayerId}`]: side });
+}
+
+function _collabRenderVotePairMulti(data) {
+  const idx          = data.currentPair || 0;
+  const pair         = data.pairs?.[idx];
+  if (!pair) return;
+
+  const players         = data.players || {};
+  const votes           = data.votes   || {};
+  // Only count connected players — disconnected ones are excluded from voting
+  const connectedPids   = Object.entries(players)
+    .filter(([, p]) => p.connected !== false)
+    .map(([pid]) => pid);
+  const totalPlayers    = connectedPids.length;
+  const votedCount      = connectedPids.filter(pid => votes[pid] === 'a' || votes[pid] === 'b').length;
+  const allVoted        = totalPlayers > 0 && votedCount === totalPlayers;
+  const myVote          = votes[_collab.myPlayerId];
+
+  byId(IDS.collabVoteProgress).textContent = `Match ${idx + 1} of ${(data.pairs || []).length}`;
+  byId(IDS.collabVoteReveal).style.display = 'none';
+  byId(IDS.collabVoteNextBtn).style.display = 'none';
+  document.getElementById('collab-p2-ready-btn').style.display = 'none';
+  document.getElementById('collab-vote-sub').textContent = '';
+
+  if (!myVote) {
+    document.getElementById('collab-vote-who').textContent = 'Tap your pick';
+    _collabRenderVoteCards(pair);
+  } else {
+    document.getElementById('collab-vote-who').textContent =
+      allVoted ? 'All votes in!' : `✓ Voted — ${votedCount} of ${totalPlayers} voted`;
+    byId(IDS.collabCardA).disabled = true;
+    byId(IDS.collabCardB).disabled = true;
+  }
+
+  if (allVoted) {
+    byId(IDS.collabCardA).disabled = true;
+    byId(IDS.collabCardB).disabled = true;
+    const revealText = byId(IDS.collabVoteRevealText);
+
+    // Count votes
+    const countA = Object.values(votes).filter(v => v === 'a').length;
+    const countB = Object.values(votes).filter(v => v === 'b').length;
+    const isTie  = countA === countB;
+    const winner = isTie ? null : (countA > countB ? pair.a : pair.b);
+
+    // Highlight cards
+    if (winner) {
+      const winSide = countA > countB ? 'a' : 'b';
+      byId(winSide === 'a' ? IDS.collabCardA : IDS.collabCardB).classList.add('challenge-correct');
+      byId(winSide === 'a' ? IDS.collabCardB : IDS.collabCardA).classList.add('challenge-wrong');
+    } else {
+      byId(IDS.collabCardA).classList.add('collab-split-a');
+      byId(IDS.collabCardB).classList.add('collab-split-b');
+    }
+
+    // Build voter breakdown (who voted for what, note disconnected players)
+    const voterLines = Object.entries(players).map(([pid, p]) => {
+      const v         = votes[pid];
+      const isOffline = p.connected === false;
+      if (isOffline && !v) {
+        return `<span class="collab-voter-line" style="opacity:0.5">${esc(p.name)} — disconnected 🔌</span>`;
+      }
+      const show = v === 'a' ? pair.a : pair.b;
+      return `<span class="collab-voter-line">${esc(p.name)} → <strong>${esc(show.title)}</strong></span>`;
+    }).join('');
+
+    if (winner) {
+      revealText.innerHTML = `<span class="ch-correct-msg">✓ ${countA === totalPlayers || countB === totalPlayers ? 'Unanimous!' : `${Math.max(countA, countB)}–${Math.min(countA, countB)}`}</span>
+        <strong>${esc(winner.title)}</strong> wins!
+        <div class="collab-voter-breakdown">${voterLines}</div>`;
+    } else {
+      revealText.innerHTML = `<span class="collab-split-msg">⚡ Dead heat — ${countA}–${countB}</span>
+        <br><span class="collab-coinflip">Recorded as a tie 🤝</span>
+        <div class="collab-voter-breakdown">${voterLines}</div>`;
+    }
+
+    byId(IDS.collabVoteReveal).style.display = 'block';
+
+    // Host records battle and advances
+    if (_collab.isHost) {
+      const newBattles = [...(_collab.battles || []), {
+        a: pair.a, b: pair.b,
+        winner: winner ? winner.title : null,
+      }];
+      _collab.battles = newBattles;
+
+      // Reset votes for all players
+      const clearedVotes = Object.fromEntries(Object.keys(players).map(pid => [`votes/${pid}`, null]));
+
+      setTimeout(() => {
+        const nextIdx = idx + 1;
+        if (nextIdx >= (data.pairs?.length || 0)) {
+          _collab.firebaseRef.update({ phase: 'results', results: newBattles });
+        } else {
+          _collab.firebaseRef.update({ currentPair: nextIdx, ...clearedVotes });
+        }
+      }, 2800);
+    }
+  }
+}
+
+// ── RESULTS ───────────────────────────────────────────────────────────────────
+function _collabShowResults() {
+  _collabPanel(IDS.collabPanelResults);
+  _collabRenderResults();
+}
+
+function _collabRenderResults() {
+  // Tally wins and ties separately
+  const wins = new Map(_collab.pool.map(s => [s.title, 0]));
+  const ties  = new Map(_collab.pool.map(s => [s.title, 0]));
+
+  _collab.battles.forEach(b => {
+    if (b.winner === null) {
+      // It was a tie — credit both shows (b.a / b.b are show objects)
+      const titleA = (b.a?.title ?? b.a);
+      const titleB = (b.b?.title ?? b.b);
+      ties.set(titleA, (ties.get(titleA) || 0) + 1);
+      ties.set(titleB, (ties.get(titleB) || 0) + 1);
+    } else {
+      wins.set(b.winner, (wins.get(b.winner) || 0) + 1);
+    }
+  });
+
+  // Sort: wins desc → ties desc → coin flip for true equals
+  const ranked = [..._collab.pool].sort((a, b) => {
+    const wDiff = (wins.get(b.title) || 0) - (wins.get(a.title) || 0);
+    if (wDiff !== 0) return wDiff;
+    const tDiff = (ties.get(b.title) || 0) - (ties.get(a.title) || 0);
+    if (tDiff !== 0) return tDiff;
+    return Math.random() < 0.5 ? -1 : 1; // coin flip only for true equals
+  });
+
+  const medals = ['🎬', '🥈', '🥉'];
+  byId(IDS.collabResultsList).innerHTML = ranked.map((show, i) => {
+    const w = wins.get(show.title) || 0;
+    const t = ties.get(show.title) || 0;
+    const wLabel = `${w} win${w !== 1 ? 's' : ''}`;
+    const tLabel = t > 0 ? ` · ${t} tie${t !== 1 ? 's' : ''}` : '';
+    return `<div class="collab-result-item ${i === 0 ? 'collab-result-winner' : ''}">
+      <span class="collab-result-medal">${medals[i] || (i + 1) + '.'}</span>
+      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="" />` : '<div class="collab-no-cover">🎬</div>'}
+      <div class="collab-result-info">
+        <div class="collab-result-title">${esc(show.title)}</div>
+        <div class="collab-result-wins">${wLabel}<span class="collab-result-ties">${tLabel}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── UNIFIED SOCIAL COMPARE ────────────────────────────────────────────────────
+async function runSocialCompare() {
+  const input = document.getElementById('social-compare-input');
+  const username = (input?.value || '').trim();
+  if (!username) { input?.focus(); return; }
+  // Mirror into the hidden inputs that runCompatibility / runFriendRecs read from
+  byId(IDS.compatUsernameInput).value  = username;
+  byId(IDS.friendRecsInput).value      = username;
+  // Both functions share _fetchFriendList's 30-second cache, so only one
+  // AniList request is made regardless of how many render passes run.
+  await runCompatibility();
+  await runFriendRecs();
+}
+
+function openChallengeFromInput() {
+  const input    = document.getElementById('social-challenge-input');
+  const username = (input?.value || '').trim();
+  if (!username) { input?.focus(); return; }
+  openChallengeMode(username, _socialPlatform);
+}
+
+async function _rerunComparison(username, platform) {
   setSocialPlatform(platform);
-  // Strip the [MAL] suffix before filling the input
   const cleanName = username.replace(/ \[MAL\]$/i, '');
+  // Keep all inputs in sync
+  const unifiedInput = document.getElementById('social-compare-input');
+  if (unifiedInput) unifiedInput.value = cleanName;
   byId(IDS.compatUsernameInput).value = cleanName;
-  runCompatibility();
+  byId(IDS.friendRecsInput).value     = cleanName;
+  // Run sequentially to avoid hitting AniList rate limits with simultaneous requests
+  await runCompatibility();
+  await runFriendRecs();
 }
 
 function toggleCompatibility() { switchResultsTab('social'); }
@@ -4648,32 +6334,9 @@ async function runFriendRecs() {
   resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ${esc(username)}'s list…</p>`;
 
   try {
-    const query = `
-      query ($username: String) {
-        MediaListCollection(userName: $username, type: ANIME) {
-          lists {
-            entries {
-              score status
-              media { id title { romaji english } coverImage { large medium } averageScore genres format }
-            }
-          }
-        }
-      }`;
-    let data;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const res = await fetch('https://graphql.anilist.co', {
-          method: 'POST', headers: anilistHeaders(),
-          body: JSON.stringify({ query, variables: { username } })
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        data = await res.json();
-        break;
-      } catch (e) {
-        if (attempt === 2) throw e;
-        await new Promise(r => setTimeout(r, 800));
-      }
-    }
+    // Use shared cache — if runCompatibility already fetched this username's
+    // list (within the last 30 s), reuse the result instead of a second request.
+    const data = await _fetchFriendList(username);
     if (data.errors) throw new Error(data.errors[0].message);
 
     const ownIds = new Set(animeList.map(a => a.id));
@@ -4761,7 +6424,7 @@ async function runFriendRecs() {
       </div>`;
 
   } catch (err) {
-    renderErrorInto(resultsEl, err.message, 'padding:16px 0');
+    renderErrorInto(resultsEl, _anilistErrMsg(err), 'padding:16px 0');
   }
 }
 
@@ -5380,7 +7043,7 @@ function _computeTasteInsights(battleMilestone) {
   const genreAvgs = Object.entries(genreMap)
     .filter(([, v]) => v.count >= 3)
     .map(([g, v]) => ({ genre: g, avg: v.sum / v.count, count: v.count }))
-    .sort((a, b) => b.avg - a.avg);
+    .sort((a, b) => b.avg - a.avg || b.count - a.count || a.genre.localeCompare(b.genre));
 
   const topGenre   = genreAvgs[0]?.genre || 'Drama';
   const topDelta   = Math.round((genreAvgs[0]?.avg || globalAvg) - globalAvg);
@@ -5569,7 +7232,7 @@ function _renderTasteStoryCard() {
       <div class="ts-covers">${top3Html}</div>
       <div class="ts-share-actions">
         <button class="btn-primary" onclick="exportTasteStoryCard()">📸 Save image</button>
-        <button class="btn-secondary" onclick="closeTasteStory();showResults();switchResultsTab('profile')" style="margin-left:8px">🎨 Full profile →</button>
+        <button class="btn-secondary" onclick="closeTasteStory();_openProfileTab()" style="margin-left:8px">🎨 Full profile →</button>
       </div>`;
   } else if (card.type === 'champion' && card.cover) {
     body.innerHTML = `
@@ -5581,13 +7244,13 @@ function _renderTasteStoryCard() {
           <div class="ts-sub">${card.sub}</div>
         </div>
       </div>
-      <button class="ts-profile-link" onclick="closeTasteStory();showResults();switchResultsTab('profile')">🎨 See full profile →</button>`;
+      <button class="ts-profile-link" onclick="closeTasteStory();_openProfileTab()">🎨 See full profile →</button>`;
   } else {
     body.innerHTML = `
       <div class="ts-label">${card.label}</div>
       <div class="ts-headline" style="color:${card.accent}">${esc(card.headline)}</div>
       <div class="ts-sub">${card.sub}</div>
-      <button class="ts-profile-link" onclick="closeTasteStory();showResults();switchResultsTab('profile')">🎨 See full profile →</button>`;
+      <button class="ts-profile-link" onclick="closeTasteStory();_openProfileTab()">🎨 See full profile →</button>`;
   }
 
   el.querySelector('.ts-prev').style.visibility = _tasteStoryIndex > 0 ? 'visible' : 'hidden';
@@ -5605,6 +7268,12 @@ function tasteStoryNav(dir) {
 
 function closeTasteStory() {
   byId('taste-story-modal').style.display = 'none';
+}
+
+function _openProfileTab() {
+  const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
+  if (!resultsVisible) showResults();
+  switchResultsTab('profile');
 }
 
 async function exportTasteStoryCard() {
@@ -6400,14 +8069,14 @@ function dismissKbTip() {
 function _applyTheme(light) {
   document.body.classList.toggle('light-mode', light);
   const btn = document.getElementById('theme-toggle-btn');
-  if (btn) btn.textContent = light ? '☀️' : '🌙';
+  if (btn) btn.textContent = light ? '☀️ Light mode' : '🌙 Dark mode';
 }
 
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light-mode');
   localStorage.setItem('kessen.ui.theme', isLight ? 'light' : 'dark');
   const btn = document.getElementById('theme-toggle-btn');
-  if (btn) btn.textContent = isLight ? '☀️' : '🌙';
+  if (btn) btn.textContent = isLight ? '☀️ Light mode' : '🌙 Dark mode';
 }
 
 // Apply saved theme immediately on load
@@ -6425,6 +8094,7 @@ function snapshotSessionStart() {
   sessionStartElo    = {};
   sessionBattleCount = 0;
   animeList.forEach(a => { sessionStartElo[a.id] = a.elo; });
+  _startFirebaseSync(); // begin listening for changes from other devices
 }
 
 function checkSessionSummary() {
@@ -6751,14 +8421,31 @@ function renderStudioAffinity() {
   }
   const top    = studios.slice(0, 6);
   const bottom = [...studios].reverse().slice(0, 6);
+
+  // Build a ranked index once so each panel can show #rank quickly
+  const rankedIds = animeList
+    .filter(a => !hiddenFormats.has(a.format))
+    .sort((a, b) => b.elo - a.elo)
+    .map(a => a.id);
+
+  let _studioPanelKey = 0;
   const renderList = (list, positive) => list.map(s => {
-    const sign  = s.diff >= 0 ? '+' : '';
-    const color = positive ? '#3fb950' : '#f85149';
-    return `<div class="stat-anime-row">
-      <span>${s.name} <span style="color:#6e7681;font-size:0.8em">(${s.count})</span></span>
-      <span style="color:${color};font-weight:600">${sign}${s.diff}</span>
-    </div>`;
+    const sign    = s.diff >= 0 ? '+' : '';
+    const color   = positive ? '#3fb950' : '#f85149';
+    const panelId = `sa-panel-${_studioPanelKey++}`;
+    // Encode studio name safely for the data attribute
+    const safeName = s.name.replace(/'/g, "\\'");
+    return `
+      <div class="stat-anime-row studio-affinity-row" onclick="toggleStudioAnimePanel('${panelId}','${safeName}')">
+        <span>${s.name} <span style="color:#6e7681;font-size:0.8em">(${s.count})</span></span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:${color};font-weight:600">${sign}${s.diff}</span>
+          <span id="${panelId}-chev" style="color:#6e7681;font-size:0.75em">▶</span>
+        </div>
+      </div>
+      <div class="studio-anime-panel" id="${panelId}" style="display:none"></div>`;
   }).join('');
+
   el.innerHTML = `
     <div class="studio-affinity-grid">
       <div>
@@ -6771,6 +8458,55 @@ function renderStudioAffinity() {
       </div>
     </div>
     <p style="color:#6e7681;font-size:0.75rem;margin-top:10px">ELO difference from your overall average (${overallAvg})</p>`;
+
+  // Store the ranked index on the element so toggleStudioAnimePanel can use it
+  el._rankedIds = rankedIds;
+}
+
+function toggleStudioAnimePanel(panelId, studioName) {
+  const panel  = document.getElementById(panelId);
+  const chev   = document.getElementById(panelId + '-chev');
+  if (!panel) return;
+
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (chev) chev.textContent = isOpen ? '▶' : '▼';
+  if (isOpen) return;
+
+  // Build content lazily on first open
+  if (panel.dataset.loaded) return;
+  panel.dataset.loaded = '1';
+
+  const rankedIds = byId(IDS.statStudioAffinity)?._rankedIds || [];
+  const anime = animeList
+    .filter(a => (a.studios || []).includes(studioName))
+    .sort((a, b) => {
+      const ra = rankedIds.indexOf(a.id);
+      const rb = rankedIds.indexOf(b.id);
+      // Unranked (filtered format) goes to the end
+      const ia = ra === -1 ? Infinity : ra;
+      const ib = rb === -1 ? Infinity : rb;
+      return ia - ib;
+    });
+
+  if (!anime.length) {
+    panel.innerHTML = '<div class="studio-anime-empty">No ranked anime found for this studio.</div>';
+    return;
+  }
+
+  panel.innerHTML = anime.map(a => {
+    const rank    = rankedIds.indexOf(a.id);
+    const rankStr = rank >= 0 ? `#${rank + 1}` : '—';
+    const idx     = animeList.indexOf(a);
+    return `
+      <div class="studio-anime-item" onclick="openDetail(${idx})">
+        <span class="studio-anime-rank">${rankStr}</span>
+        <img class="studio-anime-cover" src="${esc(a.cover || '')}" alt="" loading="lazy"
+             onerror="this.style.display='none'" />
+        <span class="studio-anime-title">${esc(displayTitle(a))}</span>
+        <span class="studio-anime-elo">${a.elo}</span>
+      </div>`;
+  }).join('');
 }
 
 // Silently fetch genres + seasonYear + studios for existing anime that predate
@@ -7724,10 +9460,14 @@ function displayTitle(anime) {
   return anime.titleEn || anime.titleRo || anime.title;
 }
 
+function _syncLangBtn() {
+  const btn = byId(IDS.langToggleBtn);
+  if (btn) btn.textContent = preferRomaji ? '🈯 Titles: Romaji' : '🈯 Titles: EN';
+}
+
 function toggleLanguage() {
   preferRomaji = !preferRomaji;
-  const btn = byId(IDS.langToggleBtn);
-  btn.textContent = preferRomaji ? 'Titles: Romaji' : 'Titles: EN';
+  _syncLangBtn();
 
   // Old saves have titleRo === titleEn (both set to anime.title by migration).
   // Detect this and trigger a background metadata refresh to get real titles.
@@ -8302,12 +10042,13 @@ function setMode(name) {
   blindMode  = (name === 'blind');
   trioMode   = (name === 'trio');
 
-  // Mode button visual state + label
+  // Mode button visual state + label (also clears Tower highlight if active)
   const btn = byId(IDS.modeBtn);
   if (btn) {
     btn.classList.toggle('active-settle', settleMode);
     btn.classList.toggle('active-blind',  blindMode);
     btn.classList.toggle('active-trio',   trioMode);
+    btn.classList.remove('active-tower');
     btn.textContent =
       settleMode ? '🎯 Mode: Settle' :
       blindMode  ? '🙈 Mode: Blind'  :
@@ -8456,16 +10197,28 @@ function renderTrio() {
   if (h2) h2.textContent = 'Rank these three';
   if (p)  p.textContent  = 'Tap in order of preference — 🥇 first, 🥈 second, 🥉 third.';
 
-  _paintTrio();
+  _paintTrio(true);
   updateProgress();
   saveState();
 }
 
 // Redraws the trio arena from current state (currentTrio + trioOrder).
 // Cards reuse .anime-card styling so they look identical to normal battle cards.
-function _paintTrio() {
+function _paintTrio(fresh = false) {
   const arena = byId(IDS.trioArena);
   if (!arena) return;
+
+  // Preserve which synopsis panels and card-action trays are currently open
+  // so a tap to rank a card doesn't collapse them.
+  // Skip when fresh=true (new set of three) so old open state isn't carried over.
+  const openSynopsis = fresh ? [] : [0, 1, 2].filter(p => {
+    const el = document.getElementById(`synopsis-trio-${p}`);
+    return el && el.style.display !== 'none';
+  });
+  const openActions = fresh ? [] : [0, 1, 2].filter(p => {
+    const el = document.getElementById(`trio-card-${p}`);
+    return el && el.classList.contains('actions-expanded');
+  });
 
   const BADGES     = ['', '🥇', '🥈', '🥉'];
   const RANK_CLASS = ['', 'trio-ranked-1', 'trio-ranked-2', 'trio-ranked-3'];
@@ -8525,6 +10278,19 @@ function _paintTrio() {
         </div>`;
     }).join('') +
   '</div>';
+
+  // Restore open synopsis panels and action trays after re-render
+  openSynopsis.forEach(p => {
+    const el = document.getElementById(`synopsis-trio-${p}`);
+    if (el) el.style.display = 'block';
+  });
+  openActions.forEach(p => {
+    const card = document.getElementById(`trio-card-${p}`);
+    if (!card) return;
+    card.classList.add('actions-expanded');
+    const chip = card.querySelector('.card-more-chip');
+    if (chip) chip.setAttribute('aria-expanded', 'true');
+  });
 }
 
 // Trio-specific card action handlers (can't reuse the normal ones since those
@@ -8947,6 +10713,8 @@ function startTower(championIdx) {
   towerRound     = 0;
   towerResults   = [];
   towerMode      = true;
+  const modeBtn  = byId(IDS.modeBtn);
+  if (modeBtn) { modeBtn.classList.add('active-tower'); modeBtn.textContent = '⚡ Mode: Tower'; }
 
   // Pre-select 10 opponents: spread across ELO range for variety
   const pool = animeList
@@ -9024,6 +10792,8 @@ function pickWinnerTower(side) {
 
 function finishTower() {
   towerMode = false;
+  const modeBtn = byId(IDS.modeBtn);
+  if (modeBtn) { modeBtn.classList.remove('active-tower'); modeBtn.textContent = '⚙ Mode'; }
   byId(IDS.towerProgressWrap).style.display = 'none';
   byId(IDS.towerStatus).style.display = 'none';
   byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
@@ -10026,9 +11796,14 @@ const FINISH_PROMPT_MAX_BATTLES = 10;                   // only prompt for uncer
 function _loadFinishPrompts() {
   try {
     _finishPromptQueue = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.finishPrompts) || '[]');
-    // Prune stale prompts (older than 24 h)
+    // Prune stale prompts (older than 24 h).
+    // Mark each pruned entry as "prompted" so the next poll doesn't re-queue
+    // it with a fresh timestamp and re-show the banner — the notification
+    // centre entry from detection time persists independently for the user to act on.
     const now = Date.now();
-    _finishPromptQueue = _finishPromptQueue.filter(p => now - p.detectedAt < FINISH_PROMPT_MAX_AGE_MS);
+    const stale = _finishPromptQueue.filter(p => now - p.detectedAt >= FINISH_PROMPT_MAX_AGE_MS);
+    _finishPromptQueue  = _finishPromptQueue.filter(p => now - p.detectedAt <  FINISH_PROMPT_MAX_AGE_MS);
+    stale.forEach(p => _addPromptedId(p.id));
     _saveFinishPrompts();
   } catch { _finishPromptQueue = []; }
   _showNextFinishPrompt();
@@ -10059,14 +11834,19 @@ function _queueFinishPrompt(anime) {
   // Don't duplicate if already queued
   if (_finishPromptQueue.some(p => p.id === anime.id)) return;
 
+  const title = displayTitle(anime);
   _finishPromptQueue.push({
     id:         anime.id,
-    title:      displayTitle(anime),
+    title,
     cover:      anime.cover || '',
     detectedAt: Date.now(),
   });
   _saveFinishPrompts();
   _showNextFinishPrompt();
+  // Also save to Notification Centre so it survives a banner dismiss
+  _ncAdd('finish_prompt',
+    `You just finished ${title} — battle in the Tower while the feelings are fresh?`,
+    { animeId: anime.id, title });
 }
 
 function _showNextFinishPrompt() {
@@ -10120,6 +11900,166 @@ function startFinishTower() {
 
   // Bypass the Tower selection modal and launch directly
   startTower(idx);
+}
+
+// ─── NOTIFICATION CENTRE ──────────────────────────────────────────────────────
+
+function _ncLoad() {
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.data.notifCentre(saveKey));
+    _notifCentre = raw ? JSON.parse(raw) : [];
+  } catch { _notifCentre = []; }
+}
+
+function _ncSave() {
+  try {
+    if (_notifCentre.length > 50) _notifCentre = _notifCentre.slice(0, 50);
+    localStorage.setItem(KESSEN_KEYS.data.notifCentre(saveKey), JSON.stringify(_notifCentre));
+  } catch {}
+}
+
+// Add a notification. For new_anime / removed_anime, replaces any existing
+// unread entry of the same type so the count stays fresh. finish_prompt is
+// deduplicated per anime ID.
+function _ncAdd(type, msg, data = {}) {
+  if (type === 'new_anime' || type === 'removed_anime') {
+    const idx = _notifCentre.findIndex(n => n.type === type);
+    if (idx >= 0) {
+      _notifCentre[idx] = { ..._notifCentre[idx], msg, data, timestamp: Date.now(), read: false };
+      _ncSave();
+      _ncUpdateBell();
+      return;
+    }
+  }
+  if (type === 'finish_prompt' && data.animeId) {
+    if (_notifCentre.some(n => n.type === 'finish_prompt' && n.data?.animeId === data.animeId)) return;
+  }
+  _notifCentre.unshift({
+    id: `nc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type,
+    msg,
+    timestamp: Date.now(),
+    read: false,
+    data,
+  });
+  _ncSave();
+  _ncUpdateBell();
+}
+
+function _ncUpdateBell() {
+  const unread = _notifCentre.filter(n => !n.read).length;
+  const badge  = byId(IDS.notifBadge);
+  if (!badge) return;
+  badge.textContent = unread > 9 ? '9+' : String(unread);
+  badge.style.display = unread > 0 ? 'flex' : 'none';
+}
+
+function _ncTimeAgo(ts) {
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 60)    return 'just now';
+  if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+function _ncIcon(type) {
+  return type === 'finish_prompt' ? '⚡' : type === 'new_anime' ? '🆕' : type === 'removed_anime' ? '📤' : '🔔';
+}
+
+function _ncActionBtn(n) {
+  if (n.type === 'finish_prompt')
+    return `<button class="nc-action-btn" onclick="ncActionFinishTower('${n.id}')">⚡ Battle in Tower</button>`;
+  if (n.type === 'new_anime')
+    return `<button class="nc-action-btn" onclick="ncActionAddAnime('${n.id}')">➕ Add to rankings</button>`;
+  if (n.type === 'removed_anime')
+    return `<button class="nc-action-btn" onclick="ncActionReviewRemoved('${n.id}')">📋 Review</button>`;
+  return '';
+}
+
+function _ncRenderList() {
+  const list = byId(IDS.notifCentreList);
+  if (!list) return;
+  if (_notifCentre.length === 0) {
+    list.innerHTML = '<div class="nc-empty">No notifications — you\'re all caught up ✓</div>';
+    return;
+  }
+  list.innerHTML = _notifCentre.map(n => `
+    <div class="nc-item" data-id="${n.id}">
+      <div class="nc-item-body">
+        <div class="nc-item-msg">${_ncIcon(n.type)} ${n.msg}</div>
+        <div class="nc-item-time">${_ncTimeAgo(n.timestamp)}</div>
+      </div>
+      <div class="nc-item-actions">
+        ${_ncActionBtn(n)}
+        <button class="nc-dismiss-btn" onclick="ncDismiss('${n.id}')" title="Dismiss">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+function openNotifCentre() {
+  _notifCentre.forEach(n => { n.read = true; });
+  _ncSave();
+  _ncUpdateBell();
+  _ncRenderList();
+  byId(IDS.notifCentreModal)?.classList.add('open');
+}
+
+function closeNotifCentre() {
+  byId(IDS.notifCentreModal)?.classList.remove('open');
+}
+
+function ncDismiss(id) {
+  _notifCentre = _notifCentre.filter(n => n.id !== id);
+  _ncSave();
+  _ncUpdateBell();
+  _ncRenderList();
+}
+
+function ncClearAll() {
+  _notifCentre = [];
+  _ncSave();
+  _ncUpdateBell();
+  _ncRenderList();
+}
+
+function ncActionFinishTower(id) {
+  const notif = _notifCentre.find(n => n.id === id);
+  if (!notif) return;
+  const idx = animeList.findIndex(a => a.id === notif.data?.animeId);
+  if (idx === -1) { showToast('This anime is no longer in your rankings.'); ncDismiss(id); return; }
+  closeNotifCentre();
+  ncDismiss(id);
+  const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
+  if (resultsVisible) resumeBattle();
+  startTower(idx);
+}
+
+function ncActionAddAnime(id) {
+  const notif = _notifCentre.find(n => n.id === id);
+  if (!notif?.data?.anime?.length) return;
+  // Restore pending list from the notification so the review modal has data to show
+  _pendingNewAnime = notif.data.anime.filter(a => !animeList.some(e => e.id === a.id));
+  if (!_pendingNewAnime.length) {
+    showToast('Already added — nothing to do.');
+    ncDismiss(id);
+    return;
+  }
+  closeNotifCentre();
+  ncDismiss(id);
+  openNewAnimeConfirm();
+}
+
+function ncActionReviewRemoved(id) {
+  const notif = _notifCentre.find(n => n.id === id);
+  if (!notif?.data?.anime?.length) return;
+  _pendingRemovedAnime = notif.data.anime.filter(a => animeList.some(e => e.id === a.id));
+  if (!_pendingRemovedAnime.length) {
+    showToast('These anime have already been handled.');
+    ncDismiss(id);
+    return;
+  }
+  closeNotifCentre();
+  openArchiveConfirm();
 }
 
 // MAL variant: fetch current list, diff against animeList by AniList ID
@@ -10194,9 +12134,13 @@ function _refreshListBanners(sourceName) {
   const remMsg     = byId(IDS.removedAnimeMsg);
 
   if (_pendingNewAnime.length > 0) {
-    if (newMsg) newMsg.textContent =
-      `🆕 ${_pendingNewAnime.length} new anime on your ${sourceName} — not yet in rankings`;
+    const newText = `🆕 ${_pendingNewAnime.length} new anime on your ${sourceName} — not yet in rankings`;
+    if (newMsg) newMsg.textContent = newText;
     newBanner?.classList.add('active');
+    // Save to Notification Centre so it survives a banner dismiss
+    _ncAdd('new_anime',
+      `${_pendingNewAnime.length} new anime found on your ${sourceName} — not yet in rankings`,
+      { anime: _pendingNewAnime.slice() });
   } else {
     newBanner?.classList.remove('active');
   }
@@ -10210,6 +12154,10 @@ function _refreshListBanners(sourceName) {
     if (remMsg) remMsg.textContent =
       `📤 ${_pendingRemovedAnime.length} anime removed from your ${sourceName} — archive their rankings?`;
     remBanner?.classList.add('active');
+    // Save to Notification Centre so it survives a banner dismiss
+    _ncAdd('removed_anime',
+      `${_pendingRemovedAnime.length} anime removed from your ${sourceName}`,
+      { anime: _pendingRemovedAnime.slice() });
   } else {
     if (removedTooMany) {
       console.warn('[checkForRemovals] suppressed — too many removed (' +
@@ -10307,6 +12255,146 @@ function keepPendingRemovedAnime() {
 function dismissNewAnimeBanner() {
   byId(IDS.newAnimeBanner)?.classList.remove('active');
   _pendingNewAnime = [];
+}
+
+// ─── SMART STARTING ELO ───────────────────────────────────────────────────────
+// Blends up to four signals to produce a better-than-1200 starting point for
+// newly added anime. Returns { elo, reason } so the review modal can surface
+// the dominant reason to the user.
+function _calcSmartElo(newAnime) {
+  const battled = animeList.filter(a => (a.battles || 0) > 0 && !excludedIds.has(a.id));
+  if (battled.length < 5) return { elo: 1200, reason: null };
+
+  const overallAvg = battled.reduce((s, a) => s + a.elo, 0) / battled.length;
+  const signals    = [];
+
+  // Signal 1 — user's own score (most direct intent signal)
+  const userScore = (newAnime.anilistScore || 0) || (newAnime.malScore || 0);
+  if (userScore > 0) {
+    signals.push({ value: scoreToElo(userScore), weight: 4, reason: `your ${userScore}/10 score` });
+  }
+
+  // Signal 2 — franchise / title prefix match
+  // Normalise: lowercase, strip punctuation, collapse spaces
+  const norm = t => (t || '').toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+  const newNorm = norm(newAnime.titleEn || newAnime.title || '');
+  if (newNorm.length >= 6) {
+    const hits = battled.filter(a => {
+      const en = norm(a.titleEn || a.title || '');
+      if (en.length < 4) return false;
+      const cap = Math.min(newNorm.length, en.length);
+      let shared = 0;
+      while (shared < cap && newNorm[shared] === en[shared]) shared++;
+      // Require 8+ chars shared, or the shared portion covers ≥60% of the shorter title
+      return shared >= 8 || shared >= Math.floor(cap * 0.6);
+    });
+    if (hits.length >= 1) {
+      const avg = hits.reduce((s, a) => s + a.elo, 0) / hits.length;
+      const name = hits[0].title?.split(':')[0]?.split(' Season')[0]?.trim() || 'franchise';
+      signals.push({ value: avg, weight: 3, reason: `${name} series (${hits.length} entries)` });
+    }
+  }
+
+  // Signal 3 — studio affinity (need 3+ ranked anime from same studio)
+  const newStudios = newAnime.studios || [];
+  if (newStudios.length > 0) {
+    const hits = battled.filter(a => (a.studios || []).some(s => newStudios.includes(s)));
+    if (hits.length >= 3) {
+      const avg    = hits.reduce((s, a) => s + a.elo, 0) / hits.length;
+      const weight = hits.length >= 8 ? 2 : 1.5;
+      const studio = newStudios[0];
+      signals.push({ value: avg, weight, reason: `${studio} avg (${hits.length} shows)` });
+    }
+  }
+
+  // Signal 4 — genre affinity (average per matching genre vs overall)
+  const newGenres = newAnime.genres || [];
+  if (newGenres.length > 0) {
+    const genreAvgs = [];
+    newGenres.forEach(g => {
+      const hits = battled.filter(a => (a.genres || []).includes(g));
+      if (hits.length >= 3) genreAvgs.push(hits.reduce((s, a) => s + a.elo, 0) / hits.length);
+    });
+    if (genreAvgs.length > 0) {
+      const avg = genreAvgs.reduce((s, v) => s + v, 0) / genreAvgs.length;
+      signals.push({ value: avg, weight: 1, reason: 'genre affinity' });
+    }
+  }
+
+  if (signals.length === 0) return { elo: 1200, reason: null };
+
+  // Weighted blend, clamped to a sensible range
+  const totalWeight = signals.reduce((s, sig) => s + sig.weight, 0);
+  const blended     = signals.reduce((s, sig) => s + sig.value * sig.weight, 0) / totalWeight;
+  const finalElo    = Math.round(Math.min(1600, Math.max(ELO_FLOOR, blended)));
+
+  // Pick the dominant signal (highest weight, tie-break by value delta from 1200)
+  const dominant = signals.sort((a, b) => b.weight - a.weight)[0];
+  const changed  = Math.abs(finalElo - 1200) >= 30;
+  return { elo: finalElo, reason: changed ? dominant.reason : null };
+}
+
+function openNewAnimeConfirm() {
+  if (!_pendingNewAnime.length) return;
+  const list = byId(IDS.newAnimeConfirmList);
+  if (list) {
+    while (list.firstChild) list.removeChild(list.firstChild);
+    _pendingNewAnime.forEach(a => {
+      const { elo, reason } = _calcSmartElo(a);
+      const li    = document.createElement('li');
+      const title = document.createElement('span');
+      title.textContent = displayTitle(a) || a.title || '(untitled)';
+      const meta  = document.createElement('span');
+      meta.className = 'arch-elo';
+      const metaParts = [
+        a.format || 'TV',
+        a.episodes ? `${a.episodes} ep` : null,
+        a.seasonYear || null,
+      ].filter(Boolean).join(' · ');
+      // Show smart ELO if it differs meaningfully from 1200
+      const eloPart = reason
+        ? `Starting ELO: ${elo} · ${reason}`
+        : `Starting ELO: 1200`;
+      meta.textContent = `${metaParts} · ${eloPart}`;
+      li.appendChild(title);
+      li.appendChild(meta);
+      list.appendChild(li);
+    });
+  }
+  byId(IDS.newAnimeConfirmModal).style.display = 'flex';
+}
+
+function closeNewAnimeConfirm() {
+  byId(IDS.newAnimeConfirmModal).style.display = 'none';
+}
+
+function closeNewAnimeConfirmOverlay(e) {
+  if (e.target === byId(IDS.newAnimeConfirmModal)) closeNewAnimeConfirm();
+}
+
+function confirmAddNewAnime() {
+  if (!_pendingNewAnime.length) { closeNewAnimeConfirm(); return; }
+  const n = _pendingNewAnime.length;
+  _pendingNewAnime.forEach(a => {
+    const { elo } = _calcSmartElo(a);
+    a.elo         = elo;
+    a.eloHistory  = [elo];
+    animeList.push(a);
+  });
+  _pendingNewAnime = [];
+  byId(IDS.newAnimeBanner)?.classList.remove('active');
+  closeNewAnimeConfirm();
+  saveState();
+  renderRankingList();
+  filterRankings();
+  showToast(`✓ Added ${n} anime to your rankings.`);
+}
+
+function dismissNewAnimeConfirm() {
+  _pendingNewAnime = [];
+  byId(IDS.newAnimeBanner)?.classList.remove('active');
+  closeNewAnimeConfirm();
+  showToast('✓ Skipped — anime not added to rankings.');
 }
 
 // ─── GUEST → OAUTH MERGE (§5.2.12) ────────────────────────────────────────────
@@ -10542,13 +12630,7 @@ async function refreshMALNow() {
 }
 
 function addPendingNewAnime() {
-  if (!_pendingNewAnime.length) return;
-  _pendingNewAnime.forEach(a => animeList.push(a));
-  _pendingNewAnime = [];
-  byId(IDS.newAnimeBanner)?.classList.remove('active');
-  saveState();
-  renderRankingList();
-  filterRankings();
+  openNewAnimeConfirm();
 }
 
 function _startNewAnimePolling() {

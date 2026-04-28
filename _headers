@@ -18,7 +18,7 @@
 # connect-src includes CDN domains so the canvas tier-list export
 # (which uses fetch() with mode:cors on cover URLs) isn't blocked.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.firebaseio.com wss://*.firebaseio.com https://*.firebase.com https://*.googleapis.com; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
