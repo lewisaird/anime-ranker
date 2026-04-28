@@ -5082,15 +5082,22 @@ function closeChallengeModal() {
 // Get these from: Firebase Console → Project Settings → Your apps → SDK snippet.
 // Single-device mode works without any Firebase configuration.
 const _FIREBASE_CONFIG = {
-  apiKey:            'AIzaSyCiwTSipP89Q3XWO4hXHAH-5GtCH-NcksE',
-  authDomain:        'kessen-95631.firebaseapp.com',
-  databaseURL:       'https://kessen-95631-default-rtdb.europe-west1.firebasedatabase.app',
-  projectId:         'kessen-95631',
-  storageBucket:     'kessen-95631.firebasestorage.app',
-  messagingSenderId: '1092517113834',
-  appId:             '1:1092517113834:web:db20628a6f9eb99f8a0c93',
+  apiKey:            '%%FIREBASE_API_KEY%%',
+  authDomain:        '%%FIREBASE_AUTH_DOMAIN%%',
+  databaseURL:       '%%FIREBASE_DATABASE_URL%%',
+  projectId:         '%%FIREBASE_PROJECT_ID%%',
+  storageBucket:     '%%FIREBASE_STORAGE_BUCKET%%',
+  messagingSenderId: '%%FIREBASE_MESSAGING_SENDER_ID%%',
+  appId:             '%%FIREBASE_APP_ID%%',
 };
-const _FIREBASE_READY = !!(_FIREBASE_CONFIG.apiKey && _FIREBASE_CONFIG.databaseURL);
+// Values starting with %% are un-substituted placeholders (local dev without build step).
+// Firebase features (collab, real-time sync) are silently disabled in that case.
+const _FIREBASE_READY = !!(
+  _FIREBASE_CONFIG.apiKey &&
+  !_FIREBASE_CONFIG.apiKey.startsWith('%%') &&
+  _FIREBASE_CONFIG.databaseURL &&
+  !_FIREBASE_CONFIG.databaseURL.startsWith('%%')
+);
 let _firebaseApp = null;
 
 function _initFirebase() {

@@ -1,6 +1,7 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+  command = "node tools/inject-env.mjs"
 
 [build.environment]
   NODE_VERSION = "18"
