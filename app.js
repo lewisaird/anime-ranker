@@ -1627,11 +1627,14 @@ function _stopFirebaseSync() {
 }
 
 // Attach a Firebase 'value' listener for this user's state path.
+// Uses the isolated 'kessen-sync' app so any connection errors here
+// never affect the default app used by collab.
 // Safe to call multiple times — re-attaches only if the path changed.
 function _startFirebaseSync() {
   if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser()) return;
   if (typeof firebase === 'undefined') return; // SDK didn't load
-  _initFirebase();
+  _initFirebaseSync();
+  if (!_firebaseSyncApp) return;
 
   const path = _getFirebaseSyncPath();
   if (!path) return;
@@ -1640,7 +1643,7 @@ function _startFirebaseSync() {
   if (_firebaseSyncRef && _firebaseSyncRef.key === path.split('/').pop()) return;
 
   _stopFirebaseSync();
-  _firebaseSyncRef = firebase.database().ref(path);
+  _firebaseSyncRef = _firebaseSyncApp.database().ref(path);
 
   // Firebase carries only a lightweight ping (savedAt + savedBy + battleCount).
   // The full session data lives in Netlify Blob — we fetch it from there when
@@ -1687,7 +1690,11 @@ function _startFirebaseSync() {
       byId(IDS.realtimeSyncBanner)?.classList.add('active');
     }
   }, err => {
-    console.warn('Firebase real-time sync error:', err.message);
+    // Stop the listener immediately on any error (permission denied, etc.)
+    // so the SDK's internal retry loop doesn't block other Firebase operations
+    // like collab session creation.
+    console.warn('Firebase sync error — stopping listener:', err.code, err.message);
+    _stopFirebaseSync();
   });
 }
 
@@ -1771,8 +1778,8 @@ async function _doCloudSave() {
       try {
         const path = _getFirebaseSyncPath();
         if (path) {
-          _initFirebase();
-          firebase.database().ref(path).set({
+          _initFirebaseSync();
+          if (_firebaseSyncApp) _firebaseSyncApp.database().ref(path).set({
             savedAt:      session.savedAt,
             savedBy:      _deviceId,
             battleCount:  session.battleCount,
@@ -5116,9 +5123,12 @@ function closeChallengeModal() {
 // so the API key is never present in the static bundle or source control.
 // _FIREBASE_READY flips to true once the fetch resolves successfully.
 // Firebase features (collab, real-time sync) silently no-op until then.
-let _FIREBASE_CONFIG = null;
-let _FIREBASE_READY  = false;
-let _firebaseApp     = null;
+let _FIREBASE_CONFIG  = null;
+let _FIREBASE_READY   = false;
+let _firebaseApp      = null; // Default app — used exclusively by collab
+let _firebaseSyncApp  = null; // Named app 'kessen-sync' — used exclusively by real-time sync
+                               // Keeping them separate means a sync connection problem
+                               // (permission denied, retry loop, etc.) can never block collab.
 
 // Kick off the config fetch immediately on script parse — it resolves long
 // before any user interaction can trigger a Firebase operation.
@@ -5143,7 +5153,19 @@ let _firebaseApp     = null;
 
 function _initFirebase() {
   if (_firebaseApp || !_FIREBASE_READY || !_FIREBASE_CONFIG) return;
-  try { _firebaseApp = firebase.initializeApp(_FIREBASE_CONFIG); } catch (e) { /* already initialised */ }
+  try { _firebaseApp = firebase.initializeApp(_FIREBASE_CONFIG); } catch (e) {
+    try { _firebaseApp = firebase.app(); } catch (_) {}
+  }
+}
+
+// Separate named Firebase app for real-time sync only.
+// Any connection issues here (permission denied, retry loops) are completely
+// isolated from the default app used by collab.
+function _initFirebaseSync() {
+  if (_firebaseSyncApp || !_FIREBASE_READY || !_FIREBASE_CONFIG) return;
+  try { _firebaseSyncApp = firebase.initializeApp(_FIREBASE_CONFIG, 'kessen-sync'); } catch (e) {
+    try { _firebaseSyncApp = firebase.app('kessen-sync'); } catch (_) {}
+  }
 }
 
 let _collab = null;
