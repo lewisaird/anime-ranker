@@ -5368,18 +5368,26 @@ async function collabCreateSession() {
   const btn = document.getElementById('collab-multi-create')?.querySelector('button');
   if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
 
+  // Pause the real-time sync listener while checking collab connectivity.
+  // If the sync listener is getting "Permission denied" from RTDB rules it
+  // triggers a reconnect loop that keeps .info/connected false — stopping it
+  // first gives Firebase a clean connection state for the check below.
+  _stopFirebaseSync();
+
   // Verify Firebase is actually reachable before queuing a write that would
   // hang silently forever if the connection can't be established.
   const connected = await _waitForFirebaseConnection(8000);
   if (!connected) {
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
     const dbUrl = _FIREBASE_CONFIG?.databaseURL || '(not loaded)';
-    alert(
-      'Could not reach the session server.\n\n' +
-      'DB: ' + dbUrl + '\n\n' +
-      'If this URL looks wrong, update FIREBASE_DATABASE_URL in your Netlify environment variables. ' +
-      'Otherwise check your internet connection or try disabling browser extensions.'
-    );
+    const msg = _firebaseCspViolation
+      ? 'Could not reach the session server — Firebase is being blocked by a Content-Security-Policy header.\n\n'
+        + 'Blocked URL: ' + _firebaseCspViolation + '\n\n'
+        + 'Fix: hard-reload the page (hold Shift and click reload, or close and reopen the app) to pick up the updated security headers.'
+      : 'Could not reach the session server.\n\n'
+        + 'DB: ' + dbUrl + '\n\n'
+        + 'Check your internet connection, or try closing and reopening the app.';
+    alert(msg);
     return;
   }
 
@@ -5433,6 +5441,8 @@ async function collabJoinSession() {
   const code = (byId(IDS.collabJoinInput).value || '').trim().toUpperCase();
   const name = byId(IDS.collabMultiName).value.trim() || 'Guest';
   if (code.length !== 6) return;
+
+  _stopFirebaseSync(); // same reason as in collabCreateSession
 
   const connected = await _waitForFirebaseConnection(8000);
   if (!connected) {
@@ -11753,6 +11763,33 @@ async function reseedFromMAL() {
     if (btn) { btn.disabled = false; btn.textContent = '🌱 Re-seed ELO from MAL scores'; }
   }
 }
+
+// ─── SERVICE WORKER UPDATE HANDLER ──────────────────────────────────────────
+// When a new service worker takes control (after skipWaiting()), the page is
+// still running under the old CSP headers. Reloading gets the fresh headers
+// from the new SW's cache. More reliable than client.navigate() in the SW
+// itself, which can fail silently in PWA/standalone mode on iOS.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();
+  });
+}
+
+// ─── CSP VIOLATION TRACKER ───────────────────────────────────────────────────
+// Detects if Firebase domains are blocked by Content-Security-Policy headers.
+// Stored so the connection-failure alert can name the root cause clearly.
+let _firebaseCspViolation = null;
+document.addEventListener('securitypolicyviolation', e => {
+  const uri = e.blockedURI || '';
+  if (
+    uri.includes('firebasedatabase.app') ||
+    uri.includes('firebaseio.com') ||
+    uri.includes('firebase')
+  ) {
+    _firebaseCspViolation = uri;
+    console.error('🔒 Firebase blocked by CSP:', uri, '| directive:', e.violatedDirective);
+  }
+});
 
 // ─── METADATA REFRESH ────────────────────────────────────────────────────────
 // Re-fetches covers, titles, descriptions, episodes, genres etc. for all
