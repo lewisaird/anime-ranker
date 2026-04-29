@@ -1627,14 +1627,15 @@ function _stopFirebaseSync() {
 }
 
 // Attach a Firebase 'value' listener for this user's state path.
-// Uses the isolated 'kessen-sync' app so any connection errors here
-// never affect the default app used by collab.
+// Shares _firebaseApp with collab — error isolation is handled in the
+// onError callback below (we detach the listener so the SDK retry loop can't
+// poison subsequent collab writes), not by running a second app instance.
 // Safe to call multiple times — re-attaches only if the path changed.
 function _startFirebaseSync() {
   if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser()) return;
   if (typeof firebase === 'undefined') return; // SDK didn't load
-  _initFirebaseSync();
-  if (!_firebaseSyncApp) return;
+  _initFirebase();
+  if (!_firebaseApp) return;
 
   const path = _getFirebaseSyncPath();
   if (!path) return;
@@ -1643,7 +1644,7 @@ function _startFirebaseSync() {
   if (_firebaseSyncRef && _firebaseSyncRef.key === path.split('/').pop()) return;
 
   _stopFirebaseSync();
-  _firebaseSyncRef = _firebaseSyncApp.database().ref(path);
+  _firebaseSyncRef = _firebaseApp.database().ref(path);
 
   // Firebase carries only a lightweight ping (savedAt + savedBy + battleCount).
   // The full session data lives in Netlify Blob — we fetch it from there when
@@ -1771,15 +1772,13 @@ async function _doCloudSave() {
 
     // Notify other devices via Firebase — write a tiny ping only, NOT the full
     // session. The full data lives in the Netlify Blob (written above); other
-    // devices fetch it from there when they see a newer ping. This keeps the
-    // Firebase write negligibly small and never blocks the shared WebSocket
-    // connection that collab sessions also use.
+    // devices fetch it from there when they see a newer ping.
     if (_FIREBASE_READY && typeof firebase !== 'undefined') {
       try {
         const path = _getFirebaseSyncPath();
         if (path) {
-          _initFirebaseSync();
-          if (_firebaseSyncApp) _firebaseSyncApp.database().ref(path).set({
+          _initFirebase();
+          if (_firebaseApp) _firebaseApp.database().ref(path).set({
             savedAt:      session.savedAt,
             savedBy:      _deviceId,
             battleCount:  session.battleCount,
@@ -5140,27 +5139,38 @@ const _FIREBASE_CONFIG = {
 let _FIREBASE_READY  = typeof firebase !== 'undefined'
                     && !!(_FIREBASE_CONFIG.apiKey && _FIREBASE_CONFIG.databaseURL)
                     && !_FIREBASE_CONFIG.apiKey.includes('REPLACE');
-let _firebaseApp     = null; // Default app — used exclusively by collab
-let _firebaseSyncApp = null; // Named app 'kessen-sync' — used exclusively by real-time sync
-                              // Keeping them separate means a sync connection problem
-                              // (permission denied, retry loop, etc.) can never block collab.
+// Single Firebase app shared by both Watch Together (collab) and the real-time
+// autosync. Earlier we had two named apps (default + 'kessen-sync') hoping that
+// would isolate failures — but Firebase v9 compat keys connections by
+// databaseURL, so two apps to the same RTDB share the same WebSocket internally
+// and end up trampling each other's listener state. One app is simpler AND
+// strictly more reliable; per-feature fault isolation is achieved via separate
+// try/catch + listener-detach paths instead.
+let _firebaseApp     = null;
+let _firebaseSyncApp = null; // Back-compat alias — points at the same app as
+                              // _firebaseApp. Retained so legacy call sites
+                              // that still reference it keep working until the
+                              // next refactor pass cleans them up.
 
 function _initFirebase() {
-  if (_firebaseApp || !_FIREBASE_READY || !_FIREBASE_CONFIG) return;
-  try { _firebaseApp = firebase.initializeApp(_FIREBASE_CONFIG); } catch (e) {
-    try { _firebaseApp = firebase.app(); } catch (_) {}
+  if (_firebaseApp || !_FIREBASE_READY || !_FIREBASE_CONFIG) {
+    _firebaseSyncApp = _firebaseApp; // keep alias in sync even on early-return
+    return _firebaseApp;
   }
+  try { _firebaseApp = firebase.initializeApp(_FIREBASE_CONFIG); } catch (_e1) {
+    // Already initialized (e.g., on a hot reload) — recover the existing one.
+    try { _firebaseApp = firebase.app(); } catch (_e2) {
+      console.error('[firebase] init failed:', _e1 && _e1.message, '| recover failed:', _e2 && _e2.message);
+    }
+  }
+  _firebaseSyncApp = _firebaseApp;
+  return _firebaseApp;
 }
 
-// Separate named Firebase app for real-time sync only.
-// Any connection issues here (permission denied, retry loops) are completely
-// isolated from the default app used by collab.
-function _initFirebaseSync() {
-  if (_firebaseSyncApp || !_FIREBASE_READY || !_FIREBASE_CONFIG) return;
-  try { _firebaseSyncApp = firebase.initializeApp(_FIREBASE_CONFIG, 'kessen-sync'); } catch (e) {
-    try { _firebaseSyncApp = firebase.app('kessen-sync'); } catch (_) {}
-  }
-}
+// Back-compat shim — older call sites used a separate sync app. They now share
+// the single _firebaseApp; keeping the function name avoids touching every
+// call site in this pass.
+function _initFirebaseSync() { return _initFirebase(); }
 
 let _collab = null;
 
@@ -5171,7 +5181,7 @@ function _waitForFirebaseConnection(timeoutMs = 8000) {
     if (!_FIREBASE_READY || typeof firebase === 'undefined') { resolve(false); return; }
     _initFirebase();
     if (!_firebaseApp) { resolve(false); return; }
-    const connRef = firebase.database().ref('.info/connected');
+    const connRef = _firebaseApp.database().ref('.info/connected');
     let settled = false;
     const finish = val => {
       if (settled) return;
@@ -5255,11 +5265,16 @@ function closeCollabModal() {
   _collabClearSession(); // session ended intentionally — don't offer rejoin
   byId(IDS.collabModal).style.display = 'none';
   _collab = null;
+  // Re-attach the autosync listener that collabCreateSession/collabJoinSession
+  // detached. Safe to call even if it was never running — _startFirebaseSync
+  // is idempotent and short-circuits if cloud sync isn't enabled.
+  _startFirebaseSync();
 }
 
 // ── PRESENCE ──────────────────────────────────────────────────────────────────
 function _collabSetupPresence(ref, pid) {
-  const connRef = firebase.database().ref('.info/connected');
+  if (!_firebaseApp) _initFirebase();
+  const connRef = _firebaseApp.database().ref('.info/connected');
   const handler = snap => {
     if (!snap.val()) return;
     ref.child(`players/${pid}/connected`).set(true);
@@ -5290,12 +5305,13 @@ async function collabRejoinSession() {
   const stored = _collabGetStoredSession();
   if (!stored) return;
   _initFirebase();
+  if (!_firebaseApp) return;
 
   const btn = document.querySelector('#collab-rejoin-banner .collab-rejoin-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Rejoining…'; }
 
   try {
-    const ref  = firebase.database().ref('collab-sessions/' + stored.code);
+    const ref  = _firebaseApp.database().ref('collab-sessions/' + stored.code);
     const snap = await ref.once('value');
 
     if (!snap.exists() || !snap.val().players?.[stored.playerId]) {
@@ -5384,9 +5400,16 @@ async function collabCreateSession() {
   const btn = document.getElementById('collab-multi-create')?.querySelector('button');
   if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
 
-  // Stop sync listener so it doesn't interfere with the collab connection.
+  // Stop the autosync listener so its 'value' callback can't fire mid-write.
+  // Both features now share the same Firebase app, so we just detach the
+  // listener — we do NOT tear down the WebSocket.
   _stopFirebaseSync();
   _initFirebase();
+  if (!_firebaseApp) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
+    alert('Could not initialise the session server. Please reload and try again.');
+    return;
+  }
 
   if (btn) btn.textContent = 'Creating…';
 
@@ -5408,7 +5431,7 @@ async function collabCreateSession() {
       createdAt: Date.now(),
     };
 
-    const ref = firebase.database().ref('collab-sessions/' + code);
+    const ref = _firebaseApp.database().ref('collab-sessions/' + code);
 
     // Race the write against a 20s timeout. Firebase queues writes when the
     // WebSocket isn't yet open and flushes them once connected — so this
@@ -5436,7 +5459,21 @@ async function collabCreateSession() {
   } catch (err) {
     console.error('collabCreateSession error:', err);
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
-    alert(err.message || 'Could not create session — check your connection and try again.');
+
+    // Run a REST reachability test to diagnose whether Firebase is reachable at all.
+    // WebSocket failing but REST working → WebSocket blocked (firewall/proxy).
+    // REST also failing → full network block or wrong databaseURL.
+    let restResult = 'not tested';
+    try {
+      const r = await fetch(_FIREBASE_CONFIG.databaseURL + '/.info/connected.json',
+        { signal: AbortSignal.timeout(5000) });
+      restResult = 'HTTP ' + r.status + ' ✓ (server reachable — WebSocket may be blocked by firewall/proxy)';
+    } catch (e) {
+      restResult = 'FAILED ✗ (' + e.message + ') — server not reachable, possible firewall or network block';
+    }
+
+    const cspNote = _firebaseCspViolation ? '\nCSP block: ' + _firebaseCspViolation : '';
+    alert((err.message || 'Could not create session.') + cspNote + '\n\nNetwork diagnostic: ' + restResult);
   }
 }
 
@@ -5448,8 +5485,13 @@ async function collabJoinSession() {
 
   _stopFirebaseSync();
   _initFirebase();
+  if (!_firebaseApp) {
+    byId(IDS.collabJoinInput).style.borderColor = '#f85149';
+    byId(IDS.collabJoinInput).placeholder = 'Could not initialise — reload and try again';
+    return;
+  }
 
-  const ref = firebase.database().ref('collab-sessions/' + code);
+  const ref = _firebaseApp.database().ref('collab-sessions/' + code);
 
   // Race the read against a 20s timeout (same pattern as collabCreateSession).
   const readTimeout = new Promise((_, reject) =>
