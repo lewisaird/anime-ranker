@@ -18,20 +18,22 @@
 # connect-src includes CDN domains so the canvas tier-list export
 # (which uses fetch() with mode:cors on cover URLs) isn't blocked.
 #
-# Firebase domains:
-#   • *.firebaseio.com / wss://*.firebaseio.com              — US-region RTDB + legacy
-#   • kessen-95631-default-rtdb.europe-west1.firebasedatabase.app — exact RTDB host
-#     CSP wildcards only match ONE subdomain level in some browser implementations,
-#     so the multi-level europe-west1 hostname is listed explicitly.
-#   • script-src MUST allow the RTDB host + *.firebaseio.com — the Firebase RTDB
-#     compat SDK falls back to a long-polling transport that loads JS dynamically
-#     via <script> tags from /.lp?…  on the database host. Without this, any
-#     network where the WebSocket can't establish (proxy, restrictive Wi-Fi,
-#     some Cloudflare paths) will retry-loop forever and never connect.
-#   • www.gstatic.com is in connect-src so the SDK's .map source-map fetches
-#     don't show as CSP errors in DevTools.
+# Firebase domains — IMPORTANT: Firebase RTDB doesn't serve traffic from the
+# canonical project host. It redirects to a regional shard like
+# s-gke-euw1-nssi3-6.europe-west1.firebasedatabase.app, so any allowlist that
+# pins only the canonical hostname will fail at runtime. Use a wildcard that
+# spans the whole *.firebasedatabase.app TLD.
+#
+#   • https://*.firebasedatabase.app + wss://*.firebasedatabase.app — both REST
+#     and WebSocket transports to any RTDB host (canonical + sharded)
+#   • script-src needs *.firebasedatabase.app + *.firebaseio.com so the long-
+#     polling fallback transport (JSONP-style script injection from /.lp?…)
+#     works on networks where the WebSocket can't establish
+#   • frame-src needs the same — long-polling uses iframes for posting writes
+#   • www.gstatic.com in connect-src silences source-map fetch errors that
+#     otherwise spam the violation handler
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseio.com https://kessen-95631-default-rtdb.europe-west1.firebasedatabase.app; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.firebaseio.com wss://*.firebaseio.com https://kessen-95631-default-rtdb.europe-west1.firebasedatabase.app wss://kessen-95631-default-rtdb.europe-west1.firebasedatabase.app https://*.firebase.com https://*.googleapis.com https://www.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.firebase.com https://*.googleapis.com https://www.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-src https://*.firebasedatabase.app https://*.firebaseio.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
