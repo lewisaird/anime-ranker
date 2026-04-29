@@ -9,7 +9,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION = '1.0.9';
+const APP_VERSION = '1.0.10';
 const CACHE_NAME  = `kessen-v${APP_VERSION}`;
 
 // Cache the canonical root only. Netlify serves index.html at both '/' and
@@ -34,18 +34,24 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// ── Activate: delete old caches ──────────────────────────────────────────────
+// ── Activate: delete old caches, then reload all open pages ─────────────────
+// After a version bump the old cached responses (including their CSP headers)
+// are deleted and the new shell is fetched fresh. But any page that was already
+// open loaded with the OLD cached headers and won't pick up the new ones until
+// it reloads. client.navigate() does that reload automatically, so users always
+// see the new version without needing to manually refresh twice.
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
-        keys
-          .filter(k => k !== CACHE_NAME)
-          .map(k => caches.delete(k))
+    caches.keys()
+      .then(keys =>
+        Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
       )
-    )
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then(clients =>
+        Promise.all(clients.map(c => c.navigate(c.url).catch(() => {})))
+      )
   );
-  self.clients.claim();
 });
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
