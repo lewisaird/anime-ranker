@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.20" />
+  <meta name="version" content="1.0.23" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -279,10 +279,27 @@
       <div id="collab-lobby-code" class="collab-session-code"></div>
       <div id="collab-player-list" class="collab-player-list" style="margin-top:14px"></div>
       <!-- Host only -->
-      <button id="collab-start-noms-btn" class="btn-primary"
-              style="display:none;width:100%;margin-top:16px" onclick="collabHostStartNominations()">
-        Everyone's in — start nominations →
-      </button>
+      <div id="collab-host-actions" style="display:none;margin-top:16px">
+        <button id="collab-start-noms-btn" class="btn-primary"
+                style="width:100%;margin-bottom:8px" onclick="collabHostStartNominations()">
+          Everyone's in — start nominations →
+        </button>
+        <button id="collab-start-season-btn" class="btn-secondary"
+                style="width:100%" onclick="collabHostStartThisSeason()">
+          🌸 Watch Together This Season →
+        </button>
+        <div id="collab-season-filters" style="margin-top:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:0.79rem;color:#8b949e">
+          <div style="font-weight:600;margin-bottom:6px">Season filters</div>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:5px;cursor:pointer;color:var(--text)">
+            <input type="checkbox" id="collab-filter-ranked" checked />
+            Skip shows anyone's already ranked
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text)">
+            <input type="checkbox" id="collab-filter-sequels" checked />
+            Skip sequels
+          </label>
+        </div>
+      </div>
       <!-- Guest only -->
       <p id="collab-lobby-guest-status" style="display:none;font-size:0.82rem;color:#8b949e;text-align:center;margin-top:12px">
         Waiting for host to start…

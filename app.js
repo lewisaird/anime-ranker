@@ -245,7 +245,9 @@ const IDS = Object.freeze({
   collabNominationsList:    'collab-nominations-list',
   collabPassName:           'collab-pass-name',
   collabPlayerList:         'collab-player-list',
+  collabHostActions:        'collab-host-actions',
   collabStartNomsBtn:       'collab-start-noms-btn',
+  collabStartSeasonBtn:     'collab-start-season-btn',
   collabLobbyGuestStatus:   'collab-lobby-guest-status',
   collabVoteProgress:       'collab-vote-progress',
   collabCardA:              'collab-card-a',
@@ -5255,6 +5257,15 @@ function openCollabMode() {
   if (multiBtn)  multiBtn.style.display  = _FIREBASE_READY ? '' : 'none';
   if (multiNote) multiNote.style.display = _FIREBASE_READY ? 'none' : '';
 
+  // Pre-fill the name field from the logged-in AniList or MAL account.
+  // Only set it if the field is currently empty so we don't clobber a name
+  // the user already typed during this session.
+  const nameInput = byId(IDS.collabMultiName);
+  if (nameInput && !nameInput.value.trim()) {
+    const loggedInName = (authUser && authUser.name) || (malAuthUser && malAuthUser.name) || '';
+    if (loggedInName) nameInput.value = loggedInName;
+  }
+
   // Show rejoin banner if there's a saved session
   _collabCheckRejoinBanner();
 }
@@ -5439,7 +5450,7 @@ async function collabCreateSession() {
     const initialData = {
       phase: 'lobby',
       hostId: pid,
-      players: { [pid]: { name, nominations: null, ready: false } },
+      players: { [pid]: { name, nominations: null, ready: false, rankedIds: animeList.map(a => a.id).filter(Boolean) } },
       pairs: null, currentPair: 0,
       votes: null,
       results: null,
@@ -5546,7 +5557,7 @@ async function collabJoinSession() {
   _collab.sessionCode = code;
   _collab.firebaseRef = ref;
 
-  await ref.update({ [`players/${pid}`]: { name, nominations: null, ready: false } });
+  await ref.update({ [`players/${pid}`]: { name, nominations: null, ready: false, rankedIds: animeList.map(a => a.id).filter(Boolean) } });
 
   // Snapshot the full player list for immediate local render
   const freshSnap = await ref.child('players').once('value');
@@ -5584,6 +5595,84 @@ function collabHostStartNominations() {
   _collab.firebaseRef.update({ phase: 'nominating' });
 }
 
+async function collabHostStartThisSeason() {
+  if (!_collab?.isHost || !_collab.firebaseRef) return;
+  if (Object.keys(_collab.players || {}).length < 2) return;
+
+  const seasonBtn = byId(IDS.collabStartSeasonBtn);
+  const nomsBtn   = byId(IDS.collabStartNomsBtn);
+  if (seasonBtn) { seasonBtn.disabled = true; seasonBtn.textContent = 'Fetching this season…'; }
+  if (nomsBtn)   { nomsBtn.disabled   = true; }
+
+  try {
+    const excludeRanked  = byId('collab-filter-ranked')?.checked  ?? true;
+    const excludeSequels = byId('collab-filter-sequels')?.checked ?? true;
+
+    const { season, year } = getCurrentSeason();
+    const query = `
+      query ($season: MediaSeason, $year: Int) {
+        Page(perPage: 50) {
+          media(season: $season, seasonYear: $year, type: ANIME,
+                sort: POPULARITY_DESC, status_not: CANCELLED,
+                format_in: [TV, TV_SHORT, ONA]) {
+            id
+            title { romaji english }
+            coverImage { large medium }
+            relations { edges { relationType(version: 2) } }
+          }
+        }
+      }`;
+    const res  = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { season, year } }),
+    });
+    if (!res.ok) throw new Error('AniList returned HTTP ' + res.status);
+    const json = await res.json();
+    if (json.errors) throw new Error(json.errors[0].message);
+
+    // Collect every AniList ID any player has already ranked
+    const allRankedIds = new Set();
+    if (excludeRanked) {
+      Object.values(_collab.players || {}).forEach(p =>
+        (p.rankedIds || []).forEach(id => allRankedIds.add(id))
+      );
+    }
+
+    let rawPool = (json?.data?.Page?.media ?? []).map(m => ({
+      title:    m.title.english || m.title.romaji,
+      cover:    m.coverImage.large || m.coverImage.medium || '',
+      _id:      m.id,
+      _isSequel: (m.relations?.edges || []).some(e => e.relationType === 'PREQUEL'),
+    })).filter(m => m.title);
+
+    if (excludeRanked)  rawPool = rawPool.filter(m => !allRankedIds.has(m._id));
+    if (excludeSequels) rawPool = rawPool.filter(m => !m._isSequel);
+
+    // Strip internal fields before sharing — pool items only need title + cover
+    const pool = rawPool.map(({ title, cover }) => ({ title, cover }));
+
+    if (pool.length < 2) {
+      const total = (json?.data?.Page?.media ?? []).length;
+      throw new Error(
+        `Only ${pool.length} show${pool.length === 1 ? '' : 's'} left after filtering ` +
+        `(${total} this season, filters removed the rest).\n\nTry unchecking a filter and retrying.`
+      );
+    }
+
+    // Tell guests we're in the round-picking phase and share the pool
+    await _collab.firebaseRef.update({ phase: 'selecting-rounds', seasonPool: pool });
+
+    // Host goes straight to the round picker
+    _collabShowRoundPicker(pool);
+  } catch (err) {
+    console.error('collabHostStartThisSeason error:', err);
+    if (seasonBtn) { seasonBtn.disabled = false; seasonBtn.textContent = '🌸 Watch Together This Season →'; }
+    if (nomsBtn)   { nomsBtn.disabled   = false; }
+    alert('Could not load this season\'s anime:\n' + (err.message || err));
+  }
+}
+
 function _collabRenderLobby(data) {
   const players   = data.players || {};
   const playerArr = Object.entries(players);
@@ -5603,20 +5692,29 @@ function _collabRenderLobby(data) {
       </div>`;
     }).join('');
   }
+  const hostActions = byId(IDS.collabHostActions);
   const startBtn    = byId(IDS.collabStartNomsBtn);
+  const seasonBtn   = byId(IDS.collabStartSeasonBtn);
   const guestStatus = byId(IDS.collabLobbyGuestStatus);
+  const ready       = connectedArr.length >= 2;
   if (_collab.isHost) {
+    if (hostActions) hostActions.style.display = '';
     if (startBtn) {
-      startBtn.style.display = '';
-      startBtn.disabled = connectedArr.length < 2;
-      startBtn.textContent = connectedArr.length < 2
-        ? 'Waiting for at least one more player…'
-        : `Everyone's in (${connectedArr.length} players) — start nominations →`;
+      startBtn.disabled = !ready;
+      startBtn.textContent = ready
+        ? `Everyone's in (${connectedArr.length} players) — start nominations →`
+        : 'Waiting for at least one more player…';
+    }
+    if (seasonBtn) {
+      seasonBtn.disabled    = !ready;
+      seasonBtn.textContent = ready
+        ? '🌸 Watch Together This Season →'
+        : '🌸 This Season (waiting for players…)';
     }
     if (guestStatus) guestStatus.style.display = 'none';
   } else {
-    if (startBtn)    startBtn.style.display    = 'none';
-    if (guestStatus) guestStatus.style.display = '';
+    if (hostActions)  hostActions.style.display  = 'none';
+    if (guestStatus)  guestStatus.style.display  = '';
   }
 }
 
@@ -5630,6 +5728,21 @@ function _collabSyncFromFirebase(data) {
   if (data.phase === 'lobby') {
     _collabRenderLobby(data);
     _collabMaybePromoteHost(data);
+  }
+
+  if (data.phase === 'selecting-rounds') {
+    // Host is on the round picker — guests see a waiting message
+    if (!_collab.isHost) {
+      const guestStatus = byId(IDS.collabLobbyGuestStatus);
+      if (guestStatus) {
+        guestStatus.style.display = '';
+        guestStatus.textContent   = 'Host is picking the number of rounds…';
+      }
+      // Stay on the lobby panel so the code is still visible; just update the status text
+      const lobbyPanel = byId(IDS.collabPanelMultiLobby);
+      if (!lobbyPanel || lobbyPanel.style.display === 'none') _collabPanel(IDS.collabPanelMultiLobby);
+    }
+    return;
   }
 
   if (data.phase === 'nominating') {
