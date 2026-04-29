@@ -5373,7 +5373,13 @@ async function collabCreateSession() {
   const connected = await _waitForFirebaseConnection(8000);
   if (!connected) {
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
-    alert('Could not reach the session server.\n\nCheck your internet connection and try again. If the problem persists, a browser extension may be blocking the connection.');
+    const dbUrl = _FIREBASE_CONFIG?.databaseURL || '(not loaded)';
+    alert(
+      'Could not reach the session server.\n\n' +
+      'DB: ' + dbUrl + '\n\n' +
+      'If this URL looks wrong, update FIREBASE_DATABASE_URL in your Netlify environment variables. ' +
+      'Otherwise check your internet connection or try disabling browser extensions.'
+    );
     return;
   }
 
