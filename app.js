@@ -1630,6 +1630,7 @@ function _stopFirebaseSync() {
 // Safe to call multiple times — re-attaches only if the path changed.
 function _startFirebaseSync() {
   if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser()) return;
+  if (typeof firebase === 'undefined') return; // SDK didn't load
   _initFirebase();
 
   const path = _getFirebaseSyncPath();
@@ -1751,7 +1752,7 @@ async function _doCloudSave() {
 
     // Mirror to Firebase for real-time cross-device sync.
     // Tag with _deviceId so other devices know this snapshot is from us.
-    if (_FIREBASE_READY) {
+    if (_FIREBASE_READY && typeof firebase !== 'undefined') {
       try {
         const path = _getFirebaseSyncPath();
         if (path) {
@@ -4471,9 +4472,15 @@ async function runCompatibility() {
     const data = await _fetchFriendList(username2);
 
     const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
-    const otherEntries = data.data.MediaListCollection.lists
-      .flatMap(l => l.entries)
-      .filter(e => WATCHED.has(e.status));
+    // flatMap across all lists then deduplicate by media ID — AniList users can
+    // have the same anime in both a standard list and a custom list simultaneously,
+    // which would otherwise create duplicate entries in otherById.
+    const otherEntries = [...new Map(
+      data.data.MediaListCollection.lists
+        .flatMap(l => l.entries)
+        .filter(e => WATCHED.has(e.status))
+        .map(e => [e.media.id, e])
+    ).values()];
 
     // Build rank maps
     // User 1: ELO rank
@@ -4484,8 +4491,13 @@ async function runCompatibility() {
     // the overlap subset below — a global rank map isn't exposed in the UI).
     const otherById = new Map(otherEntries.map(e => [e.media.id, e]));
 
-    // Overlap = any anime both users have watched (no score requirement)
-    const overlap = animeList.filter(a => otherById.has(a.id));
+    // Overlap = any anime both users have watched (no score requirement).
+    // Deduplicate by ID in case animeList has accumulated duplicate entries
+    // (e.g. from successive syncs) — duplicates would make the same title
+    // appear twice in the disagreements / agreements lists.
+    const overlap = [...new Map(
+      animeList.filter(a => otherById.has(a.id)).map(a => [a.id, a])
+    ).values()];
 
     if (overlap.length < 5) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
@@ -4640,8 +4652,11 @@ async function _runCompatibilityMal(username2) {
     const malEntries = await _fetchMalUserList(username2, setProgress);
     const otherByMalId = new Map(malEntries.map(e => [e.malId, e]));
 
-    // Overlap: user's ranked anime that the friend also has on MAL
-    const overlap = animeList.filter(a => a.idMal && otherByMalId.has(a.idMal));
+    // Overlap: user's ranked anime that the friend also has on MAL.
+    // Deduplicate by AniList ID for the same reason as the AniList path above.
+    const overlap = [...new Map(
+      animeList.filter(a => a.idMal && otherByMalId.has(a.idMal)).map(a => [a.id, a])
+    ).values()];
     if (overlap.length < 5) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
         Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
@@ -5090,6 +5105,12 @@ let _firebaseApp     = null;
 // before any user interaction can trigger a Firebase operation.
 (async function _loadFirebaseConfig() {
   try {
+    // Guard: the SDK scripts (firebase-app-compat.js etc.) must have loaded
+    // from the CDN. If they didn't (network blip, ad blocker, slow CDN during
+    // a cache-bust), keep _FIREBASE_READY false so Firebase UI stays hidden
+    // and we never call firebase.database() on an undefined global.
+    if (typeof firebase === 'undefined') return;
+
     const res = await fetch('/.netlify/functions/firebase-config');
     if (!res.ok) return;
     const cfg = await res.json();
