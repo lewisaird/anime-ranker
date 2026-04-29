@@ -1642,24 +1642,35 @@ function _startFirebaseSync() {
   _stopFirebaseSync();
   _firebaseSyncRef = firebase.database().ref(path);
 
-  _firebaseSyncListener = _firebaseSyncRef.on('value', snap => {
-    const data = snap.val();
-    if (!data || !data.animeList || !data.savedBy || !data.savedAt) return;
-    if (data.savedBy === _deviceId) return; // our own write — skip
+  // Firebase carries only a lightweight ping (savedAt + savedBy + battleCount).
+  // The full session data lives in Netlify Blob — we fetch it from there when
+  // we detect a newer ping from another device. This keeps Firebase writes tiny
+  // so they never contend with collab-session traffic on the same WebSocket.
+  _firebaseSyncListener = _firebaseSyncRef.on('value', async snap => {
+    const ping = snap.val();
+    if (!ping || !ping.savedBy || !ping.savedAt) return;
+    if (ping.savedBy === _deviceId) return; // our own write — skip
 
-    const remoteTs      = new Date(data.savedAt).getTime();
-    const remoteBattles = data.battleCount || 0;
+    const remoteTs      = new Date(ping.savedAt).getTime();
+    const remoteBattles = ping.battleCount || 0;
 
-    // Ignore if we've already seen this snapshot or if our local state is ahead
+    // Ignore if we've already seen this ping or if our local state is ahead
     if (remoteTs <= _lastFirebaseSyncTs) return;
     if (remoteBattles <= battleCount) {
       _lastFirebaseSyncTs = remoteTs; // mark seen so we don't re-prompt
       return;
     }
 
+    // Fetch the actual session from Netlify Blob (the full data source)
+    const data = await _loadCloudSave();
+    if (!data || !data.animeList) return;
+
+    // Re-check after the async fetch — another battle may have happened locally
+    if ((data.battleCount || 0) <= battleCount) return;
+
     const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
     if (!onBattle || !animeList.length) {
-      // Not actively battling (or no session loaded yet) — apply silently
+      // Not actively battling — apply silently
       _lastFirebaseSyncTs = remoteTs;
       if (animeList.length) {
         _applyCloudSaveToMemory(data);
@@ -1667,10 +1678,11 @@ function _startFirebaseSync() {
         syncFormatButtons(); syncEpRangeButtons();
       }
     } else {
-      // User is mid-battle — show a non-disruptive banner so they can choose when to apply
+      // Mid-battle — show banner so they can choose when to apply
       _pendingSyncData = data;
+      _lastFirebaseSyncTs = remoteTs; // mark ping as seen regardless of decision
+      const count = (data.battleCount || 0) - battleCount;
       const msg = byId(IDS.realtimeSyncMsg);
-      const count = remoteBattles - battleCount;
       if (msg) msg.textContent = `📱 Your other device ranked ${count} more anime`;
       byId(IDS.realtimeSyncBanner)?.classList.add('active');
     }
@@ -1750,14 +1762,21 @@ async function _doCloudSave() {
     _setSyncIndicator('saved');
     setTimeout(() => _setSyncIndicator('hidden'), 3000);
 
-    // Mirror to Firebase for real-time cross-device sync.
-    // Tag with _deviceId so other devices know this snapshot is from us.
+    // Notify other devices via Firebase — write a tiny ping only, NOT the full
+    // session. The full data lives in the Netlify Blob (written above); other
+    // devices fetch it from there when they see a newer ping. This keeps the
+    // Firebase write negligibly small and never blocks the shared WebSocket
+    // connection that collab sessions also use.
     if (_FIREBASE_READY && typeof firebase !== 'undefined') {
       try {
         const path = _getFirebaseSyncPath();
         if (path) {
           _initFirebase();
-          firebase.database().ref(path).set({ ...session, savedBy: _deviceId });
+          firebase.database().ref(path).set({
+            savedAt:      session.savedAt,
+            savedBy:      _deviceId,
+            battleCount:  session.battleCount,
+          });
           _lastFirebaseSyncTs = new Date(session.savedAt).getTime();
         }
       } catch (fbErr) {
