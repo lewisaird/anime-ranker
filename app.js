@@ -5148,6 +5148,28 @@ function _initFirebase() {
 
 let _collab = null;
 
+// Resolves true if Firebase RTDB is connected within timeoutMs, false otherwise.
+// Uses the special .info/connected ref which Firebase updates synchronously.
+function _waitForFirebaseConnection(timeoutMs = 8000) {
+  return new Promise(resolve => {
+    if (!_FIREBASE_READY || typeof firebase === 'undefined') { resolve(false); return; }
+    _initFirebase();
+    if (!_firebaseApp) { resolve(false); return; }
+    const connRef = firebase.database().ref('.info/connected');
+    let settled = false;
+    const finish = val => {
+      if (settled) return;
+      settled = true;
+      connRef.off('value', handler);
+      clearTimeout(timer);
+      resolve(val);
+    };
+    const handler = snap => { if (snap.val() === true) finish(true); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    connRef.on('value', handler);
+  });
+}
+
 const _COLLAB_PANELS = [
   'collabPanelMode', 'collabPanelSetup', 'collabPanelMultiSetup',
   'collabPanelMultiLobby', 'collabPanelNominate', 'collabPanelRounds',
@@ -5342,10 +5364,20 @@ function collabMultiShowRole(role) {
 }
 
 async function collabCreateSession() {
-  _initFirebase();
   if (!_FIREBASE_READY) return;
   const btn = document.getElementById('collab-multi-create')?.querySelector('button');
-  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+
+  // Verify Firebase is actually reachable before queuing a write that would
+  // hang silently forever if the connection can't be established.
+  const connected = await _waitForFirebaseConnection(8000);
+  if (!connected) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
+    alert('Could not reach the session server.\n\nCheck your internet connection and try again. If the problem persists, a browser extension may be blocking the connection.');
+    return;
+  }
+
+  if (btn) btn.textContent = 'Creating…';
 
   try {
     const name = byId(IDS.collabMultiName).value.trim() || 'Host';
@@ -5391,11 +5423,17 @@ async function collabCreateSession() {
 }
 
 async function collabJoinSession() {
-  _initFirebase();
   if (!_FIREBASE_READY) return;
   const code = (byId(IDS.collabJoinInput).value || '').trim().toUpperCase();
   const name = byId(IDS.collabMultiName).value.trim() || 'Guest';
   if (code.length !== 6) return;
+
+  const connected = await _waitForFirebaseConnection(8000);
+  if (!connected) {
+    byId(IDS.collabJoinInput).style.borderColor = '#f85149';
+    byId(IDS.collabJoinInput).placeholder = 'Could not reach server — check your connection';
+    return;
+  }
 
   const ref  = firebase.database().ref('collab-sessions/' + code);
   const snap = await ref.once('value');
