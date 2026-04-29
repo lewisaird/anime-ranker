@@ -5368,28 +5368,9 @@ async function collabCreateSession() {
   const btn = document.getElementById('collab-multi-create')?.querySelector('button');
   if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
 
-  // Pause the real-time sync listener while checking collab connectivity.
-  // If the sync listener is getting "Permission denied" from RTDB rules it
-  // triggers a reconnect loop that keeps .info/connected false — stopping it
-  // first gives Firebase a clean connection state for the check below.
+  // Stop sync listener so it doesn't interfere with the collab connection.
   _stopFirebaseSync();
-
-  // Verify Firebase is actually reachable before queuing a write that would
-  // hang silently forever if the connection can't be established.
-  const connected = await _waitForFirebaseConnection(8000);
-  if (!connected) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
-    const dbUrl = _FIREBASE_CONFIG?.databaseURL || '(not loaded)';
-    const msg = _firebaseCspViolation
-      ? 'Could not reach the session server — Firebase is being blocked by a Content-Security-Policy header.\n\n'
-        + 'Blocked URL: ' + _firebaseCspViolation + '\n\n'
-        + 'Fix: hard-reload the page (hold Shift and click reload, or close and reopen the app) to pick up the updated security headers.'
-      : 'Could not reach the session server.\n\n'
-        + 'DB: ' + dbUrl + '\n\n'
-        + 'Check your internet connection, or try closing and reopening the app.';
-    alert(msg);
-    return;
-  }
+  _initFirebase();
 
   if (btn) btn.textContent = 'Creating…';
 
@@ -5412,7 +5393,14 @@ async function collabCreateSession() {
     };
 
     const ref = firebase.database().ref('collab-sessions/' + code);
-    await ref.set(initialData);
+
+    // Race the write against a 20s timeout. Firebase queues writes when the
+    // WebSocket isn't yet open and flushes them once connected — so this
+    // handles a slow first-connect without blocking forever if truly offline.
+    const writeTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Could not reach the session server.\n\nCheck your internet connection and try again.')), 20000)
+    );
+    await Promise.race([ref.set(initialData), writeTimeout]);
     ref.child('createdAt').onDisconnect().remove();
 
     _collab.firebaseRef = ref;
@@ -5432,7 +5420,7 @@ async function collabCreateSession() {
   } catch (err) {
     console.error('collabCreateSession error:', err);
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
-    alert('Could not create session — check your connection and try again.\n\n' + err.message);
+    alert(err.message || 'Could not create session — check your connection and try again.');
   }
 }
 
@@ -5442,17 +5430,23 @@ async function collabJoinSession() {
   const name = byId(IDS.collabMultiName).value.trim() || 'Guest';
   if (code.length !== 6) return;
 
-  _stopFirebaseSync(); // same reason as in collabCreateSession
+  _stopFirebaseSync();
+  _initFirebase();
 
-  const connected = await _waitForFirebaseConnection(8000);
-  if (!connected) {
+  const ref = firebase.database().ref('collab-sessions/' + code);
+
+  // Race the read against a 20s timeout (same pattern as collabCreateSession).
+  const readTimeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('timeout')), 20000)
+  );
+  let snap;
+  try {
+    snap = await Promise.race([ref.once('value'), readTimeout]);
+  } catch {
     byId(IDS.collabJoinInput).style.borderColor = '#f85149';
     byId(IDS.collabJoinInput).placeholder = 'Could not reach server — check your connection';
     return;
   }
-
-  const ref  = firebase.database().ref('collab-sessions/' + code);
-  const snap = await ref.once('value');
   if (!snap.exists()) {
     byId(IDS.collabJoinInput).style.borderColor = '#f85149';
     byId(IDS.collabJoinInput).placeholder = 'Code not found — check and try again';
