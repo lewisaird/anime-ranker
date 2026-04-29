@@ -5411,6 +5411,21 @@ async function collabCreateSession() {
     return;
   }
 
+  if (btn) btn.textContent = 'Connecting to server…';
+
+  // Wait for the RTDB WebSocket to actually be connected before attempting a
+  // write. If the SDK can't establish a socket within 8s the write would just
+  // hang for the full 20s timeout below — fail fast with a useful message.
+  console.info('[collab] waiting for Firebase WebSocket…');
+  const connected = await _waitForFirebaseConnection(8000);
+  console.info('[collab] WebSocket connected:', connected);
+  if (!connected) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
+    const cspNote = _firebaseCspViolation ? '\n\nCSP block detected: ' + _firebaseCspViolation : '';
+    alert('Could not connect to the session server.\n\nThe WebSocket to Firebase did not open within 8 seconds. This usually means the network is offline, a firewall is blocking wss:// traffic, or a CSP / browser extension is interfering.' + cspNote);
+    return;
+  }
+
   if (btn) btn.textContent = 'Creating…';
 
   try {
@@ -5432,14 +5447,16 @@ async function collabCreateSession() {
     };
 
     const ref = _firebaseApp.database().ref('collab-sessions/' + code);
+    console.info('[collab] writing session', code, '…');
 
-    // Race the write against a 20s timeout. Firebase queues writes when the
-    // WebSocket isn't yet open and flushes them once connected — so this
-    // handles a slow first-connect without blocking forever if truly offline.
+    // Race the write against a 20s timeout. The connection check above already
+    // confirmed the WebSocket is open, so a hang here points at Security Rules
+    // (permission denied) or backend issues — not network.
     const writeTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Could not reach the session server.\n\nCheck your internet connection and try again.')), 20000)
+      setTimeout(() => reject(new Error('The server accepted the connection but the write never completed.\n\nThis usually means Firebase Realtime Database Security Rules are blocking writes to "collab-sessions/" for unauthenticated clients.')), 20000)
     );
     await Promise.race([ref.set(initialData), writeTimeout]);
+    console.info('[collab] session created OK');
     ref.child('createdAt').onDisconnect().remove();
 
     _collab.firebaseRef = ref;
@@ -5460,16 +5477,22 @@ async function collabCreateSession() {
     console.error('collabCreateSession error:', err);
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
 
-    // Run a REST reachability test to diagnose whether Firebase is reachable at all.
-    // WebSocket failing but REST working → WebSocket blocked (firewall/proxy).
-    // REST also failing → full network block or wrong databaseURL.
+    // REST reachability probe — not the same path as the WebSocket, so this only
+    // confirms the host responds at all. Status 200 → host alive. Status 401
+    // → host alive, security rules require auth. Status 400/404 → host alive
+    // (REST endpoint shape mismatch, harmless). Anything else / network error
+    // → likely a real connectivity problem.
     let restResult = 'not tested';
     try {
-      const r = await fetch(_FIREBASE_CONFIG.databaseURL + '/.info/connected.json',
+      const r = await fetch(_FIREBASE_CONFIG.databaseURL + '/collab-sessions.json?shallow=true',
         { signal: AbortSignal.timeout(5000) });
-      restResult = 'HTTP ' + r.status + ' ✓ (server reachable — WebSocket may be blocked by firewall/proxy)';
+      const flag = r.status === 200 ? 'host alive, rules permit read' :
+                   r.status === 401 ? 'host alive, rules require auth (this is fine for the WebSocket path)' :
+                   r.status === 400 || r.status === 404 ? 'host alive, REST shape mismatch (harmless)' :
+                   'unexpected status — investigate';
+      restResult = 'HTTP ' + r.status + ' (' + flag + ')';
     } catch (e) {
-      restResult = 'FAILED ✗ (' + e.message + ') — server not reachable, possible firewall or network block';
+      restResult = 'FAILED (' + e.message + ') — host not reachable, probable network or DNS issue';
     }
 
     const cspNote = _firebaseCspViolation ? '\nCSP block: ' + _firebaseCspViolation : '';
