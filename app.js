@@ -275,6 +275,34 @@ const IDS = Object.freeze({
   challengeNextBtn:       'challenge-next-btn',
   challengeEndScore:      'challenge-end-score',
   challengeBreakdown:     'challenge-breakdown',
+  // Live challenge
+  lcModal:              'lc-modal',
+  lcPanelLobby:         'lc-panel-lobby',
+  lcPanelBuilding:      'lc-panel-building',
+  lcPanelGame:          'lc-panel-game',
+  lcPanelResults:       'lc-panel-results',
+  lcLobbyCode:          'lc-lobby-code',
+  lcPlayerList:         'lc-player-list',
+  lcStartBtn:           'lc-start-btn',
+  lcGuestStatus:        'lc-guest-status',
+  lcJoinSection:        'lc-join-section',
+  lcJoinInput:          'lc-join-input',
+  lcDisconnectBanner:   'lc-disconnect-banner',
+  lcProgress:           'lc-progress',
+  lcDiffBadge:          'lc-diff-badge',
+  lcMyScore:            'lc-my-score',
+  lcOpponentScore:      'lc-opponent-score',
+  lcOpponentNameScore:  'lc-opponent-name-score',
+  lcGuessPrompt:        'lc-guess-prompt',
+  lcCardA:              'lc-card-a',
+  lcCardB:              'lc-card-b',
+  lcWaitingMsg:         'lc-waiting-msg',
+  lcReveal:             'lc-reveal',
+  lcRevealText:         'lc-reveal-text',
+  lcNextBtn:            'lc-next-btn',
+  lcWaitingNext:        'lc-waiting-next',
+  lcResults:            'lc-results',
+  lcBreakdown:          'lc-breakdown',
   undoBtn:                'undo-btn',
   usernameInput:          'username-input',
   viewGridBtn:            'view-grid-btn',
@@ -4871,6 +4899,7 @@ function _renderSavedComparisons() {
           </div>
           <button class="btn-small" onclick="_rerunComparison('${escapedUsername}','${platform}')">Re-run</button>
           <button class="btn-small challenge-pill-btn" onclick="openChallengeMode('${escapedUsername}','${platform}')" title="Challenge mode">🎮</button>
+          <button class="btn-small challenge-pill-btn" onclick="openLiveChallengeMode('${escapedUsername}','${platform}')" title="Live challenge">🌐</button>
           <button class="btn-small" onclick="_deleteComparison('${escapedUsername}')" aria-label="Remove saved comparison">×</button>
         </div>`;
       }).join('')}
@@ -5117,6 +5146,678 @@ function _challengeShowEnd() {
 function closeChallengeModal() {
   byId(IDS.challengeModal).style.display = 'none';
   _challengeState = null;
+}
+
+// ─── LIVE CHALLENGE MODE ───────────────────────────────────────────────────────
+// Two players online simultaneously. Each guesses the other's anime preferences.
+// Uses the same Firebase app as Watch Together (live-challenges/ collection).
+// Plan v2 signed off — see design doc for full rationale.
+
+let _lc = null; // live challenge state
+
+// Build a rankMap from the local animeList: { [anilistId]: { rank, score } }
+// Rank is determined by external score (same basis as static challenge mode),
+// score is the user's AniList or MAL rating (whichever is populated).
+// No malId stored — YAGNI, can be added later under the same path.
+function _lcBuildRankMap() {
+  const sorted = [...animeList].sort((a, b) => {
+    const sa = a.anilistScore || a.malScore || 0;
+    const sb = b.anilistScore || b.malScore || 0;
+    return sb - sa;
+  });
+  const map = {};
+  sorted.forEach((a, i) => {
+    map[String(a.id)] = { rank: i + 1, score: a.anilistScore || a.malScore || 0 };
+  });
+  return map;
+}
+
+// Build pairs from two rank maps. Returns { pairs, mutualCount, reason }.
+// Each pair has p1Correct/p2Correct and p1Tight/p2Tight independently.
+function _lcBuildPairs(p1RankMap, p1Count, p2RankMap, p2Count) {
+  // Find AniList ID intersection
+  const p1Ids = new Set(Object.keys(p1RankMap).map(Number));
+  const p2Ids = new Set(Object.keys(p2RankMap).map(Number));
+  const animeById = new Map(animeList.map(a => [a.id, a]));
+
+  const mutual = [...p1Ids]
+    .filter(id => p2Ids.has(id) && animeById.has(id))
+    .map(id => ({
+      id,
+      anime: animeById.get(id),
+      p1: p1RankMap[String(id)],
+      p2: p2RankMap[String(id)],
+    }));
+
+  if (mutual.length < 10) return { pairs: [], mutualCount: mutual.length, reason: 'no_overlap' };
+
+  // Sample up to 60 for pair generation (same as static mode)
+  const pool = [...mutual].sort(() => Math.random() - 0.5).slice(0, 60);
+
+  const buckets = { hard: [], medium: [], easy: [] };
+  for (let i = 0; i < pool.length; i++) {
+    for (let j = i + 1; j < pool.length; j++) {
+      const a = pool[i], b = pool[j];
+      // Skip if either player scored both identically — no genuine preference
+      if (a.p1.score === b.p1.score) continue;
+      if (a.p2.score === b.p2.score) continue;
+
+      const p1GapPct = Math.abs(a.p1.rank - b.p1.rank) / p1Count;
+      const p2GapPct = Math.abs(a.p2.rank - b.p2.rank) / p2Count;
+      const avgGap   = (p1GapPct + p2GapPct) / 2;
+
+      const pair = {
+        aId:      a.id,    bId:      b.id,
+        aTitle:   a.anime.title, bTitle:   b.anime.title,
+        aCover:   a.anime.cover || '', bCover: b.anime.cover || '',
+        p1Correct: a.p1.rank < b.p1.rank ? 'a' : 'b', // p2 guesses this
+        p2Correct: a.p2.rank < b.p2.rank ? 'a' : 'b', // p1 guesses this
+        p1Tight:  p1GapPct < 0.15,
+        p2Tight:  p2GapPct < 0.15,
+      };
+
+      if      (avgGap < 0.15) buckets.hard.push(pair);
+      else if (avgGap < 0.35) buckets.medium.push(pair);
+      else                    buckets.easy.push(pair);
+    }
+  }
+
+  const shuffle = arr => arr.sort(() => Math.random() - 0.5);
+  let selected = [
+    ...shuffle(buckets.hard).slice(0, 2),
+    ...shuffle(buckets.medium).slice(0, 5),
+    ...shuffle(buckets.easy).slice(0, 3),
+  ];
+  if (selected.length < 10) {
+    const used = new Set(selected);
+    const extras = shuffle([...buckets.hard, ...buckets.medium, ...buckets.easy].filter(p => !used.has(p)));
+    selected = [...selected, ...extras].slice(0, 10);
+  }
+  const finalPairs = shuffle(selected);
+  return {
+    pairs:       finalPairs,
+    mutualCount: mutual.length,
+    reason:      finalPairs.length < 5 ? 'too_many_ties' : 'ok',
+  };
+}
+
+function _lcPanel(id) {
+  [IDS.lcPanelLobby, IDS.lcPanelBuilding, IDS.lcPanelGame, IDS.lcPanelResults]
+    .forEach(p => { const el = byId(p); if (el) el.style.display = 'none'; });
+  const target = byId(id);
+  if (target) target.style.display = '';
+}
+
+function _lcGenerateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function _lcMyScore() {
+  if (!_lc) return 0;
+  const answers = _lc.answers || {};
+  return (_lc.pairs || []).reduce((sum, pair, idx) => {
+    const ans = answers[idx];
+    if (!ans) return sum;
+    const correct = _lc.isP1 ? pair.p2Correct : pair.p1Correct;
+    const tight   = _lc.isP1 ? pair.p2Tight   : pair.p1Tight;
+    return ans === correct ? sum + (tight ? 2 : 1) : sum;
+  }, 0);
+}
+
+function _lcOpponentScore() {
+  if (!_lc) return 0;
+  const oppAnswers = _lc.opponentAnswers || {};
+  return (_lc.pairs || []).reduce((sum, pair, idx) => {
+    const ans = oppAnswers[idx];
+    if (!ans) return sum;
+    const correct = _lc.isP1 ? pair.p1Correct : pair.p2Correct;
+    const tight   = _lc.isP1 ? pair.p1Tight   : pair.p2Tight;
+    return ans === correct ? sum + (tight ? 2 : 1) : sum;
+  }, 0);
+}
+
+// ── OPEN / CREATE ──────────────────────────────────────────────────────────────
+async function openLiveChallengeMode(username, platform) {
+  if (!_FIREBASE_READY) {
+    alert('Live Challenge requires Firebase — see app.js to configure.');
+    return;
+  }
+  _initFirebase();
+
+  const modal = byId(IDS.lcModal);
+  modal.style.display = 'flex';
+  _lcPanel(IDS.lcPanelLobby);
+
+  const displayName = username.replace(/ \[MAL\]$/i, '');
+  const pid  = 'p_' + Math.random().toString(36).slice(2, 10);
+  const code = _lcGenerateCode();
+  const name = (authUser?.name || malAuthUser?.name || 'Host');
+
+  // Pre-build my rank map locally (no API call needed)
+  const myRankMap = _lcBuildRankMap();
+
+  _lc = {
+    mode: 'host',
+    isP1: true,        // host is always p1
+    myPlayerId: pid,
+    opponentId: null,
+    opponentName: displayName,
+    sessionCode: code,
+    firebaseRef: null,
+    pairs: [],
+    answers: {},       // my answers, keyed by pair index
+    opponentAnswers: {},
+    currentPair: 0,
+  };
+
+  byId(IDS.lcLobbyCode).textContent = code;
+  byId(IDS.lcJoinSection).style.display = 'none'; // host doesn't need join section
+  _lcRenderLobby({ players: { [pid]: { name, connected: true } }, hostId: pid });
+
+  // Auto-fill name input if available (mirrors Watch Together)
+  const nameInput = byId('lc-name-input');
+  if (nameInput && !nameInput.value.trim() && name !== 'Host') nameInput.value = name;
+
+  try {
+    const ref = firebase.database().ref('live-challenges/' + code);
+    const writeTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Could not reach the session server. Check your connection.')), 20000)
+    );
+    await Promise.race([
+      ref.set({
+        phase:      'lobby',
+        hostId:     pid,
+        currentPair: 0,
+        createdAt:  Date.now(),
+        players: {
+          [pid]: {
+            name,
+            connected:   true,
+            rankMap:     myRankMap,
+            rankedCount: animeList.length,
+            answers:     {},
+          },
+        },
+      }),
+      writeTimeout,
+    ]);
+    ref.child('createdAt').onDisconnect().remove();
+
+    _lc.firebaseRef = ref;
+    _lcSetupPresence(ref, pid);
+    _lcListenToSession(ref);
+  } catch (err) {
+    alert('Could not create live challenge session:\n' + (err.message || err));
+    closeLiveChallengeModal();
+  }
+}
+
+// ── JOIN ───────────────────────────────────────────────────────────────────────
+async function liveChallengeJoin() {
+  if (!_FIREBASE_READY) return;
+  const code = (byId(IDS.lcJoinInput)?.value || '').trim().toUpperCase();
+  if (code.length !== 6) { byId(IDS.lcJoinInput)?.focus(); return; }
+
+  _initFirebase();
+  const pid  = 'p_' + Math.random().toString(36).slice(2, 10);
+  const name = authUser?.name || malAuthUser?.name || 'Guest';
+
+  try {
+    const ref  = firebase.database().ref('live-challenges/' + code);
+    const snap = await ref.once('value');
+    const data = snap.val();
+    if (!data) { alert('Session not found — check the code and try again.'); return; }
+    if (data.phase !== 'lobby') { alert('This session has already started.'); return; }
+
+    const myRankMap = _lcBuildRankMap();
+    const hostId    = data.hostId;
+    const hostName  = data.players?.[hostId]?.name || 'Host';
+
+    _lc = {
+      mode: 'guest',
+      isP1: false,       // guest is always p2
+      myPlayerId: pid,
+      opponentId: hostId,
+      opponentName: hostName,
+      sessionCode: code,
+      firebaseRef: ref,
+      pairs: [],
+      answers: {},
+      opponentAnswers: {},
+      currentPair: 0,
+    };
+
+    const writeTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Could not join session. Check your connection.')), 20000)
+    );
+    await Promise.race([
+      ref.update({
+        [`players/${pid}`]: {
+          name,
+          connected:   true,
+          rankMap:     myRankMap,
+          rankedCount: animeList.length,
+          answers:     {},
+        },
+      }),
+      writeTimeout,
+    ]);
+
+    byId(IDS.lcLobbyCode).textContent = code;
+    byId(IDS.lcJoinSection).style.display = 'none';
+    _lcPanel(IDS.lcPanelLobby);
+    _lcSetupPresence(ref, pid);
+    _lcListenToSession(ref);
+  } catch (err) {
+    alert('Could not join session:\n' + (err.message || err));
+  }
+}
+
+// Standalone join entry point: opens the modal in join-only mode (no host context)
+function openLiveChallengeJoin() {
+  if (!_FIREBASE_READY) {
+    alert('Live Challenge requires Firebase — see app.js to configure.');
+    return;
+  }
+  _lc = null;
+  byId(IDS.lcModal).style.display = 'flex';
+  _lcPanel(IDS.lcPanelLobby);
+  byId(IDS.lcLobbyCode).textContent = '';
+  byId(IDS.lcPlayerList).innerHTML  = '';
+  byId(IDS.lcStartBtn).style.display    = 'none';
+  byId(IDS.lcGuestStatus).style.display = 'none';
+  byId(IDS.lcJoinSection).style.display = '';
+  byId(IDS.lcDisconnectBanner).style.display = 'none';
+}
+
+// ── PRESENCE ──────────────────────────────────────────────────────────────────
+function _lcSetupPresence(ref, pid) {
+  ref.child(`players/${pid}/connected`).onDisconnect().set(false);
+}
+
+// ── LISTENER ──────────────────────────────────────────────────────────────────
+function _lcListenToSession(ref) {
+  const handler = snap => {
+    const data = snap.val();
+    if (!data || !_lc) return;
+    _lcSync(data);
+  };
+  ref.on('value', handler);
+  _lc.unsubscribe = () => ref.off('value', handler);
+}
+
+function _lcSync(data) {
+  if (!_lc) return;
+
+  // Mirror opponent's answers locally
+  const myPid  = _lc.myPlayerId;
+  const oppPid = Object.keys(data.players || {}).find(id => id !== myPid);
+  if (oppPid && !_lc.opponentId) _lc.opponentId = oppPid;
+  if (oppPid) {
+    _lc.opponentName    = data.players[oppPid]?.name || _lc.opponentName;
+    _lc.opponentAnswers = data.players[oppPid]?.answers || {};
+  }
+
+  // Disconnect banner
+  const oppConnected = oppPid ? data.players[oppPid]?.connected !== false : true;
+  byId(IDS.lcDisconnectBanner).style.display = (!oppConnected && data.phase === 'playing') ? '' : 'none';
+
+  if (data.phase === 'lobby') {
+    _lcRenderLobby(data);
+  }
+
+  if (data.phase === 'building') {
+    _lcPanel(IDS.lcPanelBuilding);
+  }
+
+  if (data.phase === 'playing') {
+    if (!_lc.pairs.length && data.pairs?.length) {
+      _lc.pairs       = data.pairs;
+      _lc.currentPair = data.currentPair || 0;
+      _lcPanel(IDS.lcPanelGame);
+      _lcRenderPair();
+    } else if (data.currentPair !== undefined && data.currentPair !== _lc.currentPair) {
+      _lc.currentPair = data.currentPair;
+      _lcRenderPair();
+    } else {
+      // Same pair — maybe opponent just answered, update scores + check for reveal
+      _lcUpdateScoreDisplay();
+      _lcMaybeReveal();
+    }
+  }
+
+  if (data.phase === 'results') {
+    _lc.pairs = data.pairs || _lc.pairs;
+    _lcShowResults();
+  }
+}
+
+// ── LOBBY ──────────────────────────────────────────────────────────────────────
+function _lcRenderLobby(data) {
+  _lcPanel(IDS.lcPanelLobby);
+  const players     = data.players || {};
+  const playerArr   = Object.entries(players);
+  const myPid       = _lc?.myPlayerId;
+  const isHost      = _lc?.mode === 'host';
+
+  byId(IDS.lcPlayerList).innerHTML = playerArr.map(([pid, p]) => {
+    const isMe   = pid === myPid;
+    const offline = p.connected === false;
+    return `<div class="collab-player-chip ${offline ? 'collab-chip-offline' : ''}">
+      <span class="collab-chip-dot ${offline ? 'dot-offline' : 'dot-online'}"></span>
+      <span>${esc(p.name || 'Player')}${isMe ? ' (you)' : ''}</span>
+    </div>`;
+  }).join('');
+
+  const connectedCount = playerArr.filter(([, p]) => p.connected !== false).length;
+  const ready = connectedCount >= 2;
+
+  if (isHost) {
+    const startBtn = byId(IDS.lcStartBtn);
+    startBtn.style.display = '';
+    startBtn.disabled      = !ready;
+    startBtn.textContent   = ready
+      ? `Both players in — start →`
+      : 'Waiting for opponent…';
+    byId(IDS.lcGuestStatus).style.display = 'none';
+  } else {
+    byId(IDS.lcStartBtn).style.display    = 'none';
+    byId(IDS.lcGuestStatus).style.display = '';
+  }
+}
+
+// ── HOST STARTS ────────────────────────────────────────────────────────────────
+async function liveChallengeHostStart() {
+  if (!_lc?.firebaseRef) return;
+  const players = (await _lc.firebaseRef.child('players').once('value')).val() || {};
+  const pids    = Object.keys(players);
+  if (pids.length < 2) return; // guard — need at least 2 players
+
+  const myPid   = _lc.myPlayerId;
+  const oppPid  = pids.find(id => id !== myPid);
+  if (!oppPid) return;
+
+  const p1Data = players[myPid];
+  const p2Data = players[oppPid];
+
+  byId(IDS.lcStartBtn).disabled    = true;
+  byId(IDS.lcStartBtn).textContent = 'Building…';
+  await _lc.firebaseRef.update({ phase: 'building' });
+
+  const { pairs, mutualCount, reason } = _lcBuildPairs(
+    p1Data.rankMap, p1Data.rankedCount,
+    p2Data.rankMap, p2Data.rankedCount
+  );
+
+  if (reason !== 'ok') {
+    const msg = reason === 'no_overlap'
+      ? `Only ${mutualCount} anime in common — need at least 10 to play.`
+      : 'Too many ties in scores to build a fair game — try scoring more anime differently.';
+    await _lc.firebaseRef.update({ phase: 'lobby' });
+    byId(IDS.lcStartBtn).disabled    = false;
+    byId(IDS.lcStartBtn).textContent = 'Both players in — start →';
+    alert(msg);
+    return;
+  }
+
+  _lc.pairs       = pairs;
+  _lc.currentPair = 0;
+
+  const writeTimeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Could not write pairs to Firebase.')), 20000)
+  );
+  await Promise.race([
+    _lc.firebaseRef.update({ phase: 'playing', pairs, currentPair: 0 }),
+    writeTimeout,
+  ]);
+}
+
+// ── GAME ───────────────────────────────────────────────────────────────────────
+function _lcRenderPair() {
+  if (!_lc) return;
+  const pair  = _lc.pairs[_lc.currentPair];
+  const total = _lc.pairs.length;
+  if (!pair) { _lcEndGame(); return; }
+
+  // Reset local answer for this pair
+  _lc.answeredThisPair = false;
+
+  byId(IDS.lcProgress).textContent = `Round ${_lc.currentPair + 1} of ${total}`;
+
+  // "Tight" badge is from the opponent's perspective (what WE're guessing)
+  const tight = _lc.isP1 ? pair.p2Tight : pair.p1Tight;
+  const badge = byId(IDS.lcDiffBadge);
+  badge.textContent = tight ? '🔥 Tight call — worth 2 pts' : '';
+  badge.style.color = '#f85149';
+
+  // Guess prompt
+  byId(IDS.lcGuessPrompt).textContent =
+    `Which did ${esc(_lc.opponentName)} rank higher?`;
+
+  // Render cards
+  [[IDS.lcCardA, pair.aTitle, pair.aCover], [IDS.lcCardB, pair.bTitle, pair.bCover]]
+    .forEach(([elId, title, cover]) => {
+      const el     = byId(elId);
+      el.className = 'challenge-card';
+      el.disabled  = false;
+      el.innerHTML = cover
+        ? `<img src="${safeUrl(cover)}" alt="${esc(title)}" /><div class="challenge-card-title">${esc(title)}</div>`
+        : `<div class="collab-no-cover">🎬</div><div class="challenge-card-title">${esc(title)}</div>`;
+    });
+
+  byId(IDS.lcReveal).style.display   = 'none';
+  byId(IDS.lcWaitingMsg).style.display = 'none';
+  byId(IDS.lcNextBtn).style.display   = 'none';
+  byId(IDS.lcWaitingNext).style.display = 'none';
+
+  _lcUpdateScoreDisplay();
+}
+
+function _lcUpdateScoreDisplay() {
+  byId(IDS.lcMyScore).textContent       = _lcMyScore() + ' pts';
+  byId(IDS.lcOpponentScore).textContent = _lcOpponentScore() + ' pts';
+  const oppNameEl = byId(IDS.lcOpponentNameScore);
+  if (oppNameEl) oppNameEl.firstChild.textContent = (_lc.opponentName || 'Opponent') + ': ';
+}
+
+function liveChallengeAnswer(side) {
+  if (!_lc || _lc.answeredThisPair) return;
+  const pair = _lc.pairs[_lc.currentPair];
+  if (!pair) return;
+
+  _lc.answeredThisPair = true;
+  _lc.answers[_lc.currentPair] = side;
+
+  // Disable cards immediately
+  byId(IDS.lcCardA).disabled = true;
+  byId(IDS.lcCardB).disabled = true;
+  byId(IDS.lcWaitingMsg).style.display = '';
+
+  // Write answer to Firebase
+  const myPid = _lc.myPlayerId;
+  _lc.firebaseRef?.child(`players/${myPid}/answers/${_lc.currentPair}`).set(side);
+
+  // Check if opponent already answered
+  _lcMaybeReveal();
+}
+
+function _lcMaybeReveal() {
+  if (!_lc || !_lc.answeredThisPair) return;
+  const idx      = _lc.currentPair;
+  const oppAns   = _lc.opponentAnswers[idx];
+  if (!oppAns) return; // opponent hasn't answered yet
+
+  byId(IDS.lcWaitingMsg).style.display = 'none';
+  _lcReveal();
+}
+
+function _lcReveal() {
+  const idx  = _lc.currentPair;
+  const pair = _lc.pairs[idx];
+  const myAns  = _lc.answers[idx];
+  const oppAns = _lc.opponentAnswers[idx];
+
+  // My result — I'm guessing opponent's preference
+  const myCorrect    = _lc.isP1 ? pair.p2Correct : pair.p1Correct;
+  const myTight      = _lc.isP1 ? pair.p2Tight   : pair.p1Tight;
+  const iCorrect     = myAns === myCorrect;
+
+  // Opponent's result — they're guessing my preference
+  const oppCorrect   = _lc.isP1 ? pair.p1Correct : pair.p2Correct;
+  const oCorrect     = oppAns === oppCorrect;
+
+  const higherTitle  = myCorrect === 'a' ? pair.aTitle : pair.bTitle;
+  const lowerTitle   = myCorrect === 'a' ? pair.bTitle : pair.aTitle;
+
+  byId(IDS.lcRevealText).innerHTML = `
+    <div style="margin-bottom:6px">
+      ${iCorrect
+        ? `<span class="ch-correct-msg">✓ You got it${myTight ? ' +2 pts!' : ''}</span>`
+        : `<span class="ch-wrong-msg">✗ You guessed wrong</span>`}
+    </div>
+    <div style="font-size:0.8rem;color:#8b949e;margin-bottom:4px">
+      ${esc(_lc.opponentName)} ranked <strong style="color:var(--text)">${esc(higherTitle)}</strong>
+      above <strong style="color:var(--text)">${esc(lowerTitle)}</strong>
+    </div>
+    <div style="font-size:0.78rem;color:#8b949e">
+      ${esc(_lc.opponentName || 'Opponent')}: ${oCorrect ? '✓ correct' : '✗ wrong'}
+    </div>`;
+
+  byId(IDS.lcReveal).style.display = '';
+  _lcUpdateScoreDisplay();
+
+  const isLast = _lc.currentPair + 1 >= _lc.pairs.length;
+  if (_lc.mode === 'host') {
+    const btn = byId(IDS.lcNextBtn);
+    btn.style.display  = '';
+    btn.textContent    = isLast ? 'See Results →' : 'Next →';
+    byId(IDS.lcWaitingNext).style.display = 'none';
+  } else {
+    byId(IDS.lcNextBtn).style.display    = 'none';
+    byId(IDS.lcWaitingNext).style.display = '';
+  }
+}
+
+function liveChallengeNext() {
+  if (!_lc?.firebaseRef || _lc.mode !== 'host') return;
+  const next = _lc.currentPair + 1;
+  if (next >= _lc.pairs.length) {
+    _lc.firebaseRef.update({ phase: 'results' });
+  } else {
+    _lc.firebaseRef.update({ currentPair: next });
+  }
+}
+
+function _lcEndGame() {
+  if (_lc?.firebaseRef && _lc.mode === 'host') {
+    _lc.firebaseRef.update({ phase: 'results' });
+  } else {
+    _lcShowResults();
+  }
+}
+
+// ── RESULTS ────────────────────────────────────────────────────────────────────
+function _lcShowResults() {
+  _lcPanel(IDS.lcPanelResults);
+  if (!_lc?.pairs?.length) return;
+
+  const myTotal  = _lcMyScore();
+  const oppTotal = _lcOpponentScore();
+  const total    = _lc.pairs.length;
+  const maxPts   = _lc.pairs.reduce((s, p) => {
+    const tight = _lc.isP1 ? p.p2Tight : p.p1Tight;
+    return s + (tight ? 2 : 1);
+  }, 0);
+
+  const winner = myTotal > oppTotal ? 'You win! 🏆'
+               : myTotal < oppTotal ? `${esc(_lc.opponentName)} wins!`
+               : "It's a tie!";
+  const pct = Math.round((myTotal / maxPts) * 100);
+  const label = pct >= 90 ? "You've been watching their watchlist 👀"
+              : pct >= 70 ? "You know them well 🎯"
+              : pct >= 50 ? "You think you know them 🤔"
+              :             "Have you actually met? 😅";
+
+  byId(IDS.lcResults).innerHTML = `
+    <div class="ch-end-score">${winner}</div>
+    <div style="display:flex;justify-content:center;gap:32px;margin:12px 0;font-size:0.9rem">
+      <div style="text-align:center">
+        <div style="font-size:1.6rem;font-weight:700">${myTotal}</div>
+        <div style="font-size:0.75rem;color:#8b949e">You</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.6rem;font-weight:700">${oppTotal}</div>
+        <div style="font-size:0.75rem;color:#8b949e">${esc(_lc.opponentName)}</div>
+      </div>
+    </div>
+    <div class="ch-end-label">${label}</div>
+    <p style="font-size:0.75rem;color:#8b949e;margin:6px 0 0">Guessing each other's rankings · ${total} rounds</p>`;
+
+  byId(IDS.lcBreakdown).innerHTML = _lc.pairs.map((pair, idx) => {
+    const myAns     = _lc.answers[idx];
+    const myCorrect = _lc.isP1 ? pair.p2Correct : pair.p1Correct;
+    const iRight    = myAns === myCorrect;
+    const winner    = myCorrect === 'a' ? pair.aTitle : pair.bTitle;
+    const loser     = myCorrect === 'a' ? pair.bTitle : pair.aTitle;
+    return `<div class="ch-breakdown-item ${iRight ? 'ch-b-correct' : 'ch-b-wrong'}">
+      <span class="ch-b-icon">${iRight ? '✓' : '✗'}</span>
+      <span class="ch-b-text">
+        <span class="ch-b-winner">${esc(winner)}</span>
+        <span class="ch-b-ranks">${esc(_lc.opponentName)} prefers</span>
+        <span class="ch-b-loser">${esc(loser)}</span>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+// ── REMATCH ────────────────────────────────────────────────────────────────────
+// Reuses the same Firebase session — resets answers, currentPair, regenerates pairs.
+// Host only triggers rematch; guest is taken back to lobby to wait.
+async function liveChallengeRematch() {
+  if (!_lc?.firebaseRef || _lc.mode !== 'host') return;
+
+  // Re-read both players' rank maps from Firebase (they may have updated)
+  const snap = await _lc.firebaseRef.child('players').once('value');
+  const players = snap.val() || {};
+  const pids    = Object.keys(players);
+  const myPid   = _lc.myPlayerId;
+  const oppPid  = pids.find(id => id !== myPid);
+  if (!oppPid) return;
+
+  // Reset answers for all players
+  const resetUpdates = {};
+  pids.forEach(pid => { resetUpdates[`players/${pid}/answers`] = {}; });
+  resetUpdates['currentPair'] = 0;
+  resetUpdates['phase']       = 'building';
+  await _lc.firebaseRef.update(resetUpdates);
+
+  const { pairs, mutualCount, reason } = _lcBuildPairs(
+    players[myPid].rankMap,  players[myPid].rankedCount,
+    players[oppPid].rankMap, players[oppPid].rankedCount,
+  );
+  if (reason !== 'ok') {
+    await _lc.firebaseRef.update({ phase: 'lobby' });
+    alert('Could not build a rematch — ' + (reason === 'no_overlap'
+      ? `only ${mutualCount} shows in common.`
+      : 'too many ties in scores.'));
+    return;
+  }
+
+  _lc.pairs       = pairs;
+  _lc.currentPair = 0;
+  _lc.answers     = {};
+  _lc.opponentAnswers = {};
+
+  await _lc.firebaseRef.update({ phase: 'playing', pairs, currentPair: 0 });
+}
+
+// ── CLOSE ──────────────────────────────────────────────────────────────────────
+function closeLiveChallengeModal() {
+  byId(IDS.lcModal).style.display = 'none';
+  if (_lc?.unsubscribe) _lc.unsubscribe();
+  if (_lc?.firebaseRef) _lc.firebaseRef.off();
+  _lc = null;
 }
 
 // ─── COLLABORATIVE "WATCH TOGETHER" MODE ──────────────────────────────────────

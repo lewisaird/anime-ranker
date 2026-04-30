@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.23" />
+  <meta name="version" content="1.0.24" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -418,6 +418,93 @@
       <div id="challenge-breakdown" class="challenge-breakdown"></div>
       <button class="btn-secondary" style="margin-top:16px;width:100%" onclick="closeChallengeModal()">Close</button>
     </div>
+  </div>
+</div>
+
+<!-- Live Challenge Mode modal -->
+<div id="lc-modal" role="dialog" aria-modal="true" aria-labelledby="lc-modal-title"
+     style="display:none" onclick="if(event.target===this)closeLiveChallengeModal()">
+  <div class="challenge-box">
+    <button class="share-close" onclick="closeLiveChallengeModal()" aria-label="Close">✕</button>
+    <h3 id="lc-modal-title" style="margin:0 0 4px">🌐 Live Challenge</h3>
+
+    <!-- Lobby (host creates session, guest joins) -->
+    <div id="lc-panel-lobby" style="display:none">
+      <p style="font-size:0.78rem;color:#8b949e;margin:0 0 14px">Share your code — first to know the other person's taste wins.</p>
+      <div id="lc-lobby-code" class="collab-session-code" style="margin-bottom:14px"></div>
+      <div id="lc-player-list" style="margin-bottom:14px;min-height:40px"></div>
+      <!-- Host only -->
+      <button id="lc-start-btn" class="btn-primary" style="display:none;width:100%;margin-bottom:10px"
+              onclick="liveChallengeHostStart()">Start →</button>
+      <!-- Guest only -->
+      <p id="lc-guest-status" style="display:none;font-size:0.82rem;color:#8b949e;text-align:center">
+        Waiting for host to start…
+      </p>
+      <!-- Join with code (always visible in lobby before the code is issued) -->
+      <div id="lc-join-section" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07)">
+        <p style="font-size:0.78rem;color:#8b949e;margin:0 0 8px">Have a code? Join instead:</p>
+        <div style="display:flex;gap:8px">
+          <input id="lc-join-input" class="collab-name-input"
+                 placeholder="Enter 6-character code"
+                 style="flex:1;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1rem"
+                 maxlength="6" onkeydown="if(event.key==='Enter')liveChallengeJoin()" />
+          <button class="btn-primary" onclick="liveChallengeJoin()">Join →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Building (host computes pairs — very brief) -->
+    <div id="lc-panel-building" style="display:none;text-align:center;padding:24px 0">
+      <p style="color:#8b949e">Building your challenge…</p>
+    </div>
+
+    <!-- Disconnect banner (shown over any panel) -->
+    <div id="lc-disconnect-banner" style="display:none;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#f85149;margin-bottom:12px;text-align:center">
+      ⚠️ Opponent disconnected — you can finish the round solo
+    </div>
+
+    <!-- Game -->
+    <div id="lc-panel-game" style="display:none">
+      <div class="challenge-hud">
+        <span id="lc-progress" class="challenge-round"></span>
+        <span id="lc-diff-badge" class="challenge-diff"></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#8b949e;margin-bottom:8px">
+        <span>You: <strong id="lc-my-score" style="color:var(--text)">0 pts</strong></span>
+        <span id="lc-opponent-name-score">Opponent: <strong id="lc-opponent-score" style="color:var(--text)">0 pts</strong></span>
+      </div>
+      <p id="lc-guess-prompt" style="font-size:0.8rem;color:#8b949e;margin:0 0 10px;text-align:center"></p>
+      <div class="challenge-pair">
+        <button class="challenge-card" id="lc-card-a" onclick="liveChallengeAnswer('a')"></button>
+        <div class="challenge-vs">VS</div>
+        <button class="challenge-card" id="lc-card-b" onclick="liveChallengeAnswer('b')"></button>
+      </div>
+      <p id="lc-waiting-msg" style="display:none;font-size:0.78rem;color:#8b949e;text-align:center;margin-top:10px">
+        Waiting for opponent…
+      </p>
+      <div id="lc-reveal" style="display:none;margin-top:10px">
+        <div id="lc-reveal-text" class="challenge-reveal-text"></div>
+        <!-- Host only -->
+        <button id="lc-next-btn" class="btn-primary" style="display:none;width:100%;margin-top:12px"
+                onclick="liveChallengeNext()">Next →</button>
+        <!-- Guest only -->
+        <p id="lc-waiting-next" style="display:none;font-size:0.78rem;color:#8b949e;text-align:center;margin-top:12px">
+          Waiting for host to continue…
+        </p>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="lc-panel-results" style="display:none">
+      <div id="lc-results"></div>
+      <h4 style="margin:18px 0 8px;font-size:0.82rem;color:#8b949e">Round breakdown</h4>
+      <div id="lc-breakdown" class="challenge-breakdown"></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn-primary" style="flex:1" onclick="liveChallengeRematch()">Rematch →</button>
+        <button class="btn-secondary" style="flex:1" onclick="closeLiveChallengeModal()">Close</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
