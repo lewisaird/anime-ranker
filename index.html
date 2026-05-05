@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.59" />
+  <meta name="version" content="1.0.62" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -1073,7 +1073,7 @@
 
       <!-- Profile sub-tab bar -->
       <div class="source-tabs">
-        <button class="source-tab active" id="profile-sub-taste"         onclick="switchProfileTab('taste')">🎨 Taste</button>
+        <button class="source-tab active" id="profile-sub-taste"         onclick="switchProfileTab('taste')">🎨 Taste<span class="tab-new-badge" id="new-badge-taste">NEW</span></button>
         <button class="source-tab"        id="profile-sub-achievements"  onclick="switchProfileTab('achievements')">🏆 Achievements</button>
       </div>
 
@@ -1272,11 +1272,9 @@
 
       <!-- Sub-tab bar -->
       <div class="source-tabs">
-        <button class="source-tab active" id="manage-sub-settings" onclick="switchManageTab('settings')">⚙️ Settings</button>
       </div>
 
-      <!-- Settings sub-panel -->
-      <div id="manage-panel-settings" class="manage-tab-content">
+      <div class="manage-tab-content">
         <div class="manage-section">
           <div class="manage-section-title">Appearance</div>
           <button id="theme-toggle-btn" class="manage-btn" onclick="toggleTheme()" title="Toggle light/dark mode">🌙 Dark mode</button>
@@ -1394,7 +1392,7 @@
       <button class="modal-close" onclick="closeHelp()" aria-label="Close">✕</button>
       <h3 id="help-modal-title">How It Works</h3>
       <p>A quick guide to every feature.</p>
-      <div class="help-sections">
+            <div class="help-sections">
 
         <div class="help-section">
           <h4>⚡ ELO Rating</h4>
@@ -1408,43 +1406,67 @@
 
         <div class="help-section">
           <h4>● Confidence</h4>
-          <p><strong>Uncertain</strong> — fewer than 5 battles, don't trust this rank yet.<br>
-          <strong>Settling</strong> — 5–14 battles, getting more reliable.<br>
-          <strong>Confident</strong> — 15+ battles, stable.</p>
+          <p><strong>Uncertain</strong> — fewer than 3 battles, don't trust this rank yet.<br>
+          <strong>Settling</strong> — 3–9 battles, getting more reliable.<br>
+          <strong>Confident</strong> — 10+ battles, stable.</p>
         </div>
 
         <div class="help-section">
-          <h4>🌫 Fuzzy</h4>
-          <p>Can't remember an anime well enough to judge it? Hit "Can't Remember" during a battle. It appears far less often until you've rewatched or refreshed your memory.</p>
+          <h4>🌫 Fuzzy &amp; ✗ Not Seen</h4>
+          <p><strong>Can't Remember</strong> — can't judge an anime fairly? Mark it fuzzy and it'll appear far less often until you've refreshed your memory.<br>
+          <strong>Not Seen</strong> — removes the anime from your ranking pool entirely. Re-add it any time from the Excluded section at the bottom of Rankings.</p>
         </div>
 
         <div class="help-section">
-          <h4>✗ Not Seen</h4>
-          <p>Hit "Not Seen" on a battle card to permanently remove that anime from your ranking pool. You can re-add it any time from the Excluded section at the bottom of Rankings.</p>
+          <h4>↩ Undo</h4>
+          <p>Changed your mind? Undo reverts your last battle result, restoring both ELO scores. You can undo up to 5 battles in a row.</p>
         </div>
 
         <div class="help-section">
-          <h4>🎯 Settle Mode</h4>
-          <p>Prioritises battles between low-confidence anime so shaky rankings lock in faster. Tap the button in the battle screen to toggle it on or off.</p>
+          <h4>⚙ Battle Modes</h4>
+          <p>Tap the mode button in the battle screen to switch between:</p>
+          <p><strong>⚙ Standard</strong> — default matchmaking, pairs chosen to maximise ranking accuracy.<br>
+          <strong>🎯 Settle</strong> — targets uncertain matchups first so shaky rankings lock in faster.<br>
+          <strong>🙈 Blind</strong> — hides ELO scores so you pick purely on instinct, without being anchored by numbers.<br>
+          <strong>🎲 Trio</strong> — three anime at once; drag or tap to rank them 1st, 2nd, 3rd.<br>
+          <strong>⚡ Tower</strong> — pick a champion and pit it against 10 opponents spread across the rankings. A fun way to stress-test how highly you really rate a show.</p>
         </div>
 
         <div class="help-section">
-          <h4>🏆 Tower of Power</h4>
-          <p>Pick a champion and pit it against 10 opponents spread across the rankings. A fun way to stress-test how highly you really rate a particular show.</p>
+          <h4>≡ Battle Pool Filter</h4>
+          <p>Tap the Filter button in the battle screen to exclude formats (TV, Movie, OVA…) from matchmaking. Useful if you only want to rank one type at a time. Your filter is remembered between sessions.</p>
         </div>
 
         <div class="help-section">
-          <h4>📋 Rankings Filters &amp; Sort</h4>
-          <p>Filter by <strong>format</strong> (TV, Movie, OVA…) and <strong>episode length</strong> (≤12 · 13–24 · 25–70 · 70+ · Unknown). Sort by ELO, Title, Win Rate, Battles, AniList Average, Tier, or Confidence. Toggle grid or list view. All filters and sort order are remembered between sessions.</p>
+          <h4>⌨️ Keyboard Shortcuts</h4>
+          <p><kbd>←</kbd> left wins &nbsp;·&nbsp; <kbd>→</kbd> right wins &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>U</kbd> undo</p>
+        </div>
+
+        <div class="help-section">
+          <h4>📋 Rankings</h4>
+          <p>Filter by <strong>format</strong> (TV, Movie, OVA…) and <strong>episode length</strong> (≤12 · 13–24 · 25–70 · 70+ · Unknown). Use the <strong>Fuzzy</strong> filter to show only fuzzy-marked entries, or <strong>Franchise</strong> to group sequels. Sort by ELO, Title, Win Rate, Battles, AniList Score, Tier, or Confidence. Toggle grid or list view. All filters and sort are remembered between sessions.</p>
+        </div>
+
+        <div class="help-section">
+          <h4>⛓ Franchise Mode</h4>
+          <p>Groups sequels and seasons together in the Rankings view so you can see a franchise's overall standing at a glance. Toggle it with the Franchise button above the rankings list. Individual entries keep their own ELO — franchise mode is a display filter only.</p>
         </div>
 
         <div class="help-section">
           <h4>📊 Tabs</h4>
-          <p><strong>Battles</strong> — battle stats, biggest upsets, rivalries, and your full battle history.<br>
-          <strong>Profile</strong> — your taste type, how your top 10 has evolved, genre &amp; era breakdowns, studio affinity, taste vs the community, and your achievements.<br>
+          <p><strong>Battles</strong> — stats, biggest upsets, rivalries, and full battle history.<br>
+          <strong>Profile</strong> — two sub-tabs: <em>Taste</em> (your archetype, genre &amp; era breakdowns, studio affinity, taste vs the community, score distribution) and <em>Achievements</em> (milestones and badges earned through ranking).<br>
           <strong>Discover</strong> — personalised picks (✨ For You), airing anime (📅 This Season), mood-based recs, and tier predictions (🔮 Predict).<br>
-          <strong>Social</strong> — play with friends via Watch Together, Challenge Mode, or Live Challenge; compare taste or get recommendations from any AniList user.<br>
-          <strong>Manage</strong> — backup, export, sync to AniList or MAL, and reset everything.</p>
+          <strong>Social</strong> — multiplayer modes and taste comparison (see below).<br>
+          <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, and reset.</p>
+        </div>
+
+        <div class="help-section">
+          <h4>👥 Social</h4>
+          <p><strong>🤝 Watch Together</strong> — start a co-op session with a friend. You each rank the same seasonal anime and Kessen finds what you both agree on to watch together.<br>
+          <strong>🎮 Challenge Mode</strong> — a head-to-head ranked battle against a friend. You each pick from your own lists and ELO is on the line.<br>
+          <strong>🌐 Live Challenge</strong> — real-time multiplayer battle where both players pick simultaneously. Fastest and most competitive mode.<br>
+          <strong>Taste Compare</strong> — enter any AniList username to see how your rankings overlap, where you disagree, and get cross-taste recommendations.</p>
         </div>
 
         <div class="help-section">
@@ -1453,11 +1475,11 @@
         </div>
 
         <div class="help-section">
-          <h4>🔗 Share</h4>
-          <p>Share your top 20 rankings as a link. Anyone with the link can view them without needing an account — rankings are encoded directly in the URL.</p>
+          <h4>🔔 Notifications</h4>
+          <p>The bell icon in the header shows alerts for newly added anime on your list, cloud sync events, and other activity. Tap it to open the notification centre and review or clear alerts.</p>
         </div>
 
-        <div class="help-section" id="help-anilist-section" style="display:none">
+                <div class="help-section" id="help-anilist-section" style="display:none">
           <h4>☁️ Cloud Sync</h4>
           <p>When logged in with AniList or MAL, your rankings automatically save to the cloud after each battle (with a short delay). Opening the app on another device will prompt you to load the cloud save if it's newer than your local one. You can also push or pull manually any time from <strong>Manage → Backup, Sync &amp; Export</strong>.</p>
         </div>

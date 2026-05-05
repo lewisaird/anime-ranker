@@ -51,7 +51,6 @@ const IDS = Object.freeze({
   errorMsg:               'error-msg',
   excludedList:           'excluded-list',
   exportArea:             'export-area',
-  exportImageBtn:         'export-image-btn',
   friendRecsInput:        'friend-recs-input',
   friendRecsResults:      'friend-recs-results',
   fuzzyA:                 'fuzzy-a',
@@ -204,11 +203,11 @@ const IDS = Object.freeze({
   tasteLoadingMsg:        'taste-loading-msg',
   tasteMeta:              'taste-meta',
   tasteRefreshBtn:        'taste-refresh-btn',
-  tasteSummary:           'taste-summary',
   thSc:                   'th-sc',
   titleA:                 'title-a',
   titleB:                 'title-b',
   toast:                  'toast',
+
   towerAnimeList:         'tower-anime-list',
   towerFirstTip:          'tower-first-tip',
   towerModal:             'tower-modal',
@@ -260,7 +259,6 @@ const IDS = Object.freeze({
   collabMultiName:          'collab-multi-name',
   collabJoinInput:          'collab-join-input',
   collabLobbyCode:          'collab-lobby-code',
-  collabLobbyStatus:        'collab-lobby-status',
   challengeModal:           'challenge-modal',
   challengeLoading:       'challenge-loading',
   challengeGame:          'challenge-game',
@@ -291,7 +289,6 @@ const IDS = Object.freeze({
   lcPlayerList:         'lc-player-list',
   lcStartBtn:           'lc-start-btn',
   lcGuestStatus:        'lc-guest-status',
-  lcJoinInput:          'lc-join-input',
   lcRejoinBanner:       'lc-rejoin-banner',
   lcRejoinDesc:         'lc-rejoin-desc',
   lcDisconnectBanner:   'lc-disconnect-banner',
@@ -1615,6 +1612,7 @@ function saveState() {
 // The Netlify Function verifies the AniList token server-side.
 
 let _cloudSaveTimer    = null;  // debounce handle
+let _cloudSaveFailStreak = 0;   // consecutive save failures
 let _cloudSyncEnabled  = false; // true when AniList or MAL authenticated
 let _suppressCloudSave = false; // true while applying a cloud save to avoid an immediate re-save
 
@@ -1819,6 +1817,7 @@ async function _doCloudSave() {
       body:    JSON.stringify(body),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    _cloudSaveFailStreak = 0;
     _setSyncIndicator('saved');
     setTimeout(() => _setSyncIndicator('hidden'), 3000);
 
@@ -1843,7 +1842,11 @@ async function _doCloudSave() {
     }
   } catch (err) {
     console.warn('Cloud save failed:', err);
+    _cloudSaveFailStreak++;
     _setSyncIndicator('error');
+    if (_cloudSaveFailStreak === 3) {
+      showToast('⚠️ Cloud sync has failed 3 times in a row — check your connection.', 6000);
+    }
   }
 }
 
@@ -2144,6 +2147,15 @@ function showToast(msg, duration = 3000) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => el.classList.remove('show'), duration);
 }
+
+window.addEventListener('unhandledrejection', e => {
+  const msg   = e.reason?.message || String(e.reason) || 'Unhandled promise rejection';
+  const stack = e.reason?.stack ?? '';
+  const hash  = _errorHash(msg, stack);
+  if (_sentErrorHashes.has(hash)) return;
+  _sentErrorHashes.add(hash);
+  _sendIssueReport({ message: msg, error: stack || null, source: 'unhandledrejection' });
+});
 
 function updateProgress() {
   // Confidence = weighted average of per-anime settlement.
@@ -2467,6 +2479,7 @@ function pickWinner(side) {
   checkSessionSummary();
   _checkAchievements();
   _maybeSaveTasteSnapshot();
+  _syncTasteNewBadge();
   saveState();
 
   // Pick and show the next pair FIRST — then push a snapshot onto the undo stack
@@ -2877,7 +2890,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     <div class="franchise-members" style="display:none">
       ${group.members.map(a => `
         <div class="franchise-member" onclick="showAnimeDetail(${a.id})">
-          <img src="${esc(a.cover || '')}" alt="" onerror="this.style.display='none'" />
+          <img src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
           <span class="franchise-member-title">${esc(a.titleEn || a.title)}</span>
           <span class="franchise-member-elo">${a.elo}</span>
         </div>`).join('')}
@@ -2898,7 +2911,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     card.innerHTML = `
       <span class="rank-number">#${rank + 1}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
-      <img src="${esc(group.cover || '')}" alt="" onerror="this.style.display='none'" />
+      <img src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
       ${countBadge ? `<div class="franchise-grid-meta">${countBadge}</div>` : ''}
       <div class="rank-elo">ELO ${group.bestElo}</div>
@@ -2910,7 +2923,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   } else {
     card.innerHTML = `
       <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))" ondblclick="event.stopPropagation();showFranchiseDetail('${esc(group.name)}')" title="Double-click for franchise overview">
-        <img src="${esc(group.cover || '')}" alt="" onerror="this.style.display='none'" />
+        <img src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
         <div class="franchise-info">
           <div class="franchise-name rank-title">${esc(group.name)}</div>
           <div class="franchise-meta">
@@ -2948,7 +2961,7 @@ function showFranchiseDetail(groupName) {
     const wr = (a.wins + a.losses) > 0
       ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
     return `<div class="franchise-detail-member" onclick="closeDetailModal();showAnimeDetail(${a.id})">
-      <img src="${esc(a.cover || '')}" alt="" onerror="this.style.display='none'" />
+      <img src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}</div>
         <div class="franchise-detail-member-stats">
@@ -3159,6 +3172,10 @@ function showResults() {
   _ncLoad();
   _ncUpdateBell();
   byId(IDS.notifBell).style.display = 'flex';
+  // Initialise NEW tab badges (hides any already-seen ones)
+  _initNewBadges();
+  // Sync taste badge now that battleCount is known
+  _syncTasteNewBadge();
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
@@ -3498,7 +3515,6 @@ async function _buildTierListBlob() {
 
 async function exportTierListImage() {
   const btns = [
-    byId(IDS.exportImageBtn),
     byId(IDS.sharePrimaryBtn),
   ].filter(Boolean);
   const origText = new Map(btns.map(b => [b, b.textContent]));
@@ -4698,7 +4714,7 @@ async function runCompatibility() {
       const aid = Number(item.anime.id) || 0;
       return `
       <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid})">
-        <img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" />
+        <img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
         <span class="compat-anime-title">${esc(item.title)}</span>
         <span class="compat-ranks">${esc(desc)} ›</span>
       </div>
@@ -4853,7 +4869,7 @@ async function _runCompatibilityMal(username2) {
       const aid = Number(item.anime.id) || 0;
       return `
       <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid})">
-        <img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" />
+        <img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
         <span class="compat-anime-title">${esc(item.title)}</span>
         <span class="compat-ranks">${esc(desc)} ›</span>
       </div>
@@ -5467,8 +5483,8 @@ async function lcShareLink() {
     if (btn) btn.textContent = '✓ Copied!';
     setTimeout(reset, 2500);
   } catch {
-    // Clipboard API unavailable or denied — prompt the user to copy manually
-    window.prompt('Copy this link to share with your opponent:', shareUrl);
+    // Clipboard API unavailable or denied — show toast with the link
+    showToast('Could not copy automatically — long-press the link to copy: ' + shareUrl, 6000);
     reset();
   }
 }
@@ -5842,7 +5858,7 @@ async function liveChallengeHostStart() {
     try { await _lc.firebaseRef.update({ phase: 'lobby' }); } catch (_) {}
     byId(IDS.lcStartBtn).disabled    = false;
     byId(IDS.lcStartBtn).textContent = 'Both players in — start →';
-    if (msg) alert(msg);
+    if (msg) showToast(msg, 5000);
   };
 
   try {
@@ -7245,7 +7261,7 @@ function _collabRenderSearchRows(res, raw, already, takenBy, anilistLoading) {
 
     return `<div class="collab-search-item ${blocked ? 'collab-search-added' : ''}"
       onclick="${blocked ? '' : `collabPickFromSearch(${idx})`}">
-      ${item.cover ? `<img src="${safeUrl(item.cover)}" alt="" />` : '<div class="collab-search-no-cover">🎬</div>'}
+      ${item.cover ? `<img src="${safeUrl(item.cover)}" alt="" loading="lazy" />` : '<div class="collab-search-no-cover">🎬</div>'}
       <span class="collab-search-name">${esc(item.title)}</span>
       ${sourceBadge}
       ${statusBadge}
@@ -7311,7 +7327,7 @@ function _collabRenderNominations() {
   byId(IDS.collabNominateCount).textContent = `${noms.length} / 5`;
   byId(IDS.collabNominationsList).innerHTML = noms.map((n, idx) => `
     <div class="collab-nom-item">
-      ${n.cover ? `<img src="${safeUrl(n.cover)}" alt="" />` : '<div class="collab-nom-cover-placeholder">🎬</div>'}
+      ${n.cover ? `<img src="${safeUrl(n.cover)}" alt="" loading="lazy" />` : '<div class="collab-nom-cover-placeholder">🎬</div>'}
       <span class="collab-nom-title">${esc(n.title)}</span>
       <button class="collab-nom-remove" onclick="collabRemoveNomination(${idx})" aria-label="Remove">✕</button>
     </div>`).join('') || '<p class="collab-nom-empty">Nothing yet — search above to add shows</p>';
@@ -7535,7 +7551,7 @@ function _collabRenderVoteCards(pair) {
       ? '<span class="ep-badge">Movie</span>'
       : show.episodes ? `<span class="ep-badge">${show.episodes} ep</span>` : '';
     el.innerHTML = `
-      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="${esc(show.title)}" />` : '<div class="collab-no-cover">🎬</div>'}
+      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="${esc(show.title)}" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
       <div class="challenge-card-title">${esc(show.title)}</div>
       ${epBadge ? `<div class="challenge-card-meta">${epBadge}</div>` : ''}`;
   });
@@ -7772,7 +7788,7 @@ function _collabRenderResults() {
     const tLabel = t > 0 ? ` · ${t} tie${t !== 1 ? 's' : ''}` : '';
     return `<div class="collab-result-item ${i === 0 ? 'collab-result-winner' : ''}">
       <span class="collab-result-medal">${medals[i] || (i + 1) + '.'}</span>
-      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="" />` : '<div class="collab-no-cover">🎬</div>'}
+      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
       <div class="collab-result-info">
         <div class="collab-result-title">${esc(show.title)}</div>
         <div class="collab-result-wins">${wLabel}<span class="collab-result-ties">${tLabel}</span></div>
@@ -8501,7 +8517,7 @@ function renderExcluded() {
       item.className = 'excluded-item';
       item.id = `excl-${anime.id}`;
       item.innerHTML = `
-        <img src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" />
+        <img src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" loading="lazy" />
         <span class="excluded-item-title">${esc(anime.title)}</span>
         <button class="btn-secondary" style="font-size:0.8rem;padding:5px 12px"
           onclick="reAddAnime(${Number(anime.id) || 0})">↩ Re-add</button>
@@ -8863,7 +8879,7 @@ function _renderTasteStoryCard() {
   if (card.type === 'share') {
     const top3Html = card.top3.map(a => `
       <div class="ts-cover-wrap">
-        <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}" />
+        <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}" loading="lazy" />
         <div class="ts-cover-title">${esc(displayTitle(a))}</div>
       </div>`).join('');
     body.innerHTML = `
@@ -9561,7 +9577,7 @@ function switchProfileTab(sub) {
     if (btn)   btn.classList.toggle('active', s === sub);
     if (panel) panel.style.display = s === sub ? '' : 'none';
   });
-  if (sub === 'taste')        { renderTasteProfile(); renderFormatSplit(); renderScoreDistribution(); renderGenreStats(); renderDisagreements(); }
+  if (sub === 'taste')        { renderTasteProfile(); renderFormatSplit(); renderScoreDistribution(); renderGenreStats(); renderDisagreements(); _dismissNewBadge('taste'); }
   if (sub === 'achievements') renderAchievementsTab();
 }
 
@@ -9569,21 +9585,7 @@ function renderProfileTab() {
   switchProfileTab(_activeProfileSub);
 }
 
-let _activeManageSub = 'settings';
-
-function switchManageTab(sub) {
-  _activeManageSub = sub;
-  ['settings'].forEach(s => {
-    const btn   = document.getElementById('manage-sub-' + s);
-    const panel = document.getElementById('manage-panel-' + s);
-    if (btn)   btn.classList.toggle('active', s === sub);
-    if (panel) panel.style.display = s === sub ? '' : 'none';
-  });
-}
-
-function renderManageTab() {
-  switchManageTab(_activeManageSub);
-}
+function renderManageTab() {}
 
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
 
@@ -9743,6 +9745,11 @@ function snapshotSessionStart() {
   sessionBattleCount = 0;
   animeList.forEach(a => { sessionStartElo[a.id] = a.elo; });
   _startFirebaseSync(); // begin listening for changes from other devices
+  // Reveal the notification bell now that a session is active
+  _ncLoad();
+  _ncUpdateBell();
+  const bell = byId(IDS.notifBell);
+  if (bell) bell.style.display = 'flex';
 }
 
 function checkSessionSummary() {
@@ -9767,7 +9774,7 @@ function showSessionSummary() {
 
   byId(IDS.sessionSummaryList).innerHTML = movers.map(a => `
     <div class="session-mover">
-      <img src="${safeUrl(a.cover)}" alt="${esc(a.title)}" />
+      <img src="${safeUrl(a.cover)}" alt="${esc(a.title)}" loading="lazy" />
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title)}</div>
         <div style="font-size:0.78rem;color:#8b949e">${sessionStartElo[a.id] | 0} \u2192 ${a.elo | 0} ELO</div>
@@ -10615,7 +10622,7 @@ function _paintTasteMoods(el) {
     const coversHtml = covers.map(a => `
       <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
            title="${esc(displayTitle(a))}"
-           onerror="this.style.display='none'" />`).join('');
+           loading="lazy" onerror="this.style.display='none'" />`).join('');
     return `
       <div class="taste-mood-tile" onclick="applyMoodRec('${mood.key}')">
         <div class="taste-mood-covers">${coversHtml}</div>
@@ -11762,6 +11769,39 @@ function _avatarOutsideClick(e) {
   }
 }
 
+// ── New-tab badges ────────────────────────────────────────────────────────
+// Taste: milestone-aware NEW badge — reappears whenever a new taste story
+// milestone is crossed, nudging the user to revisit their updated profile.
+
+const _NEW_BADGE_TASTE_KEY = 'kessen_taste_badge_milestone';
+
+function _initNewBadges() {
+  _syncTasteNewBadge();
+}
+
+// Show/hide the Taste NEW badge based on whether the current milestone
+// is newer than what the user last dismissed.
+function _syncTasteNewBadge() {
+  const el = document.getElementById('new-badge-taste');
+  if (!el) return;
+  if (battleCount < TASTE_STORY_MILESTONES[0]) { el.style.display = 'none'; return; }
+  const currentMilestone = _lastTasteStoryMilestone(battleCount);
+  const seenMilestone    = Number(localStorage.getItem(_NEW_BADGE_TASTE_KEY) || 0);
+  el.style.display = currentMilestone > seenMilestone ? '' : 'none';
+}
+
+function _dismissNewBadge(tab) {
+  const el = document.getElementById('new-badge-' + tab);
+  if (el) el.style.display = 'none';
+  try {
+    if (tab === 'taste') {
+      if (battleCount >= TASTE_STORY_MILESTONES[0]) {
+        localStorage.setItem(_NEW_BADGE_TASTE_KEY, String(_lastTasteStoryMilestone(battleCount)));
+      }
+    }
+  } catch (_) {}
+}
+
 function closeAvatarMenus() {
   ['auth-avatar-dropdown', 'mal-avatar-dropdown'].forEach(id => {
     document.getElementById(id)?.classList.remove('open');
@@ -11933,7 +11973,7 @@ function _paintTrio(fresh = false) {
         <div class="anime-card trio-card ${rankCls}" id="trio-card-${pos}" onclick="trioTap(${pos})">
           ${badgeEl}
           <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
-               decoding="async"
+               decoding="async" loading="lazy"
                onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
           <div class="anime-card-body">
             <div class="title">${esc(displayTitle(a))}</div>
@@ -12783,7 +12823,7 @@ function openSyncModal() {
   // Build preview table
   const rows = _syncQueue.map(item => `
     <tr>
-      <td><img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" /></td>
+      <td><img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.title)}</td>
       <td style="text-align:center"><span class="sync-score-pill ${_scoreClass(item.score10)}">${esc(item.apiScore)}</span></td>
     </tr>`).join('');
@@ -13032,7 +13072,7 @@ function openMALSyncModal() {
 
   const rows = _malSyncQueue.map(item => `
     <tr>
-      <td><img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" /></td>
+      <td><img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.title)}</td>
       <td style="text-align:center"><span class="sync-score-pill ${_scoreClass(item.score)}">${esc(item.score)}</span></td>
     </tr>`).join('');
