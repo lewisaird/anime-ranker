@@ -2029,20 +2029,45 @@
       border-radius: 20px;
       padding: 4px 10px 4px 6px;
     }
-    #mal-header-badge img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
-    #mal-header-badge .auth-hdr-name { color: var(--text-primary); font-weight: 500; }
-    #mal-header-badge .auth-hdr-logout { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.7rem; padding: 2px 5px; border-radius: 4px; }
-    #mal-header-badge .auth-hdr-logout:hover { color: var(--accent-red); }
+    #mal-header-badge img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
     #auth-header-badge {
       display: none;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.8rem;
     }
-    #auth-header-badge img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
-    #auth-header-badge .auth-hdr-name { color: var(--text-primary); font-weight: 500; }
-    #auth-header-badge .auth-hdr-logout { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.7rem; padding: 2px 5px; border-radius: 4px; }
-    #auth-header-badge .auth-hdr-logout:hover { color: var(--accent-red); }
+    /* Avatar dropdown shared styles */
+    .avatar-badge-wrap { position: relative; }
+    .avatar-menu-btn {
+      background: none; border: none; padding: 0; cursor: pointer;
+      display: flex; align-items: center; border-radius: 50%;
+    }
+    .avatar-menu-btn img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; display: block; }
+    .avatar-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      padding: 8px;
+      z-index: 200;
+      min-width: 140px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      flex-direction: column;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .avatar-dropdown.open { display: flex; }
+    .avatar-dropdown-name {
+      font-size: 0.85rem; font-weight: 600;
+      color: var(--text-primary); padding: 2px 4px;
+    }
+    .avatar-dropdown-logout {
+      background: none; border: 1px solid var(--border-default);
+      color: var(--text-secondary); border-radius: 5px;
+      padding: 5px 10px; cursor: pointer; font-size: 0.8rem;
+      width: 100%; text-align: left;
+    }
+    @media (hover: hover) { .avatar-dropdown-logout:hover { border-color: var(--accent-red); color: var(--accent-red); } }
 
     /* redirect URI display */
     .auth-redirect-row {
@@ -3508,14 +3533,8 @@
         align-items: center;
       }
 
-      /* ── Header: compress badge to just avatar + logout ── */
+      /* ── Header: avatar only — name + logout live in Manage tab ── */
       header { padding: 10px 14px; }
-      .auth-hdr-name {
-        max-width: 70px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
       #progress-info { font-size: 0.75rem; }
 
       /* ── Manage tab ── */
@@ -3571,8 +3590,7 @@
       /* Slightly smaller battle-card image to give text more room */
       .anime-card img { width: 68px; height: 96px; }
 
-      /* Header: hide username entirely, keep avatar + logout */
-      .auth-hdr-name { display: none; }
+      /* Header already hides name + logout at 600px; nothing extra needed here */
 
       /* Stats grid 1-col */
       .stats-grid { grid-template-columns: 1fr !important; }
