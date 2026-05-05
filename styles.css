@@ -114,6 +114,7 @@
     #progress-info {
       font-size: 0.85rem;
       color: var(--text-secondary);
+      white-space: nowrap;
     }
 
     #main {
@@ -486,8 +487,10 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    .util-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
-    .util-btn.util-danger:hover { border-color: var(--accent-red); color: var(--accent-red); background: #3d0f0a; }
+    @media (hover: hover) {
+      .util-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
+      .util-btn.util-danger:hover { border-color: var(--accent-red); color: var(--accent-red); background: #3d0f0a; }
+    }
 
     /* MANAGE TAB */
     .manage-tab-content { display: flex; flex-direction: column; gap: 24px; max-width: 480px; }
@@ -531,7 +534,7 @@
       white-space: nowrap;
       flex: 1;
     }
-    .res-tab:hover { background: var(--border-subtle); color: var(--text-primary); }
+    @media (hover: hover) { .res-tab:hover { background: var(--border-subtle); color: var(--text-primary); } }
     .res-tab.active {
       background: var(--bg-primary);
       border-color: var(--border-default);
@@ -1857,7 +1860,7 @@
       font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
       line-height: 1; display: inline-flex; align-items: center;
     }
-    .sort-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+    @media (hover: hover) { .sort-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); } }
     .sort-btn.active { background: #1c2940; border-color: var(--accent-blue); color: var(--accent-blue); font-weight: 600; }
     #ranking-controls-right {
       display: flex; align-items: center; gap: 6px; margin-left: auto;
@@ -1867,7 +1870,7 @@
       font-size: 0.78rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
       line-height: 1; display: inline-flex; align-items: center; gap: 4px;
     }
-    .fuzzy-filter-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); }
+    @media (hover: hover) { .fuzzy-filter-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); } }
     .fuzzy-filter-btn.active { background: #2d1b00; border-color: var(--accent-amber); color: var(--accent-amber); }
 
     /* FORMAT FILTER BUTTONS */
@@ -1879,7 +1882,7 @@
       background: var(--border-subtle); border: 1px solid var(--border-default); color: var(--text-secondary);
       font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
     }
-    .format-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+    @media (hover: hover) { .format-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); } }
     .format-btn.active { background: #1c2940; border-color: var(--accent-blue); color: var(--accent-blue); font-weight: 600; }
     .format-btn.hidden-fmt { background: var(--border-subtle); border-color: var(--border-default); color: #484f58; text-decoration: line-through; }
 
@@ -2563,7 +2566,7 @@
       font-size: 0.78rem; padding: 5px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
       line-height: 1; display: inline-flex; align-items: center; justify-content: center;
     }
-    .view-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--bg-tertiary); }
+    @media (hover: hover) { .view-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--bg-tertiary); } }
     .view-btn.active { background: #1c2940; border-color: var(--accent-blue); color: var(--accent-blue); }
 
     /* DESCRIPTION in detail modal */
@@ -2667,7 +2670,7 @@
       transition: all 0.15s;
     }
     #tab-panel-manage .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
-    #tab-panel-manage .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
+    @media (hover: hover) { #tab-panel-manage .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
 
     /* PROFILE SUB-TABS (Taste / Achievements) */
     #tab-panel-profile .source-tabs {
@@ -2691,7 +2694,7 @@
       transition: all 0.15s;
     }
     #tab-panel-profile .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
-    #tab-panel-profile .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
+    @media (hover: hover) { #tab-panel-profile .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
 
     /* DISCOVER SUB-TABS (For You / This Season / Predict) */
     #tab-panel-discover .source-tabs {
@@ -2714,7 +2717,7 @@
       transition: all 0.15s;
     }
     #tab-panel-discover .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
-    #tab-panel-discover .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
+    @media (hover: hover) { #tab-panel-discover .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
 
     /* RECOMMENDATIONS SECTION */
     #recs-section { margin: 24px 0; }
@@ -2819,7 +2822,7 @@
       font-size: 0.72rem;
       cursor: pointer;
     }
-    .btn-small:hover { background: var(--border-default); color: var(--text-primary); }
+    @media (hover: hover) { .btn-small:hover { background: var(--border-default); color: var(--text-primary); } }
 
     /* ACHIEVEMENTS */
     .achievements-grid {
