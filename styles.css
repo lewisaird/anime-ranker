@@ -60,7 +60,11 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: nowrap;
+      min-height: 0;
     }
+    @keyframes sync-pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .sync-pulse { animation: sync-pulse 1.4s ease-in-out infinite; }
 
     .header-brand {
       display: flex;
@@ -274,7 +278,7 @@
     #mode-popover {
       display: none;
       position: absolute;
-      top: calc(100% + 6px);
+      bottom: calc(100% + 6px);
       right: 0;
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
@@ -282,6 +286,8 @@
       padding: 4px;
       z-index: 100;
       min-width: 240px;
+      max-height: 80vh;
+      overflow-y: auto;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
     #mode-popover.open { display: block; }

@@ -15,8 +15,10 @@
 #   • *.myanimelist.net       — MAL cover images + API
 #   • *.cdn-dena.com          — MAL legacy CDN
 #
-# connect-src includes CDN domains so the canvas tier-list export
+# connect-src includes all CDN domains so the canvas image export
 # (which uses fetch() with mode:cors on cover URLs) isn't blocked.
+# *.cdn-dena.com must appear in BOTH img-src and connect-src — img-src
+# covers <img> tags, connect-src covers fetch() calls used by the canvas exporter.
 #
 # Firebase domains — IMPORTANT: Firebase RTDB doesn't serve traffic from the
 # canonical project host. It redirects to a regional shard like
@@ -33,7 +35,7 @@
 #   • www.gstatic.com in connect-src silences source-map fetch errors that
 #     otherwise spam the violation handler
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.firebase.com https://*.googleapis.com https://www.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-src https://*.firebasedatabase.app https://*.firebaseio.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.firebase.com https://*.googleapis.com https://www.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-src https://*.firebasedatabase.app https://*.firebaseio.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
