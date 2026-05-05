@@ -227,15 +227,16 @@ const IDS = Object.freeze({
   notifCentreModal:       'notif-centre-modal',
   notifCentreList:        'notif-centre-list',
   collabModal:              'collab-modal',
-  collabPanelMode:          'collab-panel-mode',
-  collabPanelSetup:         'collab-panel-setup',
-  collabPanelMultiSetup:    'collab-panel-multi-setup',
-  collabPanelMultiLobby:    'collab-panel-multi-lobby',
-  collabPanelNominate:      'collab-panel-nominate',
-  collabPanelRounds:        'collab-panel-rounds',
-  collabPanelPass:          'collab-panel-pass',
-  collabPanelVote:          'collab-panel-vote',
-  collabPanelResults:       'collab-panel-results',
+  collabPanelMode:           'collab-panel-mode',
+  collabPanelSetup:          'collab-panel-setup',
+  collabPanelMultiSetup:     'collab-panel-multi-setup',
+  collabPanelMultiLobby:     'collab-panel-multi-lobby',
+  collabPanelSeasonFilters:  'collab-panel-season-filters',
+  collabPanelNominate:       'collab-panel-nominate',
+  collabPanelRounds:         'collab-panel-rounds',
+  collabPanelPass:           'collab-panel-pass',
+  collabPanelVote:           'collab-panel-vote',
+  collabPanelResults:        'collab-panel-results',
   collabP1Name:             'collab-p1-name',
   collabP2Name:             'collab-p2-name',
   collabNominateTitle:      'collab-nominate-title',
@@ -277,25 +278,34 @@ const IDS = Object.freeze({
   challengeBreakdown:     'challenge-breakdown',
   // Live challenge
   lcModal:              'lc-modal',
+  lcPanelSetup:         'lc-panel-setup',
+  lcSetupPlatform:      'lc-setup-platform',
+  lcSetupUsername:      'lc-setup-username',
+  lcSetupJoinCode:      'lc-setup-join-code',
   lcPanelLobby:         'lc-panel-lobby',
   lcPanelBuilding:      'lc-panel-building',
   lcPanelGame:          'lc-panel-game',
   lcPanelResults:       'lc-panel-results',
   lcLobbyCode:          'lc-lobby-code',
+  lcShareBtn:           'lc-share-btn',
   lcPlayerList:         'lc-player-list',
   lcStartBtn:           'lc-start-btn',
   lcGuestStatus:        'lc-guest-status',
-  lcJoinSection:        'lc-join-section',
   lcJoinInput:          'lc-join-input',
+  lcRejoinBanner:       'lc-rejoin-banner',
+  lcRejoinDesc:         'lc-rejoin-desc',
   lcDisconnectBanner:   'lc-disconnect-banner',
   lcProgress:           'lc-progress',
-  lcDiffBadge:          'lc-diff-badge',
   lcMyScore:            'lc-my-score',
   lcOpponentScore:      'lc-opponent-score',
   lcOpponentNameScore:  'lc-opponent-name-score',
-  lcGuessPrompt:        'lc-guess-prompt',
+  lcPickPrompt:         'lc-pick-prompt',
   lcCardA:              'lc-card-a',
   lcCardB:              'lc-card-b',
+  lcPredictSection:     'lc-predict-section',
+  lcPredictPrompt:      'lc-predict-prompt',
+  lcPredictA:           'lc-predict-a',
+  lcPredictB:           'lc-predict-b',
   lcWaitingMsg:         'lc-waiting-msg',
   lcReveal:             'lc-reveal',
   lcRevealText:         'lc-reveal-text',
@@ -1636,13 +1646,21 @@ function _setSyncIndicator(state) {
 
 // ── Real-time sync helpers ────────────────────────────────────────────────────
 
-// Returns the Firebase path for this user's real-time state node.
-function _getFirebaseSyncPath() {
+// Returns the Firebase base path for the current user's personal data.
+function _getUserFirebasePath() {
   const u = _activeCloudUser();
   if (!u) return null;
   const prefix = _isMalCloudSession() ? 'mal' : 'al';
   const id = u.id || u.name || u.username;
-  return `users/${prefix}_${id}/state`;
+  return `users/${prefix}_${id}`;
+}
+
+// Returns the Firebase path for this user's real-time state node.
+function _getFirebaseSyncPath() {
+  const u = _activeCloudUser();
+  if (!u) return null;
+  const base = _getUserFirebasePath();
+  return base ? `${base}/state` : null;
 }
 
 // Detach any active Firebase listener and clear pending sync state.
@@ -1654,6 +1672,7 @@ function _stopFirebaseSync() {
   _firebaseSyncListener = null;
   _pendingSyncData      = null;
   byId(IDS.realtimeSyncBanner)?.classList.remove('active');
+  _ncStopSync();
 }
 
 // Attach a Firebase 'value' listener for this user's state path.
@@ -1727,6 +1746,9 @@ function _startFirebaseSync() {
     console.warn('Firebase sync error — stopping listener:', err.code, err.message);
     _stopFirebaseSync();
   });
+
+  // Also start notification sync on this connection
+  _ncStartSync();
 }
 
 // Called by the "Apply" button in the realtime-sync-banner.
@@ -4898,8 +4920,6 @@ function _renderSavedComparisons() {
             ${deltaHtml}
           </div>
           <button class="btn-small" onclick="_rerunComparison('${escapedUsername}','${platform}')">Re-run</button>
-          <button class="btn-small challenge-pill-btn" onclick="openChallengeMode('${escapedUsername}','${platform}')" title="Challenge mode">🎮</button>
-          <button class="btn-small challenge-pill-btn" onclick="openLiveChallengeMode('${escapedUsername}','${platform}')" title="Live challenge">🌐</button>
           <button class="btn-small" onclick="_deleteComparison('${escapedUsername}')" aria-label="Remove saved comparison">×</button>
         </div>`;
       }).join('')}
@@ -5155,94 +5175,129 @@ function closeChallengeModal() {
 
 let _lc = null; // live challenge state
 
-// Build a rankMap from the local animeList: { [anilistId]: { rank, score } }
-// Rank is determined by external score (same basis as static challenge mode),
-// score is the user's AniList or MAL rating (whichever is populated).
-// No malId stored — YAGNI, can be added later under the same path.
-function _lcBuildRankMap() {
-  const sorted = [...animeList].sort((a, b) => {
-    const sa = a.anilistScore || a.malScore || 0;
-    const sb = b.anilistScore || b.malScore || 0;
-    return sb - sa;
-  });
-  const map = {};
-  sorted.forEach((a, i) => {
-    map[String(a.id)] = { rank: i + 1, score: a.anilistScore || a.malScore || 0 };
-  });
-  return map;
+// ── WATCH-LIST FETCH ──────────────────────────────────────────────────────────
+// Returns an array of AniList IDs for anime the user has completed or is watching.
+// For MAL users, IDs are converted to AniList IDs via AniList's idMal_in query.
+async function _lcFetchUserWatchedIds(username, platform) {
+  if (platform === 'anilist') {
+    const query = `
+      query ($username: String) {
+        MediaListCollection(userName: $username, type: ANIME, status_in: [COMPLETED, CURRENT, REPEATING]) {
+          lists { entries { media { id } } }
+        }
+      }`;
+    const res  = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ query, variables: { username } }),
+    });
+    if (!res.ok) throw new Error('AniList returned HTTP ' + res.status);
+    const json = await res.json();
+    if (json.errors) throw new Error(json.errors[0]?.message || 'AniList error');
+    const coll = json.data?.MediaListCollection;
+    if (!coll) throw new Error(`AniList user "${username}" not found or their list is private.`);
+    const ids = coll.lists.flatMap(l => l.entries).map(e => e.media?.id).filter(Boolean);
+    return [...new Set(ids)];
+  }
+
+  if (platform === 'mal') {
+    // Fetch completed + watching from Jikan v4
+    const [compRes, watchRes] = await Promise.all([
+      fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=2&limit=300`),
+      fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=1&limit=300`),
+    ]);
+    if (!compRes.ok && !watchRes.ok)
+      throw new Error(`MAL user "${username}" not found or their list is private.`);
+
+    const malIds = new Set();
+    for (const r of [compRes, watchRes]) {
+      if (!r.ok) continue;
+      const j = await r.json();
+      (j.data || []).forEach(e => { if (e.mal_id) malIds.add(e.mal_id); });
+    }
+    if (malIds.size === 0) throw new Error(`No completed anime found for MAL user "${username}".`);
+
+    // Convert MAL IDs → AniList IDs in chunks of 50
+    const malIdArr = [...malIds];
+    const anilistIds = [];
+    for (let i = 0; i < malIdArr.length; i += 50) {
+      const chunk = malIdArr.slice(i, i + 50);
+      const q = `query ($ids: [Int]) { Page(perPage: 50) { media(idMal_in: $ids, type: ANIME) { id } } }`;
+      const r = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ query: q, variables: { ids: chunk } }),
+      });
+      const j = await r.json();
+      (j?.data?.Page?.media ?? []).forEach(m => anilistIds.push(m.id));
+      if (i + 50 < malIdArr.length) await new Promise(r => setTimeout(r, 350));
+    }
+    if (anilistIds.length === 0) throw new Error('Could not match any MAL entries to AniList — check the username and try again.');
+    return [...new Set(anilistIds)];
+  }
+
+  throw new Error('Unknown platform: ' + platform);
 }
 
-// Build pairs from two rank maps. Returns { pairs, mutualCount, reason }.
-// Each pair has p1Correct/p2Correct and p1Tight/p2Tight independently.
-function _lcBuildPairs(p1RankMap, p1Count, p2RankMap, p2Count) {
-  // Find AniList ID intersection
-  const p1Ids = new Set(Object.keys(p1RankMap).map(Number));
-  const p2Ids = new Set(Object.keys(p2RankMap).map(Number));
-  const animeById = new Map(animeList.map(a => [a.id, a]));
-
-  const mutual = [...p1Ids]
-    .filter(id => p2Ids.has(id) && animeById.has(id))
-    .map(id => ({
-      id,
-      anime: animeById.get(id),
-      p1: p1RankMap[String(id)],
-      p2: p2RankMap[String(id)],
+// Fetch title + cover for a set of AniList IDs (used to build pair display data)
+async function _lcFetchAnimeMetadata(ids) {
+  const q = `
+    query ($ids: [Int]) {
+      Page(perPage: 50) {
+        media(id_in: $ids, type: ANIME) {
+          id
+          title { romaji english }
+          coverImage { large medium }
+          format
+          episodes
+        }
+      }
+    }`;
+  const results = [];
+  // Sample up to 100 IDs — plenty to build 10 pairs from
+  const sample = [...ids].sort(() => Math.random() - 0.5).slice(0, 100);
+  for (let i = 0; i < sample.length; i += 50) {
+    const chunk = sample.slice(i, i + 50);
+    const res  = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ query: q, variables: { ids: chunk } }),
+    });
+    const json = await res.json();
+    (json?.data?.Page?.media ?? []).forEach(m => results.push({
+      id:       m.id,
+      title:    m.title.english || m.title.romaji,
+      cover:    m.coverImage?.large || m.coverImage?.medium || '',
+      format:   m.format   || 'TV',
+      episodes: m.episodes || 0,
     }));
+    if (i + 50 < sample.length) await new Promise(r => setTimeout(r, 300));
+  }
+  return results;
+}
 
-  if (mutual.length < 10) return { pairs: [], mutualCount: mutual.length, reason: 'no_overlap' };
-
-  // Sample up to 60 for pair generation (same as static mode)
-  const pool = [...mutual].sort(() => Math.random() - 0.5).slice(0, 60);
-
-  const buckets = { hard: [], medium: [], easy: [] };
-  for (let i = 0; i < pool.length; i++) {
+// Build 10 random pairs from the mutual watched anime pool
+function _lcBuildPairsFromMutual(mutualAnime) {
+  const pool = [...mutualAnime].sort(() => Math.random() - 0.5);
+  // Generate candidate pairs (cap at 500 to avoid O(n²) blowup)
+  const pairs = [];
+  outer: for (let i = 0; i < pool.length; i++) {
     for (let j = i + 1; j < pool.length; j++) {
-      const a = pool[i], b = pool[j];
-      // Skip if either player scored both identically — no genuine preference
-      if (a.p1.score === b.p1.score) continue;
-      if (a.p2.score === b.p2.score) continue;
-
-      const p1GapPct = Math.abs(a.p1.rank - b.p1.rank) / p1Count;
-      const p2GapPct = Math.abs(a.p2.rank - b.p2.rank) / p2Count;
-      const avgGap   = (p1GapPct + p2GapPct) / 2;
-
-      const pair = {
-        aId:      a.id,    bId:      b.id,
-        aTitle:   a.anime.title, bTitle:   b.anime.title,
-        aCover:   a.anime.cover || '', bCover: b.anime.cover || '',
-        p1Correct: a.p1.rank < b.p1.rank ? 'a' : 'b', // p2 guesses this
-        p2Correct: a.p2.rank < b.p2.rank ? 'a' : 'b', // p1 guesses this
-        p1Tight:  p1GapPct < 0.15,
-        p2Tight:  p2GapPct < 0.15,
-      };
-
-      if      (avgGap < 0.15) buckets.hard.push(pair);
-      else if (avgGap < 0.35) buckets.medium.push(pair);
-      else                    buckets.easy.push(pair);
+      pairs.push({
+        aId: pool[i].id, bId: pool[j].id,
+        aTitle: pool[i].title,    bTitle: pool[j].title,
+        aCover: pool[i].cover,    bCover: pool[j].cover,
+        aFormat: pool[i].format,  bFormat: pool[j].format,
+        aEpisodes: pool[i].episodes, bEpisodes: pool[j].episodes,
+      });
+      if (pairs.length >= 500) break outer;
     }
   }
-
-  const shuffle = arr => arr.sort(() => Math.random() - 0.5);
-  let selected = [
-    ...shuffle(buckets.hard).slice(0, 2),
-    ...shuffle(buckets.medium).slice(0, 5),
-    ...shuffle(buckets.easy).slice(0, 3),
-  ];
-  if (selected.length < 10) {
-    const used = new Set(selected);
-    const extras = shuffle([...buckets.hard, ...buckets.medium, ...buckets.easy].filter(p => !used.has(p)));
-    selected = [...selected, ...extras].slice(0, 10);
-  }
-  const finalPairs = shuffle(selected);
-  return {
-    pairs:       finalPairs,
-    mutualCount: mutual.length,
-    reason:      finalPairs.length < 5 ? 'too_many_ties' : 'ok',
-  };
+  return pairs.sort(() => Math.random() - 0.5).slice(0, 10);
 }
 
 function _lcPanel(id) {
-  [IDS.lcPanelLobby, IDS.lcPanelBuilding, IDS.lcPanelGame, IDS.lcPanelResults]
+  [IDS.lcPanelSetup, IDS.lcPanelLobby, IDS.lcPanelBuilding, IDS.lcPanelGame, IDS.lcPanelResults]
     .forEach(p => { const el = byId(p); if (el) el.style.display = 'none'; });
   const target = byId(id);
   if (target) target.style.display = '';
@@ -5253,91 +5308,284 @@ function _lcGenerateCode() {
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
+// Scoring: 1 pt for correctly predicting opponent's pick + 1 bonus pt if
+// both players picked the same show (taste match). Max 2 pts per round.
 function _lcMyScore() {
   if (!_lc) return 0;
-  const answers = _lc.answers || {};
-  return (_lc.pairs || []).reduce((sum, pair, idx) => {
-    const ans = answers[idx];
-    if (!ans) return sum;
-    const correct = _lc.isP1 ? pair.p2Correct : pair.p1Correct;
-    const tight   = _lc.isP1 ? pair.p2Tight   : pair.p1Tight;
-    return ans === correct ? sum + (tight ? 2 : 1) : sum;
+  return (_lc.pairs || []).reduce((sum, _pair, idx) => {
+    const myPred  = (_lc.predictions  || {})[idx];
+    const oppPick = (_lc.opponentPicks || {})[idx];
+    const myPick  = (_lc.picks        || {})[idx];
+    if (!myPred || !oppPick) return sum;
+    return sum
+      + (myPred === oppPick   ? 1 : 0)   // predicted correctly
+      + (myPick  === oppPick  ? 1 : 0);  // taste match bonus
   }, 0);
 }
 
 function _lcOpponentScore() {
   if (!_lc) return 0;
-  const oppAnswers = _lc.opponentAnswers || {};
-  return (_lc.pairs || []).reduce((sum, pair, idx) => {
-    const ans = oppAnswers[idx];
-    if (!ans) return sum;
-    const correct = _lc.isP1 ? pair.p1Correct : pair.p2Correct;
-    const tight   = _lc.isP1 ? pair.p1Tight   : pair.p2Tight;
-    return ans === correct ? sum + (tight ? 2 : 1) : sum;
+  return (_lc.pairs || []).reduce((sum, _pair, idx) => {
+    const oppPred = (_lc.opponentPredictions || {})[idx];
+    const myPick  = (_lc.picks              || {})[idx];
+    const oppPick = (_lc.opponentPicks      || {})[idx];
+    if (!oppPred || !myPick) return sum;
+    return sum
+      + (oppPred === myPick  ? 1 : 0)   // opponent predicted correctly
+      + (oppPick === myPick  ? 1 : 0);  // taste match bonus (symmetric)
   }, 0);
 }
 
-// ── OPEN / CREATE ──────────────────────────────────────────────────────────────
-async function openLiveChallengeMode(username, platform) {
+// ── SESSION PERSISTENCE ────────────────────────────────────────────────────────
+// Saves minimal state to sessionStorage so we can offer a rejoin after an
+// accidental close. Cleared on intentional close or explicit dismiss.
+function _lcSaveSession() {
+  if (!_lc) return;
+  try {
+    sessionStorage.setItem('kessen-lc', JSON.stringify({
+      code:     _lc.sessionCode,
+      playerId: _lc.myPlayerId,
+      mode:     _lc.mode,
+      username: _lc.myUsername || '',
+    }));
+  } catch {}
+}
+
+function _lcClearSession() {
+  try { sessionStorage.removeItem('kessen-lc'); } catch {}
+}
+
+function _lcGetStoredSession() {
+  try { return JSON.parse(sessionStorage.getItem('kessen-lc')); } catch { return null; }
+}
+
+function _lcCheckRejoinBanner() {
+  if (!_FIREBASE_READY) return;
+  const stored = _lcGetStoredSession();
+  const banner = byId(IDS.lcRejoinBanner);
+  if (!stored || !banner) return;
+  byId(IDS.lcRejoinDesc).textContent = `Session ${stored.code} · playing as ${stored.username}`;
+  banner.style.display = '';
+}
+
+// ── SHAREABLE LINK ─────────────────────────────────────────────────────────────
+// Sets ?lc=CODE in the URL so the host can copy/share it, and clears it on close.
+function _lcSetDeepLink(code) {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('lc', code);
+    history.replaceState(null, '', url.toString());
+  } catch {}
+}
+
+function _lcClearDeepLink() {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('lc')) {
+      url.searchParams.delete('lc');
+      history.replaceState(null, '', url.toString());
+    }
+  } catch {}
+}
+
+// Build the shareable join URL for the current session.
+function _lcBuildShareUrl() {
+  const code = _lc?.sessionCode;
+  if (!code) return null;
+  const url = new URL(window.location.origin + window.location.pathname);
+  url.searchParams.set('lc', code);
+  return url.toString();
+}
+
+// Copy the shareable link to clipboard; fall back to the Web Share API on mobile.
+// If clipboard is unavailable, show a prompt so the user can copy manually.
+async function lcShareLink() {
+  const shareUrl = _lcBuildShareUrl();
+  if (!shareUrl) return;
+
+  const btn = byId(IDS.lcShareBtn);
+  const reset = () => { if (btn) btn.textContent = 'Copy link'; };
+
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Join my Kessen Live Challenge!', url: shareUrl });
+      return;
+    }
+    await navigator.clipboard.writeText(shareUrl);
+    if (btn) btn.textContent = '✓ Copied!';
+    setTimeout(reset, 2500);
+  } catch {
+    // Clipboard API unavailable or denied — prompt the user to copy manually
+    window.prompt('Copy this link to share with your opponent:', shareUrl);
+    reset();
+  }
+}
+
+// Called on startup: if ?lc=CODE is in the URL, auto-open the join flow.
+// The _FIREBASE_READY guard is intentionally absent — we just need to show
+// the modal and pre-fill the code. Firebase readiness is checked when the
+// user actually clicks Join.
+function _lcCheckDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  const code   = params.get('lc');
+  if (!code || code.length < 4) return; // sanity check only — real codes are 6 chars
+
+  // Clean the URL immediately — we've consumed the param
+  _lcClearDeepLink();
+
   if (!_FIREBASE_READY) {
-    alert('Live Challenge requires Firebase — see app.js to configure.');
+    // Firebase SDK didn't load (network issue) — nothing we can do
+    console.warn('Live Challenge deep link: Firebase not ready');
+    return;
+  }
+
+  // Open the setup modal and pre-fill the join code
+  openLiveChallengeMode();
+  const codeEl = byId(IDS.lcSetupJoinCode);
+  if (codeEl) codeEl.value = code.toUpperCase();
+
+  // If the user is already authenticated, auto-trigger the join so opening
+  // the link feels seamless — they don't need to click anything extra.
+  const alreadyAuthed = !!(authUser?.name || malAuthUser?.name);
+  if (alreadyAuthed) {
+    // Small delay so the modal renders first and the button feedback is visible
+    setTimeout(() => lcJoinSession(), 300);
+  }
+}
+
+function lcDismissRejoin() {
+  _lcClearSession();
+  const banner = byId(IDS.lcRejoinBanner);
+  if (banner) banner.style.display = 'none';
+}
+
+async function lcRejoinSession() {
+  const stored = _lcGetStoredSession();
+  if (!stored) return;
+  _initFirebase();
+  if (!_firebaseApp) return;
+
+  const btn = document.querySelector('#lc-rejoin-banner .collab-rejoin-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Rejoining…'; }
+
+  try {
+    const ref  = _firebaseApp.database().ref('live-challenges/' + stored.code);
+    const snap = await ref.once('value');
+
+    if (!snap.exists() || !snap.val()?.players?.[stored.playerId]) {
+      _lcClearSession();
+      byId(IDS.lcRejoinDesc).textContent = 'Session has ended — please start a new one.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Rejoin'; }
+      return;
+    }
+
+    const data     = snap.val();
+    const players  = data.players || {};
+    const oppPid   = Object.keys(players).find(id => id !== stored.playerId);
+    const oppName  = oppPid ? (players[oppPid]?.name || 'Opponent') : '';
+    const myPicks  = players[stored.playerId]?.picks || {};
+    const myPreds  = players[stored.playerId]?.predictions || {};
+
+    _lc = {
+      mode:               stored.mode,
+      isP1:               stored.mode === 'host',
+      myPlayerId:         stored.playerId,
+      myUsername:         stored.username,
+      opponentId:         oppPid || null,
+      opponentName:       oppName,
+      sessionCode:        stored.code,
+      firebaseRef:        ref,
+      pairs:              [],           // _lcSync will populate from Firebase
+      picks:              myPicks,
+      predictions:        myPreds,
+      opponentPicks:      oppPid ? (players[oppPid]?.picks || {}) : {},
+      opponentPredictions: oppPid ? (players[oppPid]?.predictions || {}) : {},
+      hasPicked:          false,        // will be re-derived after pair renders
+      hasSubmitted:       false,
+      currentPair:        data.currentPair || 0,
+      unsubscribe:        null,
+    };
+
+    // Mark ourselves connected again
+    ref.child(`players/${stored.playerId}/connected`).set(true);
+    _lcSetupPresence(ref, stored.playerId);
+    _lcListenToSession(ref);
+    _lcSaveSession(); // refresh stored state
+
+    // Show lobby code in case we land back in lobby
+    byId(IDS.lcLobbyCode).textContent = stored.code;
+
+    // _lcSync will fire immediately via the listener and drive us to the right panel
+  } catch (err) {
+    console.error('lcRejoinSession error:', err);
+    if (btn) { btn.disabled = false; btn.textContent = 'Rejoin'; }
+  }
+}
+
+// ── OPEN ──────────────────────────────────────────────────────────────────────
+// Opens the modal and shows the setup panel. Auth state pre-fills username.
+function openLiveChallengeMode() {
+  if (!_FIREBASE_READY) {
+    showToast('⚠️ Live Challenge is not available right now. Please try again later.');
     return;
   }
   _initFirebase();
+  byId(IDS.lcModal).style.display = 'flex';
+  _lcPanel(IDS.lcPanelSetup);
+  _lcPrefillSetup();
+  _lcCheckRejoinBanner();
+}
 
-  const modal = byId(IDS.lcModal);
-  modal.style.display = 'flex';
-  _lcPanel(IDS.lcPanelLobby);
+function _lcPrefillSetup() {
+  const platformEl  = byId(IDS.lcSetupPlatform);
+  const usernameEl  = byId(IDS.lcSetupUsername);
+  if (!platformEl || !usernameEl) return;
+  if (authUser?.name) {
+    platformEl.value  = 'anilist';
+    usernameEl.value  = authUser.name;
+  } else if (malAuthUser?.name) {
+    platformEl.value  = 'mal';
+    usernameEl.value  = malAuthUser.name;
+  }
+}
 
-  const displayName = username.replace(/ \[MAL\]$/i, '');
-  const pid  = 'p_' + Math.random().toString(36).slice(2, 10);
-  const code = _lcGenerateCode();
-  const name = (authUser?.name || malAuthUser?.name || 'Host');
+// ── CREATE ────────────────────────────────────────────────────────────────────
+async function lcCreateSession() {
+  const platformEl = byId(IDS.lcSetupPlatform);
+  const usernameEl = byId(IDS.lcSetupUsername);
+  const platform   = platformEl?.value || 'anilist';
+  const username   = (usernameEl?.value || '').trim();
+  if (!username) { usernameEl?.focus(); return; }
 
-  // Pre-build my rank map locally (no API call needed)
-  const myRankMap = _lcBuildRankMap();
-
-  _lc = {
-    mode: 'host',
-    isP1: true,        // host is always p1
-    myPlayerId: pid,
-    opponentId: null,
-    opponentName: displayName,
-    sessionCode: code,
-    firebaseRef: null,
-    pairs: [],
-    answers: {},       // my answers, keyed by pair index
-    opponentAnswers: {},
-    currentPair: 0,
-  };
-
-  byId(IDS.lcLobbyCode).textContent = code;
-  byId(IDS.lcJoinSection).style.display = 'none'; // host doesn't need join section
-  _lcRenderLobby({ players: { [pid]: { name, connected: true } }, hostId: pid });
-
-  // Auto-fill name input if available (mirrors Watch Together)
-  const nameInput = byId('lc-name-input');
-  if (nameInput && !nameInput.value.trim() && name !== 'Host') nameInput.value = name;
+  const btn = document.querySelector('#lc-panel-setup .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Fetching your watch list…'; }
 
   try {
+    const watchedIds = await _lcFetchUserWatchedIds(username, platform);
+    if (watchedIds.length < 5)
+      throw new Error(`Only ${watchedIds.length} watched anime found — need at least 5 to play.`);
+
+    const pid  = 'p_' + Math.random().toString(36).slice(2, 10);
+    const code = _lcGenerateCode();
+
+    _lc = {
+      mode: 'host', isP1: true,
+      myPlayerId: pid, myUsername: username, opponentId: null, opponentName: '',
+      sessionCode: code, firebaseRef: null,
+      pairs: [], picks: {}, predictions: {},
+      opponentPicks: {}, opponentPredictions: {},
+      hasPicked: false, hasSubmitted: false, currentPair: 0,
+    };
+
     const ref = firebase.database().ref('live-challenges/' + code);
     const writeTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Could not reach the session server. Check your connection.')), 20000)
+      setTimeout(() => reject(new Error('Could not reach the session server.')), 20000)
     );
     await Promise.race([
       ref.set({
-        phase:      'lobby',
-        hostId:     pid,
-        currentPair: 0,
-        createdAt:  Date.now(),
+        phase: 'lobby', hostId: pid, currentPair: 0, createdAt: Date.now(),
         players: {
-          [pid]: {
-            name,
-            connected:   true,
-            rankMap:     myRankMap,
-            rankedCount: animeList.length,
-            answers:     {},
-          },
+          [pid]: { name: username, platform, connected: true, watchedIds, picks: {}, predictions: {} },
         },
       }),
       writeTimeout,
@@ -5345,47 +5593,57 @@ async function openLiveChallengeMode(username, platform) {
     ref.child('createdAt').onDisconnect().remove();
 
     _lc.firebaseRef = ref;
+    _lcSaveSession();
+    _lcSetDeepLink(code);
+    byId(IDS.lcLobbyCode).textContent = code;
+    _lcRenderLobby({ players: { [pid]: { name: username, connected: true } }, hostId: pid });
+    _lcPanel(IDS.lcPanelLobby);
     _lcSetupPresence(ref, pid);
     _lcListenToSession(ref);
   } catch (err) {
-    alert('Could not create live challenge session:\n' + (err.message || err));
-    closeLiveChallengeModal();
+    showToast('⚠️ Could not create session — please check your connection and try again.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
   }
 }
 
-// ── JOIN ───────────────────────────────────────────────────────────────────────
-async function liveChallengeJoin() {
-  if (!_FIREBASE_READY) return;
-  const code = (byId(IDS.lcJoinInput)?.value || '').trim().toUpperCase();
-  if (code.length !== 6) { byId(IDS.lcJoinInput)?.focus(); return; }
+// ── JOIN ──────────────────────────────────────────────────────────────────────
+async function lcJoinSession() {
+  const platformEl = byId(IDS.lcSetupPlatform);
+  const usernameEl = byId(IDS.lcSetupUsername);
+  const codeEl     = byId(IDS.lcSetupJoinCode);
+  const platform   = platformEl?.value || 'anilist';
+  const username   = (usernameEl?.value || '').trim();
+  const code       = (codeEl?.value || '').trim().toUpperCase();
 
-  _initFirebase();
-  const pid  = 'p_' + Math.random().toString(36).slice(2, 10);
-  const name = authUser?.name || malAuthUser?.name || 'Guest';
+  if (!username) { usernameEl?.focus(); return; }
+  if (code.length !== 6) { codeEl?.focus(); return; }
+
+  const btn = document.querySelector('#lc-panel-setup .btn-secondary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
 
   try {
+    const watchedIds = await _lcFetchUserWatchedIds(username, platform);
+    if (watchedIds.length < 5)
+      throw new Error(`Only ${watchedIds.length} watched anime found — need at least 5 to play.`);
+
     const ref  = firebase.database().ref('live-challenges/' + code);
     const snap = await ref.once('value');
     const data = snap.val();
-    if (!data) { alert('Session not found — check the code and try again.'); return; }
-    if (data.phase !== 'lobby') { alert('This session has already started.'); return; }
+    if (!data) throw new Error('Session not found — check the code and try again.');
+    if (data.phase !== 'lobby') throw new Error('This session has already started.');
 
-    const myRankMap = _lcBuildRankMap();
-    const hostId    = data.hostId;
-    const hostName  = data.players?.[hostId]?.name || 'Host';
+    const pid      = 'p_' + Math.random().toString(36).slice(2, 10);
+    const hostId   = data.hostId;
+    const hostName = data.players?.[hostId]?.name || 'Host';
 
     _lc = {
-      mode: 'guest',
-      isP1: false,       // guest is always p2
-      myPlayerId: pid,
-      opponentId: hostId,
-      opponentName: hostName,
-      sessionCode: code,
-      firebaseRef: ref,
-      pairs: [],
-      answers: {},
-      opponentAnswers: {},
-      currentPair: 0,
+      mode: 'guest', isP1: false,
+      myPlayerId: pid, myUsername: username, opponentId: hostId, opponentName: hostName,
+      sessionCode: code, firebaseRef: ref,
+      pairs: [], picks: {}, predictions: {},
+      opponentPicks: {}, opponentPredictions: {},
+      hasPicked: false, hasSubmitted: false, currentPair: 0,
     };
 
     const writeTimeout = new Promise((_, reject) =>
@@ -5393,43 +5651,27 @@ async function liveChallengeJoin() {
     );
     await Promise.race([
       ref.update({
-        [`players/${pid}`]: {
-          name,
-          connected:   true,
-          rankMap:     myRankMap,
-          rankedCount: animeList.length,
-          answers:     {},
-        },
+        [`players/${pid}`]: { name: username, platform, connected: true, watchedIds, picks: {}, predictions: {} },
       }),
       writeTimeout,
     ]);
 
+    _lcSaveSession();
+    _lcSetDeepLink(code);
     byId(IDS.lcLobbyCode).textContent = code;
-    byId(IDS.lcJoinSection).style.display = 'none';
     _lcPanel(IDS.lcPanelLobby);
     _lcSetupPresence(ref, pid);
     _lcListenToSession(ref);
   } catch (err) {
-    alert('Could not join session:\n' + (err.message || err));
+    showToast('⚠️ Could not join session — check the code and try again.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Join →'; }
   }
 }
 
-// Standalone join entry point: opens the modal in join-only mode (no host context)
-function openLiveChallengeJoin() {
-  if (!_FIREBASE_READY) {
-    alert('Live Challenge requires Firebase — see app.js to configure.');
-    return;
-  }
-  _lc = null;
-  byId(IDS.lcModal).style.display = 'flex';
-  _lcPanel(IDS.lcPanelLobby);
-  byId(IDS.lcLobbyCode).textContent = '';
-  byId(IDS.lcPlayerList).innerHTML  = '';
-  byId(IDS.lcStartBtn).style.display    = 'none';
-  byId(IDS.lcGuestStatus).style.display = 'none';
-  byId(IDS.lcJoinSection).style.display = '';
-  byId(IDS.lcDisconnectBanner).style.display = 'none';
-}
+// Back-compat shims for old entry points
+function liveChallengeJoin()  { lcJoinSession(); }
+function openLiveChallengeJoin() { openLiveChallengeMode(); }
 
 // ── PRESENCE ──────────────────────────────────────────────────────────────────
 function _lcSetupPresence(ref, pid) {
@@ -5439,9 +5681,15 @@ function _lcSetupPresence(ref, pid) {
 // ── LISTENER ──────────────────────────────────────────────────────────────────
 function _lcListenToSession(ref) {
   const handler = snap => {
-    const data = snap.val();
-    if (!data || !_lc) return;
-    _lcSync(data);
+    if (!_lc) return;
+    if (!snap.exists()) {
+      // Session was deleted (host disconnected and Firebase cleaned it up)
+      _lcClearSession();
+      showToast('⚠️ The session ended — opponent disconnected.');
+      closeLiveChallengeModal();
+      return;
+    }
+    _lcSync(snap.val());
   };
   ref.on('value', handler);
   _lc.unsubscribe = () => ref.off('value', handler);
@@ -5450,13 +5698,14 @@ function _lcListenToSession(ref) {
 function _lcSync(data) {
   if (!_lc) return;
 
-  // Mirror opponent's answers locally
+  // Mirror opponent's picks/predictions locally
   const myPid  = _lc.myPlayerId;
   const oppPid = Object.keys(data.players || {}).find(id => id !== myPid);
   if (oppPid && !_lc.opponentId) _lc.opponentId = oppPid;
   if (oppPid) {
-    _lc.opponentName    = data.players[oppPid]?.name || _lc.opponentName;
-    _lc.opponentAnswers = data.players[oppPid]?.answers || {};
+    _lc.opponentName        = data.players[oppPid]?.name        || _lc.opponentName;
+    _lc.opponentPicks       = data.players[oppPid]?.picks       || {};
+    _lc.opponentPredictions = data.players[oppPid]?.predictions || {};
   }
 
   // Disconnect banner
@@ -5525,52 +5774,83 @@ function _lcRenderLobby(data) {
     byId(IDS.lcStartBtn).style.display    = 'none';
     byId(IDS.lcGuestStatus).style.display = '';
   }
+
+  // Load past games into the history section (non-blocking)
+  _lcLoadHistory();
 }
 
 // ── HOST STARTS ────────────────────────────────────────────────────────────────
 async function liveChallengeHostStart() {
   if (!_lc?.firebaseRef) return;
-  const players = (await _lc.firebaseRef.child('players').once('value')).val() || {};
-  const pids    = Object.keys(players);
-  if (pids.length < 2) return; // guard — need at least 2 players
-
-  const myPid   = _lc.myPlayerId;
-  const oppPid  = pids.find(id => id !== myPid);
-  if (!oppPid) return;
-
-  const p1Data = players[myPid];
-  const p2Data = players[oppPid];
 
   byId(IDS.lcStartBtn).disabled    = true;
   byId(IDS.lcStartBtn).textContent = 'Building…';
-  await _lc.firebaseRef.update({ phase: 'building' });
 
-  const { pairs, mutualCount, reason } = _lcBuildPairs(
-    p1Data.rankMap, p1Data.rankedCount,
-    p2Data.rankMap, p2Data.rankedCount
-  );
-
-  if (reason !== 'ok') {
-    const msg = reason === 'no_overlap'
-      ? `Only ${mutualCount} anime in common — need at least 10 to play.`
-      : 'Too many ties in scores to build a fair game — try scoring more anime differently.';
-    await _lc.firebaseRef.update({ phase: 'lobby' });
+  const _revertToLobby = async (msg) => {
+    try { await _lc.firebaseRef.update({ phase: 'lobby' }); } catch (_) {}
     byId(IDS.lcStartBtn).disabled    = false;
     byId(IDS.lcStartBtn).textContent = 'Both players in — start →';
-    alert(msg);
-    return;
+    if (msg) alert(msg);
+  };
+
+  try {
+    // Read fresh player data from Firebase
+    const snap    = await _lc.firebaseRef.child('players').once('value');
+    const players = snap.val() || {};
+    const pids    = Object.keys(players);
+    if (pids.length < 2) { await _revertToLobby('Need at least 2 players to start.'); return; }
+
+    const myPid  = _lc.myPlayerId;
+    const oppPid = pids.find(id => id !== myPid);
+    if (!oppPid) { await _revertToLobby('Could not find opponent in session.'); return; }
+
+    const p1Data = players[myPid];
+    const p2Data = players[oppPid];
+
+    // Guard: watchedIds must be present for both players
+    const p1Ids = [].concat(p1Data?.watchedIds || []);
+    const p2Ids = [].concat(p2Data?.watchedIds || []);
+    if (!p1Ids.length) {
+      await _revertToLobby('Your watch history wasn\'t ready — please try again.');
+      return;
+    }
+    if (!p2Ids.length) {
+      await _revertToLobby('Opponent\'s watch history isn\'t ready yet — ask them to wait a moment and try again.');
+      return;
+    }
+
+    // Find mutual watched anime
+    const p2Set     = new Set(p2Ids);
+    const mutualIds = p1Ids.filter(id => p2Set.has(id));
+    if (mutualIds.length < 10) {
+      await _revertToLobby(`Only ${mutualIds.length} anime watched by both players — need at least 10 to play.`);
+      return;
+    }
+
+    // Signal to both players that build is in progress
+    await _lc.firebaseRef.update({ phase: 'building' });
+
+    // Fetch titles + covers for mutual anime, then build pairs
+    const metadata = await _lcFetchAnimeMetadata(mutualIds);
+    const pairs    = _lcBuildPairsFromMutual(metadata);
+    if (pairs.length < 5) {
+      await _revertToLobby('Couldn\'t build enough matchups from your shared watch history — try again.');
+      return;
+    }
+
+    // Don't pre-set _lc.pairs here — let _lcSync handle the transition for
+    // both host and guest uniformly when the Firebase write comes back.
+    const writeTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timed out writing pairs to Firebase — check your connection.')), 20000)
+    );
+    await Promise.race([
+      _lc.firebaseRef.update({ phase: 'playing', pairs, currentPair: 0 }),
+      writeTimeout,
+    ]);
+  } catch (err) {
+    console.error('liveChallengeHostStart error:', err);
+    await _revertToLobby('Something went wrong starting the game:\n' + (err.message || err));
   }
-
-  _lc.pairs       = pairs;
-  _lc.currentPair = 0;
-
-  const writeTimeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Could not write pairs to Firebase.')), 20000)
-  );
-  await Promise.race([
-    _lc.firebaseRef.update({ phase: 'playing', pairs, currentPair: 0 }),
-    writeTimeout,
-  ]);
 }
 
 // ── GAME ───────────────────────────────────────────────────────────────────────
@@ -5580,36 +5860,48 @@ function _lcRenderPair() {
   const total = _lc.pairs.length;
   if (!pair) { _lcEndGame(); return; }
 
-  // Reset local answer for this pair
-  _lc.answeredThisPair = false;
+  // Reset round state
+  _lc.hasPicked    = false;
+  _lc.hasSubmitted = false;
 
   byId(IDS.lcProgress).textContent = `Round ${_lc.currentPair + 1} of ${total}`;
+  byId(IDS.lcPickPrompt).textContent = 'Which do you prefer?';
 
-  // "Tight" badge is from the opponent's perspective (what WE're guessing)
-  const tight = _lc.isP1 ? pair.p2Tight : pair.p1Tight;
-  const badge = byId(IDS.lcDiffBadge);
-  badge.textContent = tight ? '🔥 Tight call — worth 2 pts' : '';
-  badge.style.color = '#f85149';
-
-  // Guess prompt
-  byId(IDS.lcGuessPrompt).textContent =
-    `Which did ${esc(_lc.opponentName)} rank higher?`;
-
-  // Render cards
-  [[IDS.lcCardA, pair.aTitle, pair.aCover], [IDS.lcCardB, pair.bTitle, pair.bCover]]
-    .forEach(([elId, title, cover]) => {
-      const el     = byId(elId);
-      el.className = 'challenge-card';
-      el.disabled  = false;
+  // Render cards — fully reset and enabled for picking
+  [
+    [IDS.lcCardA, pair.aTitle, pair.aCover, pair.aFormat, pair.aEpisodes],
+    [IDS.lcCardB, pair.bTitle, pair.bCover, pair.bFormat, pair.bEpisodes],
+  ].forEach(([elId, title, cover, format, episodes]) => {
+      const el       = byId(elId);
+      el.className   = 'challenge-card';
+      el.disabled    = false;
+      el.style.outline = '';
+      el.style.opacity = '';
+      const epBadge = format === 'MOVIE'
+        ? '<span class="ep-badge">Movie</span>'
+        : episodes ? `<span class="ep-badge">${episodes} ep</span>` : '';
       el.innerHTML = cover
-        ? `<img src="${safeUrl(cover)}" alt="${esc(title)}" /><div class="challenge-card-title">${esc(title)}</div>`
-        : `<div class="collab-no-cover">🎬</div><div class="challenge-card-title">${esc(title)}</div>`;
+        ? `<img src="${safeUrl(cover)}" alt="${esc(title)}" />
+           <div class="challenge-card-title">${esc(title)}</div>
+           ${epBadge ? `<div class="challenge-card-meta">${epBadge}</div>` : ''}`
+        : `<div class="collab-no-cover">🎬</div>
+           <div class="challenge-card-title">${esc(title)}</div>
+           ${epBadge ? `<div class="challenge-card-meta">${epBadge}</div>` : ''}`;
     });
 
-  byId(IDS.lcReveal).style.display   = 'none';
-  byId(IDS.lcWaitingMsg).style.display = 'none';
-  byId(IDS.lcNextBtn).style.display   = 'none';
-  byId(IDS.lcWaitingNext).style.display = 'none';
+  // Predict buttons — re-enable and label with card titles
+  const pA = byId(IDS.lcPredictA);
+  const pB = byId(IDS.lcPredictB);
+  pA.textContent = pair.aTitle;
+  pB.textContent = pair.bTitle;
+  pA.disabled    = false;
+  pB.disabled    = false;
+
+  byId(IDS.lcPredictSection).style.display  = 'none';
+  byId(IDS.lcReveal).style.display          = 'none';
+  byId(IDS.lcWaitingMsg).style.display      = 'none';
+  byId(IDS.lcNextBtn).style.display         = 'none';
+  byId(IDS.lcWaitingNext).style.display     = 'none';
 
   _lcUpdateScoreDisplay();
 }
@@ -5621,67 +5913,103 @@ function _lcUpdateScoreDisplay() {
   if (oppNameEl) oppNameEl.firstChild.textContent = (_lc.opponentName || 'Opponent') + ': ';
 }
 
-function liveChallengeAnswer(side) {
-  if (!_lc || _lc.answeredThisPair) return;
-  const pair = _lc.pairs[_lc.currentPair];
-  if (!pair) return;
+// Phase 1 — player chooses their own preference
+function liveChallengePick(side) {
+  if (!_lc || _lc.hasPicked) return;
+  _lc.hasPicked = true;
+  _lc.picks[_lc.currentPair] = side;
 
-  _lc.answeredThisPair = true;
-  _lc.answers[_lc.currentPair] = side;
+  // Highlight chosen card, dim the other
+  const chosen = side === 'a' ? IDS.lcCardA : IDS.lcCardB;
+  const other  = side === 'a' ? IDS.lcCardB : IDS.lcCardA;
+  byId(chosen).style.outline = '2px solid var(--accent)';
+  byId(other).disabled = true;
+  byId(other).style.opacity = '0.45';
 
-  // Disable cards immediately
-  byId(IDS.lcCardA).disabled = true;
-  byId(IDS.lcCardB).disabled = true;
+  // Transition to predict phase
+  byId(IDS.lcPickPrompt).textContent =
+    `You chose. Now — which will ${esc(_lc.opponentName)} pick?`;
+  byId(IDS.lcPredictSection).style.display = '';
+}
+
+// Phase 2 — player predicts opponent's pick, then submits both to Firebase
+function liveChallengePredict(side) {
+  if (!_lc || !_lc.hasPicked || _lc.hasSubmitted) return;
+  _lc.hasSubmitted = true;
+  _lc.predictions[_lc.currentPair] = side;
+
+  // Disable predict buttons
+  byId(IDS.lcPredictA).disabled = true;
+  byId(IDS.lcPredictB).disabled = true;
+  byId(IDS.lcPredictSection).style.display = 'none';
   byId(IDS.lcWaitingMsg).style.display = '';
 
-  // Write answer to Firebase
+  // Write pick + prediction together in one Firebase update
   const myPid = _lc.myPlayerId;
-  _lc.firebaseRef?.child(`players/${myPid}/answers/${_lc.currentPair}`).set(side);
+  const idx   = _lc.currentPair;
+  _lc.firebaseRef?.child(`players/${myPid}`).update({
+    [`picks/${idx}`]:       _lc.picks[idx],
+    [`predictions/${idx}`]: side,
+  });
 
-  // Check if opponent already answered
   _lcMaybeReveal();
 }
 
 function _lcMaybeReveal() {
-  if (!_lc || !_lc.answeredThisPair) return;
-  const idx      = _lc.currentPair;
-  const oppAns   = _lc.opponentAnswers[idx];
-  if (!oppAns) return; // opponent hasn't answered yet
+  if (!_lc || !_lc.hasSubmitted) return;
+  const idx = _lc.currentPair;
+  if (!_lc.opponentPicks[idx]) return; // opponent hasn't finished yet
 
   byId(IDS.lcWaitingMsg).style.display = 'none';
   _lcReveal();
 }
 
 function _lcReveal() {
-  const idx  = _lc.currentPair;
-  const pair = _lc.pairs[idx];
-  const myAns  = _lc.answers[idx];
-  const oppAns = _lc.opponentAnswers[idx];
+  const idx    = _lc.currentPair;
+  const pair   = _lc.pairs[idx];
+  const myPick = _lc.picks[idx];
+  const myPred = _lc.predictions[idx];
+  const oppPick = _lc.opponentPicks[idx];
+  const oppPred = _lc.opponentPredictions[idx];
 
-  // My result — I'm guessing opponent's preference
-  const myCorrect    = _lc.isP1 ? pair.p2Correct : pair.p1Correct;
-  const myTight      = _lc.isP1 ? pair.p2Tight   : pair.p1Tight;
-  const iCorrect     = myAns === myCorrect;
+  const tasteMatch     = myPick  === oppPick;
+  const iPredicted     = myPred  === oppPick;
+  const oppPredicted   = oppPred === myPick;
 
-  // Opponent's result — they're guessing my preference
-  const oppCorrect   = _lc.isP1 ? pair.p1Correct : pair.p2Correct;
-  const oCorrect     = oppAns === oppCorrect;
+  const myPickTitle  = myPick  === 'a' ? pair.aTitle : pair.bTitle;
+  const oppPickTitle = oppPick === 'a' ? pair.aTitle : pair.bTitle;
 
-  const higherTitle  = myCorrect === 'a' ? pair.aTitle : pair.bTitle;
-  const lowerTitle   = myCorrect === 'a' ? pair.bTitle : pair.aTitle;
+  const myPts  = (iPredicted ? 1 : 0) + (tasteMatch ? 1 : 0);
+  const oppPts = (oppPredicted ? 1 : 0) + (tasteMatch ? 1 : 0);
 
   byId(IDS.lcRevealText).innerHTML = `
-    <div style="margin-bottom:6px">
-      ${iCorrect
-        ? `<span class="ch-correct-msg">✓ You got it${myTight ? ' +2 pts!' : ''}</span>`
-        : `<span class="ch-wrong-msg">✗ You guessed wrong</span>`}
-    </div>
-    <div style="font-size:0.8rem;color:#8b949e;margin-bottom:4px">
-      ${esc(_lc.opponentName)} ranked <strong style="color:var(--text)">${esc(higherTitle)}</strong>
-      above <strong style="color:var(--text)">${esc(lowerTitle)}</strong>
-    </div>
-    <div style="font-size:0.78rem;color:#8b949e">
-      ${esc(_lc.opponentName || 'Opponent')}: ${oCorrect ? '✓ correct' : '✗ wrong'}
+    ${tasteMatch
+      ? `<div style="text-align:center;font-weight:600;color:var(--accent);margin-bottom:8px">
+           ✨ Taste match — you both picked ${esc(myPickTitle)}! (+1 each)
+         </div>`
+      : `<div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:10px;gap:8px">
+           <div style="text-align:center;flex:1">
+             <div style="color:#8b949e;font-size:0.73rem;margin-bottom:2px">You picked</div>
+             <strong style="color:var(--text)">${esc(myPickTitle)}</strong>
+           </div>
+           <div style="text-align:center;flex:1">
+             <div style="color:#8b949e;font-size:0.73rem;margin-bottom:2px">${esc(_lc.opponentName)} picked</div>
+             <strong style="color:var(--text)">${esc(oppPickTitle)}</strong>
+           </div>
+         </div>`}
+    <div style="display:flex;justify-content:space-between;font-size:0.82rem;gap:8px">
+      <div style="text-align:center;flex:1;padding:6px;background:var(--surface2);border-radius:6px">
+        ${iPredicted
+          ? `<span class="ch-correct-msg">✓ You predicted right</span>`
+          : `<span class="ch-wrong-msg">✗ You predicted wrong</span>`}
+        <div style="font-size:0.72rem;color:#8b949e;margin-top:2px">+${myPts} pt${myPts !== 1 ? 's' : ''}</div>
+      </div>
+      <div style="text-align:center;flex:1;padding:6px;background:var(--surface2);border-radius:6px">
+        ${oppPredicted
+          ? `<span class="ch-correct-msg">✓ ${esc(_lc.opponentName)} predicted right</span>`
+          : `<span class="ch-wrong-msg">✗ ${esc(_lc.opponentName)} predicted wrong</span>`}
+        <div style="font-size:0.72rem;color:#8b949e;margin-top:2px">+${oppPts} pt${oppPts !== 1 ? 's' : ''}</div>
+      </div>
     </div>`;
 
   byId(IDS.lcReveal).style.display = '';
@@ -5694,7 +6022,7 @@ function _lcReveal() {
     btn.textContent    = isLast ? 'See Results →' : 'Next →';
     byId(IDS.lcWaitingNext).style.display = 'none';
   } else {
-    byId(IDS.lcNextBtn).style.display    = 'none';
+    byId(IDS.lcNextBtn).style.display     = 'none';
     byId(IDS.lcWaitingNext).style.display = '';
   }
 }
@@ -5721,23 +6049,28 @@ function _lcEndGame() {
 function _lcShowResults() {
   _lcPanel(IDS.lcPanelResults);
   if (!_lc?.pairs?.length) return;
+  _lcSaveHistory(); // fire-and-forget — persists to Firebase in background
 
   const myTotal  = _lcMyScore();
   const oppTotal = _lcOpponentScore();
   const total    = _lc.pairs.length;
-  const maxPts   = _lc.pairs.reduce((s, p) => {
-    const tight = _lc.isP1 ? p.p2Tight : p.p1Tight;
-    return s + (tight ? 2 : 1);
+  const maxPts   = total * 2; // max 2 pts per round (1 prediction + 1 taste match)
+
+  // Count taste matches for the summary label
+  const tasteMatches = _lc.pairs.reduce((n, _p, idx) => {
+    const mp = (_lc.picks || {})[idx];
+    const op = (_lc.opponentPicks || {})[idx];
+    return n + (mp && op && mp === op ? 1 : 0);
   }, 0);
 
   const winner = myTotal > oppTotal ? 'You win! 🏆'
                : myTotal < oppTotal ? `${esc(_lc.opponentName)} wins!`
                : "It's a tie!";
-  const pct = Math.round((myTotal / maxPts) * 100);
-  const label = pct >= 90 ? "You've been watching their watchlist 👀"
-              : pct >= 70 ? "You know them well 🎯"
-              : pct >= 50 ? "You think you know them 🤔"
-              :             "Have you actually met? 😅";
+  const predPct = Math.round((myTotal / maxPts) * 100);
+  const label = predPct >= 90 ? "You know them inside-out 🔮"
+              : predPct >= 70 ? "You read them well 🎯"
+              : predPct >= 50 ? "You're figuring each other out 🤔"
+              :                 "Complete strangers? 😅";
 
   byId(IDS.lcResults).innerHTML = `
     <div class="ch-end-score">${winner}</div>
@@ -5752,23 +6085,121 @@ function _lcShowResults() {
       </div>
     </div>
     <div class="ch-end-label">${label}</div>
-    <p style="font-size:0.75rem;color:#8b949e;margin:6px 0 0">Guessing each other's rankings · ${total} rounds</p>`;
+    <p style="font-size:0.75rem;color:#8b949e;margin:6px 0 0">
+      ${tasteMatches} taste match${tasteMatches !== 1 ? 'es' : ''} out of ${total} rounds ·
+      1 pt per correct prediction + 1 bonus for taste matches
+    </p>`;
 
   byId(IDS.lcBreakdown).innerHTML = _lc.pairs.map((pair, idx) => {
-    const myAns     = _lc.answers[idx];
-    const myCorrect = _lc.isP1 ? pair.p2Correct : pair.p1Correct;
-    const iRight    = myAns === myCorrect;
-    const winner    = myCorrect === 'a' ? pair.aTitle : pair.bTitle;
-    const loser     = myCorrect === 'a' ? pair.bTitle : pair.aTitle;
-    return `<div class="ch-breakdown-item ${iRight ? 'ch-b-correct' : 'ch-b-wrong'}">
-      <span class="ch-b-icon">${iRight ? '✓' : '✗'}</span>
+    const myPick  = (_lc.picks              || {})[idx];
+    const myPred  = (_lc.predictions        || {})[idx];
+    const oppPick = (_lc.opponentPicks      || {})[idx];
+    const oppPred = (_lc.opponentPredictions || {})[idx];
+    if (!myPick || !oppPick) return '';
+
+    const tasteMatch   = myPick === oppPick;
+    const iPredicted   = myPred === oppPick;
+    const myPickTitle  = myPick  === 'a' ? pair.aTitle : pair.bTitle;
+    const oppPickTitle = oppPick === 'a' ? pair.aTitle : pair.bTitle;
+
+    const cls = iPredicted ? 'ch-b-correct' : 'ch-b-wrong';
+    return `<div class="ch-breakdown-item ${cls}">
+      <span class="ch-b-icon">${iPredicted ? '✓' : '✗'}</span>
       <span class="ch-b-text">
-        <span class="ch-b-winner">${esc(winner)}</span>
-        <span class="ch-b-ranks">${esc(_lc.opponentName)} prefers</span>
-        <span class="ch-b-loser">${esc(loser)}</span>
+        ${tasteMatch
+          ? `<span class="ch-b-winner">✨ Both picked ${esc(myPickTitle)}</span>`
+          : `<span class="ch-b-winner">You: ${esc(myPickTitle)}</span>
+             <span class="ch-b-ranks" style="margin:0 4px">·</span>
+             <span class="ch-b-loser">${esc(_lc.opponentName)}: ${esc(oppPickTitle)}</span>`}
+        ${oppPred
+          ? `<span class="ch-b-ranks" style="display:block;margin-top:2px">
+               ${esc(_lc.opponentName)} predicted: ${oppPred === myPick ? '✓' : '✗'}
+             </span>`
+          : ''}
       </span>
     </div>`;
   }).join('');
+}
+
+// ── CHALLENGE HISTORY ─────────────────────────────────────────────────────────
+// Saves the completed game to Firebase under the user's personal path so they
+// can browse past results. Both players write their own copy independently.
+async function _lcSaveHistory() {
+  if (!_lc?.pairs?.length || !_firebaseApp) return;
+  const basePath = _getUserFirebasePath();
+  if (!basePath) return; // guest users — no cloud path
+
+  const myTotal  = _lcMyScore();
+  const oppTotal = _lcOpponentScore();
+  const tasteMatches = _lc.pairs.reduce((n, _p, idx) => {
+    const mp = (_lc.picks || {})[idx];
+    const op = (_lc.opponentPicks || {})[idx];
+    return n + (mp && op && mp === op ? 1 : 0);
+  }, 0);
+
+  const record = {
+    playedAt:     Date.now(),
+    opponent:     _lc.opponentName || 'Unknown',
+    myScore:      myTotal,
+    oppScore:     oppTotal,
+    tasteMatches,
+    rounds:       _lc.pairs.length,
+    outcome:      myTotal > oppTotal ? 'win' : myTotal < oppTotal ? 'loss' : 'draw',
+    pairs: _lc.pairs.map((pair, idx) => ({
+      aTitle:   pair.aTitle,
+      bTitle:   pair.bTitle,
+      myPick:   (_lc.picks        || {})[idx] || null,
+      oppPick:  (_lc.opponentPicks || {})[idx] || null,
+      myPred:   (_lc.predictions  || {})[idx] || null,
+      oppPred:  (_lc.opponentPredictions || {})[idx] || null,
+    })),
+  };
+
+  try {
+    await _firebaseApp.database()
+      .ref(`${basePath}/challenge-history`)
+      .push(record);
+  } catch (err) {
+    console.warn('Could not save challenge history:', err.message);
+  }
+}
+
+// Load and render challenge history in the lobby panel (host only).
+// Shows the last 10 games condensed — opponent, score, outcome, date.
+async function _lcLoadHistory() {
+  const basePath = _getUserFirebasePath();
+  const el = document.getElementById('lc-history-list');
+  if (!basePath || !el || !_firebaseApp) return;
+
+  try {
+    const snap = await _firebaseApp.database()
+      .ref(`${basePath}/challenge-history`)
+      .orderByChild('playedAt')
+      .limitToLast(10)
+      .once('value');
+
+    const records = [];
+    snap.forEach(child => records.unshift({ key: child.key, ...child.val() }));
+
+    if (!records.length) {
+      el.innerHTML = '<div style="font-size:0.75rem;color:#8b949e;margin-top:8px">No past games yet — your history will appear here.</div>';
+      return;
+    }
+
+    el.innerHTML = records.map(r => {
+      const outcome  = r.outcome === 'win' ? '🏆' : r.outcome === 'draw' ? '🤝' : '💀';
+      const scoreStr = `${r.myScore}–${r.oppScore}`;
+      const date     = new Date(r.playedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `<div class="lc-history-row">
+        <span class="lc-history-outcome">${outcome}</span>
+        <span class="lc-history-opponent">${esc(r.opponent)}</span>
+        <span class="lc-history-score">${scoreStr}</span>
+        <span class="lc-history-date">${date}</span>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    console.warn('Could not load challenge history:', err.message);
+  }
 }
 
 // ── REMATCH ────────────────────────────────────────────────────────────────────
@@ -5785,39 +6216,65 @@ async function liveChallengeRematch() {
   const oppPid  = pids.find(id => id !== myPid);
   if (!oppPid) return;
 
-  // Reset answers for all players
+  // Reset picks/predictions for all players
   const resetUpdates = {};
-  pids.forEach(pid => { resetUpdates[`players/${pid}/answers`] = {}; });
+  pids.forEach(pid => {
+    resetUpdates[`players/${pid}/picks`]       = {};
+    resetUpdates[`players/${pid}/predictions`] = {};
+  });
   resetUpdates['currentPair'] = 0;
   resetUpdates['phase']       = 'building';
   await _lc.firebaseRef.update(resetUpdates);
 
-  const { pairs, mutualCount, reason } = _lcBuildPairs(
-    players[myPid].rankMap,  players[myPid].rankedCount,
-    players[oppPid].rankMap, players[oppPid].rankedCount,
-  );
-  if (reason !== 'ok') {
+  // Find mutual watched anime from saved watchedIds
+  const p1Ids = [].concat(players[myPid]?.watchedIds || []);
+  const p2Ids = [].concat(players[oppPid]?.watchedIds || []);
+  const p2Set     = new Set(p2Ids);
+  const mutualIds = p1Ids.filter(id => p2Set.has(id));
+  if (mutualIds.length < 10) {
     await _lc.firebaseRef.update({ phase: 'lobby' });
-    alert('Could not build a rematch — ' + (reason === 'no_overlap'
-      ? `only ${mutualCount} shows in common.`
-      : 'too many ties in scores.'));
+    showToast(`⚠️ Not enough shared anime for a rematch — only ${mutualIds.length} watched by both players.`, 4000);
     return;
   }
 
-  _lc.pairs       = pairs;
-  _lc.currentPair = 0;
-  _lc.answers     = {};
-  _lc.opponentAnswers = {};
+  const metadata = await _lcFetchAnimeMetadata(mutualIds);
+  const pairs    = _lcBuildPairsFromMutual(metadata);
+  if (pairs.length < 5) {
+    await _lc.firebaseRef.update({ phase: 'lobby' });
+    showToast('⚠️ Could not build a rematch from your shared watch history — try again.');
+    return;
+  }
+
+  // Clear local state BEFORE writing to Firebase — same pattern as the initial
+  // game start. If we pre-set _lc.pairs here, _lcSync fires with
+  // _lc.pairs.length > 0 and the host never transitions to the game panel.
+  _lc.pairs               = [];
+  _lc.currentPair         = 0;
+  _lc.picks               = {};
+  _lc.predictions         = {};
+  _lc.opponentPicks       = {};
+  _lc.opponentPredictions = {};
 
   await _lc.firebaseRef.update({ phase: 'playing', pairs, currentPair: 0 });
 }
 
 // ── CLOSE ──────────────────────────────────────────────────────────────────────
+// Closes the modal but keeps the session in sessionStorage so that if the
+// user reopened the modal (e.g. after an accidental close) we can offer a rejoin.
+// Call closeLiveChallengeModalFinal() when the game is genuinely over.
 function closeLiveChallengeModal() {
+  _lcClearDeepLink();
   byId(IDS.lcModal).style.display = 'none';
   if (_lc?.unsubscribe) _lc.unsubscribe();
   if (_lc?.firebaseRef) _lc.firebaseRef.off();
   _lc = null;
+  _startFirebaseSync(); // re-attach ranking sync that lcCreate/Join detached
+}
+
+// Called from the "Close" button on the results panel — game is done, no rejoin needed.
+function closeLiveChallengeModalFinal() {
+  _lcClearSession();
+  closeLiveChallengeModal();
 }
 
 // ─── COLLABORATIVE "WATCH TOGETHER" MODE ──────────────────────────────────────
@@ -5901,8 +6358,8 @@ function _waitForFirebaseConnection(timeoutMs = 8000) {
 
 const _COLLAB_PANELS = [
   'collabPanelMode', 'collabPanelSetup', 'collabPanelMultiSetup',
-  'collabPanelMultiLobby', 'collabPanelNominate', 'collabPanelRounds',
-  'collabPanelPass', 'collabPanelVote', 'collabPanelResults',
+  'collabPanelMultiLobby', 'collabPanelSeasonFilters', 'collabPanelNominate',
+  'collabPanelRounds', 'collabPanelPass', 'collabPanelVote', 'collabPanelResults',
 ];
 
 function _collabGeneratePlayerId() {
@@ -6119,7 +6576,7 @@ async function collabCreateSession() {
   _initFirebase();
   if (!_firebaseApp) {
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
-    alert('Could not initialise the session server. Please reload and try again.');
+    showToast('⚠️ Could not reach the session server — please reload and try again.', 5000);
     return;
   }
 
@@ -6134,7 +6591,7 @@ async function collabCreateSession() {
   if (!connected) {
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
     const cspNote = _firebaseCspViolation ? '\n\nCSP block detected: ' + _firebaseCspViolation : '';
-    alert('Could not connect to the session server.\n\nThe WebSocket to Firebase did not open within 8 seconds. This usually means the network is offline, a firewall is blocking wss:// traffic, or a CSP / browser extension is interfering.' + cspNote);
+    showToast('⚠️ Could not connect to the live server — check your connection and try again.', 5000);
     return;
   }
 
@@ -6207,8 +6664,8 @@ async function collabCreateSession() {
       restResult = 'FAILED (' + e.message + ') — host not reachable, probable network or DNS issue';
     }
 
-    const cspNote = _firebaseCspViolation ? '\nCSP block: ' + _firebaseCspViolation : '';
-    alert((err.message || 'Could not create session.') + cspNote + '\n\nNetwork diagnostic: ' + restResult);
+    showToast('⚠️ Could not create session — check your connection and try again.', 5000);
+    console.error('[collab] session create failed:', err.message, 'network:', restResult, _firebaseCspViolation ? 'CSP:' + _firebaseCspViolation : '');
   }
 }
 
@@ -6296,6 +6753,109 @@ function collabHostStartNominations() {
   _collab.firebaseRef.update({ phase: 'nominating' });
 }
 
+// Multi-device: shown from lobby after both players are in
+function collabShowSeasonFilters() {
+  if (!_collab?.isHost || !_collab.firebaseRef) return;
+  if (Object.keys(_collab.players || {}).length < 2) return;
+  _collabPanel(IDS.collabPanelSeasonFilters);
+}
+
+// Single-device: read player names, set up _collab state, then show filter panel
+function collabSingleShowSeasonFilters() {
+  const p1 = byId(IDS.collabP1Name)?.value.trim() || 'Player 1';
+  const p2 = byId(IDS.collabP2Name)?.value.trim() || 'Player 2';
+  _collab.p1Name = p1;
+  _collab.p2Name = p2;
+  _collab.mode   = 'single';
+  _collabPanel(IDS.collabPanelSeasonFilters);
+}
+
+// Back button on the filter panel — returns to the right previous screen
+function collabSeasonFiltersBack() {
+  if (_collab?.mode === 'single') {
+    _collabPanel(IDS.collabPanelSetup);
+  } else {
+    _collabPanel(IDS.collabPanelMultiLobby);
+  }
+}
+
+// Unified entry point called by the filter panel's start button
+async function collabFetchThisSeason() {
+  if (_collab?.mode === 'single') {
+    await _collabFetchSeasonSingle();
+  } else {
+    await collabHostStartThisSeason();
+  }
+}
+
+// Single-device season fetch — no Firebase needed
+async function _collabFetchSeasonSingle() {
+  const startBtn = document.querySelector('#collab-panel-season-filters .btn-primary');
+  if (startBtn) { startBtn.disabled = true; startBtn.textContent = 'Fetching this season…'; }
+
+  try {
+    const excludeRanked  = byId('collab-filter-ranked')?.checked  ?? true;
+    const excludeSequels = byId('collab-filter-sequels')?.checked ?? true;
+
+    const { season, year } = getCurrentSeason();
+    const query = `
+      query ($season: MediaSeason, $year: Int) {
+        Page(perPage: 50) {
+          media(season: $season, seasonYear: $year, type: ANIME,
+                sort: POPULARITY_DESC, status_not: CANCELLED,
+                format_in: [TV, TV_SHORT, ONA]) {
+            id
+            title { romaji english }
+            coverImage { large medium }
+            format episodes
+            relations { edges { relationType(version: 2) } }
+          }
+        }
+      }`;
+    const res  = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: anilistHeaders(),
+      body: JSON.stringify({ query, variables: { season, year } }),
+    });
+    if (!res.ok) throw new Error('AniList returned HTTP ' + res.status);
+    const json = await res.json();
+    if (json.errors) throw new Error(json.errors[0].message);
+
+    // For single device, use the local anime list as the "ranked by anyone" set
+    const rankedIds = new Set(excludeRanked ? animeList.map(a => a.id) : []);
+
+    let rawPool = (json?.data?.Page?.media ?? []).map(m => ({
+      title:     m.title.english || m.title.romaji,
+      cover:     m.coverImage.large || m.coverImage.medium || '',
+      format:    m.format   || 'TV',
+      episodes:  m.episodes || 0,
+      _id:       m.id,
+      _isSequel: (m.relations?.edges || []).some(e => e.relationType === 'PREQUEL'),
+    })).filter(m => m.title);
+
+    if (excludeRanked)  rawPool = rawPool.filter(m => !rankedIds.has(m._id));
+    if (excludeSequels) rawPool = rawPool.filter(m => !m._isSequel);
+    rawPool = rawPool.slice(0, 20);
+
+    const pool = rawPool.map(({ title, cover, format, episodes }) => ({ title, cover, format, episodes }));
+
+    if (pool.length < 2) {
+      const total = (json?.data?.Page?.media ?? []).length;
+      throw new Error(
+        `Only ${pool.length} show${pool.length === 1 ? '' : 's'} left after filtering ` +
+        `(${total} this season, filters removed the rest).\n\nTry unchecking a filter and retrying.`
+      );
+    }
+
+    _collabShowRoundPicker(pool);
+  } catch (err) {
+    console.error('_collabFetchSeasonSingle error:', err);
+    showToast('⚠️ ' + (err.message || 'Could not load this season\'s anime — try again.'), 5000);
+  } finally {
+    if (startBtn) { startBtn.disabled = false; startBtn.textContent = 'Fetch this season & start →'; }
+  }
+}
+
 async function collabHostStartThisSeason() {
   if (!_collab?.isHost || !_collab.firebaseRef) return;
   if (Object.keys(_collab.players || {}).length < 2) return;
@@ -6319,6 +6879,7 @@ async function collabHostStartThisSeason() {
             id
             title { romaji english }
             coverImage { large medium }
+            format episodes
             relations { edges { relationType(version: 2) } }
           }
         }
@@ -6343,15 +6904,18 @@ async function collabHostStartThisSeason() {
     let rawPool = (json?.data?.Page?.media ?? []).map(m => ({
       title:    m.title.english || m.title.romaji,
       cover:    m.coverImage.large || m.coverImage.medium || '',
+      format:   m.format   || 'TV',
+      episodes: m.episodes || 0,
       _id:      m.id,
       _isSequel: (m.relations?.edges || []).some(e => e.relationType === 'PREQUEL'),
     })).filter(m => m.title);
 
     if (excludeRanked)  rawPool = rawPool.filter(m => !allRankedIds.has(m._id));
     if (excludeSequels) rawPool = rawPool.filter(m => !m._isSequel);
+    rawPool = rawPool.slice(0, 20);
 
-    // Strip internal fields before sharing — pool items only need title + cover
-    const pool = rawPool.map(({ title, cover }) => ({ title, cover }));
+    // Strip internal fields before sharing — keep title, cover, format, episodes
+    const pool = rawPool.map(({ title, cover, format, episodes }) => ({ title, cover, format, episodes }));
 
     if (pool.length < 2) {
       const total = (json?.data?.Page?.media ?? []).length;
@@ -6370,7 +6934,7 @@ async function collabHostStartThisSeason() {
     console.error('collabHostStartThisSeason error:', err);
     if (seasonBtn) { seasonBtn.disabled = false; seasonBtn.textContent = '🌸 Watch Together This Season →'; }
     if (nomsBtn)   { nomsBtn.disabled   = false; }
-    alert('Could not load this season\'s anime:\n' + (err.message || err));
+    showToast('⚠️ ' + (err.message || 'Could not load this season\'s anime — try again.'), 5000);
   }
 }
 
@@ -6576,7 +7140,7 @@ function collabSearch() {
     .filter(a => (a.title || '').toLowerCase().includes(q) || (a.titleEn || '').toLowerCase().includes(q))
     .slice(0, 5);
 
-  _collabSearchCache = localMatches.map(a => ({ title: a.title, cover: a.cover || '', id: a.id, local: true }));
+  _collabSearchCache = localMatches.map(a => ({ title: a.title, cover: a.cover || '', id: a.id, format: a.format || 'TV', episodes: a.episodes || 0, local: true }));
 
   _collabRenderSearchRows(res, raw, already, takenBy, /* anilistLoading */ true);
 
@@ -6587,7 +7151,7 @@ function collabSearch() {
       query($search: String) {
         Page(perPage: 8) {
           media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
-            id title { romaji english } coverImage { medium }
+            id title { romaji english } coverImage { medium } format episodes
           }
         }
       }`;
@@ -6605,7 +7169,7 @@ function collabSearch() {
       for (const m of items) {
         const title = m.title.english || m.title.romaji;
         if (!title || localTitles.has(title.toLowerCase())) continue;
-        _collabSearchCache.push({ title, cover: m.coverImage?.medium || '', id: m.id, local: false });
+        _collabSearchCache.push({ title, cover: m.coverImage?.medium || '', id: m.id, format: m.format || 'TV', episodes: m.episodes || 0, local: false });
         localTitles.add(title.toLowerCase());
       }
     } catch { /* network error — just show local results */ }
@@ -6661,14 +7225,14 @@ function _collabRenderSearchRows(res, raw, already, takenBy, anilistLoading) {
 
 function collabPickFromSearch(idx) {
   const item = _collabSearchCache[idx];
-  if (item) collabAddNomination(item.title, item.cover, item.id);
+  if (item) collabAddNomination(item.title, item.cover, item.id, item.format, item.episodes);
 }
 
-function collabAddNomination(title, cover, id) {
+function collabAddNomination(title, cover, id, format, episodes) {
   const noms = _collabMyNoms();
   if (noms.length >= 5) return;
   if (noms.some(n => n.title.toLowerCase() === title.toLowerCase())) return;
-  noms.push({ title, cover: cover || '', id: id || null });
+  noms.push({ title, cover: cover || '', id: id || null, format: format || null, episodes: episodes || 0 });
   _collabRenderNominations();
   byId(IDS.collabSearch).value = '';
   byId(IDS.collabSearchResults).innerHTML = '';
@@ -6768,8 +7332,8 @@ function _collabRecommendRounds(poolSize, playerCount) {
   const total      = (poolSize * (poolSize - 1)) / 2;
   if (total <= 6) return total;  // tiny pool → always do full round-robin
   const confidence = _collabPlayerConfidence(playerCount);
-  const base       = Math.round(poolSize * 1.5);
-  const rec        = Math.max(poolSize, Math.round(base / confidence));
+  const base       = Math.round(poolSize * 1.0);
+  const rec        = Math.max(Math.ceil(poolSize / 2), Math.round(base / confidence));
   return Math.min(rec, total);   // never exceed total possible pairs
 }
 
@@ -6911,11 +7475,17 @@ function _collabRenderVoteCards(pair) {
   [IDS.collabCardA, IDS.collabCardB].forEach((elId, idx) => {
     const show = idx === 0 ? pair.a : pair.b;
     const el   = byId(elId);
+    // Reset all state classes cleanly
     el.className = 'challenge-card collab-vote-card';
     el.disabled  = false;
+    el.style.opacity = '';
+    const epBadge = show.format === 'MOVIE'
+      ? '<span class="ep-badge">Movie</span>'
+      : show.episodes ? `<span class="ep-badge">${show.episodes} ep</span>` : '';
     el.innerHTML = `
       ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="${esc(show.title)}" />` : '<div class="collab-no-cover">🎬</div>'}
-      <div class="challenge-card-title">${esc(show.title)}</div>`;
+      <div class="challenge-card-title">${esc(show.title)}</div>
+      ${epBadge ? `<div class="challenge-card-meta">${epBadge}</div>` : ''}`;
   });
 }
 
@@ -6928,6 +7498,8 @@ function collabVoteBtn(side) {
     _collab.votingPhase    = 'pass-to-p2';
     byId(IDS.collabCardA).disabled = true;
     byId(IDS.collabCardB).disabled = true;
+    byId(side === 'a' ? IDS.collabCardA : IDS.collabCardB).classList.add('challenge-card-chosen');
+    byId(side === 'a' ? IDS.collabCardB : IDS.collabCardA).classList.add('challenge-card-unchosen');
     document.getElementById('collab-vote-who').textContent = `✓ ${_collab.p1Name} has voted`;
     document.getElementById('collab-vote-sub').textContent = `Pass to ${_collab.p2Name}`;
     document.getElementById('collab-p2-ready-btn').style.display = 'block';
@@ -6941,6 +7513,7 @@ function collabVoteBtn(side) {
 function collabP2Ready() {
   _collab.votingPhase = 'p2';
   document.getElementById('collab-p2-ready-btn').style.display = 'none';
+  _collabRenderVoteCards(_collab.pairs[_collab.currentPair]);
   _collabSetVoteHeading('p2');
   byId(IDS.collabCardA).disabled = false;
   byId(IDS.collabCardB).disabled = false;
@@ -7000,6 +7573,8 @@ async function collabVoteMulti(side) {
   if (!_collab?.firebaseRef) return;
   byId(IDS.collabCardA).disabled = true;
   byId(IDS.collabCardB).disabled = true;
+  byId(side === 'a' ? IDS.collabCardA : IDS.collabCardB).classList.add('challenge-card-chosen');
+  byId(side === 'a' ? IDS.collabCardB : IDS.collabCardA).classList.add('challenge-card-unchosen');
   const totalPlayers = Object.keys(_collab.players || {}).length;
   document.getElementById('collab-vote-who').textContent = `✓ Voted — waiting for others…`;
   document.getElementById('collab-vote-sub').textContent = '';
@@ -7173,6 +7748,17 @@ function openChallengeFromInput() {
   const username = (input?.value || '').trim();
   if (!username) { input?.focus(); return; }
   openChallengeMode(username, _socialPlatform);
+}
+
+function openLiveChallengeFromInput() {
+  // Open setup panel — username/platform pre-filled from auth state in _lcPrefillSetup
+  openLiveChallengeMode();
+}
+
+function openLiveChallengeJoinFromInput() {
+  // Social tab join input removed — just open the setup panel where both
+  // create and join are handled together.
+  openLiveChallengeMode();
 }
 
 async function _rerunComparison(username, platform) {
@@ -8693,9 +9279,9 @@ function _tryUnlock(id, condition, toastName) {
   achievements[id] = { unlockedAt: new Date().toISOString() };
   saveState();
   showToast(`🏆 Achievement unlocked: ${toastName}`, 4000);
-  // Refresh tab if open
-  if (byId(IDS.tabPanelManage)?.style.display !== 'none') {
-    renderAchievementsTab(); // refresh in place whether on settings or achievements sub-tab
+  // Refresh achievements panel if Profile → Achievements is currently visible
+  if (byId(IDS.tabPanelProfile)?.style.display !== 'none' && _activeProfileSub === 'achievements') {
+    renderAchievementsTab();
   }
 }
 
@@ -8902,29 +9488,37 @@ function renderBattlesTab() {
   renderRivalries();
 }
 
+let _activeProfileSub = 'taste';
+
+function switchProfileTab(sub) {
+  _activeProfileSub = sub;
+  ['taste', 'achievements'].forEach(s => {
+    const btn   = document.getElementById('profile-sub-' + s);
+    const panel = document.getElementById('profile-panel-' + s);
+    if (btn)   btn.classList.toggle('active', s === sub);
+    if (panel) panel.style.display = s === sub ? '' : 'none';
+  });
+  if (sub === 'taste')        { renderTasteProfile(); renderFormatSplit(); renderScoreDistribution(); renderGenreStats(); renderDisagreements(); }
+  if (sub === 'achievements') renderAchievementsTab();
+}
+
 function renderProfileTab() {
-  renderTasteProfile();
-  renderFormatSplit();
-  renderScoreDistribution();
-  renderGenreStats();
-  renderDisagreements();
+  switchProfileTab(_activeProfileSub);
 }
 
 let _activeManageSub = 'settings';
 
 function switchManageTab(sub) {
   _activeManageSub = sub;
-  ['settings', 'achievements'].forEach(s => {
+  ['settings'].forEach(s => {
     const btn   = document.getElementById('manage-sub-' + s);
     const panel = document.getElementById('manage-panel-' + s);
     if (btn)   btn.classList.toggle('active', s === sub);
     if (panel) panel.style.display = s === sub ? '' : 'none';
   });
-  if (sub === 'achievements') renderAchievementsTab();
 }
 
 function renderManageTab() {
-  // Re-apply whichever sub-tab was last active (default: settings)
   switchManageTab(_activeManageSub);
 }
 
@@ -12934,6 +13528,64 @@ function _ncSave() {
     if (_notifCentre.length > 50) _notifCentre = _notifCentre.slice(0, 50);
     localStorage.setItem(KESSEN_KEYS.data.notifCentre(saveKey), JSON.stringify(_notifCentre));
   } catch {}
+  // Mirror to Firebase for cross-device sync (fire-and-forget)
+  _ncPushToFirebase();
+}
+
+// Push current notifications to Firebase so other devices can pick them up.
+let _ncFirebasePushTimer = null;
+function _ncPushToFirebase() {
+  if (!_firebaseApp || !_FIREBASE_READY) return;
+  const base = _getUserFirebasePath();
+  if (!base) return;
+  // Debounce — multiple rapid _ncSave calls collapse into one write
+  clearTimeout(_ncFirebasePushTimer);
+  _ncFirebasePushTimer = setTimeout(async () => {
+    try {
+      await _firebaseApp.database().ref(`${base}/notifications`).set({
+        items:     _notifCentre.slice(0, 50),
+        updatedAt: Date.now(),
+        updatedBy: _deviceId,
+      });
+    } catch {}
+  }, 1500);
+}
+
+// Start listening for notification updates from other devices.
+// Called once cloud sync is established (alongside _startFirebaseSync).
+let _ncFirebaseRef      = null;
+let _ncFirebaseListener = null;
+function _ncStartSync() {
+  if (!_firebaseApp || !_FIREBASE_READY) return;
+  const base = _getUserFirebasePath();
+  if (!base) return;
+  if (_ncFirebaseRef) return; // already listening
+
+  _ncFirebaseRef = _firebaseApp.database().ref(`${base}/notifications`);
+  _ncFirebaseListener = _ncFirebaseRef.on('value', snap => {
+    const remote = snap.val();
+    if (!remote?.items || remote.updatedBy === _deviceId) return;
+
+    // Merge: add any unread notifications from the other device that we don't have
+    const existingIds = new Set(_notifCentre.map(n => n.id));
+    const newItems = remote.items.filter(n => n && n.id && !existingIds.has(n.id) && !n.read);
+    if (!newItems.length) return;
+
+    _notifCentre = [...newItems, ..._notifCentre].slice(0, 50);
+    try {
+      localStorage.setItem(KESSEN_KEYS.data.notifCentre(saveKey), JSON.stringify(_notifCentre));
+    } catch {}
+    _ncUpdateBell();
+    // Don't call _ncSave() here — that would re-trigger _ncPushToFirebase and loop
+  }, () => { _ncFirebaseRef = null; _ncFirebaseListener = null; });
+}
+
+function _ncStopSync() {
+  if (_ncFirebaseRef && _ncFirebaseListener) {
+    _ncFirebaseRef.off('value', _ncFirebaseListener);
+  }
+  _ncFirebaseRef      = null;
+  _ncFirebaseListener = null;
 }
 
 // Add a notification. For new_anime / removed_anime, replaces any existing
@@ -13687,6 +14339,8 @@ window.addEventListener('load', () => {
   }
   const input = byId(IDS.usernameInput);
   if (input.value.trim()) startLoading();
+  // Auto-open Live Challenge join if a ?lc= deep link is present
+  _lcCheckDeepLink();
 });
 
 // Save to cloud when the user closes the tab or navigates away.

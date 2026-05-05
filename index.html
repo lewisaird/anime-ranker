@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.24" />
+  <meta name="version" content="1.0.45" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -94,6 +94,7 @@
       <line x1="256" y1="256" x2="233" y2="279" stroke="#f0c040" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
     </svg>
     <h1>Kessen</h1>
+    <span class="beta-chip">Beta</span>
   </div>
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
@@ -190,8 +191,7 @@
 </div>
 
 <!-- Watch Together / Collaborative Mode modal -->
-<div id="collab-modal" role="dialog" aria-modal="true" style="display:none"
-     onclick="if(event.target===this)closeCollabModal()">
+<div id="collab-modal" role="dialog" aria-modal="true" style="display:none">
   <div class="collab-box">
     <button class="share-close" onclick="closeCollabModal()" aria-label="Close">✕</button>
 
@@ -239,7 +239,8 @@
         <label>Player 2</label>
         <input id="collab-p2-name" class="collab-name-input" placeholder="Friend's name" onkeydown="if(event.key==='Enter')collabStartSingle()" />
       </div>
-      <button class="btn-primary" style="width:100%;margin-top:20px" onclick="collabStartSingle()">Start →</button>
+      <button class="btn-primary" style="width:100%;margin-top:20px;margin-bottom:8px" onclick="collabStartSingle()">Nominate anime →</button>
+      <button class="btn-secondary" style="width:100%" onclick="collabSingleShowSeasonFilters()">🌸 Watch Together This Season →</button>
     </div>
 
     <!-- Multi device: create or join -->
@@ -285,25 +286,41 @@
           Everyone's in — start nominations →
         </button>
         <button id="collab-start-season-btn" class="btn-secondary"
-                style="width:100%" onclick="collabHostStartThisSeason()">
+                style="width:100%" onclick="collabShowSeasonFilters()">
           🌸 Watch Together This Season →
         </button>
-        <div id="collab-season-filters" style="margin-top:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:0.79rem;color:#8b949e">
-          <div style="font-weight:600;margin-bottom:6px">Season filters</div>
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:5px;cursor:pointer;color:var(--text)">
-            <input type="checkbox" id="collab-filter-ranked" checked />
-            Skip shows anyone's already ranked
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text)">
-            <input type="checkbox" id="collab-filter-sequels" checked />
-            Skip sequels
-          </label>
-        </div>
       </div>
       <!-- Guest only -->
       <p id="collab-lobby-guest-status" style="display:none;font-size:0.82rem;color:#8b949e;text-align:center;margin-top:12px">
         Waiting for host to start…
       </p>
+    </div>
+
+    <!-- This Season filters (host only, shown after clicking Watch Together This Season) -->
+    <div id="collab-panel-season-filters" style="display:none">
+      <h4 style="margin:0 0 4px">🌸 Watch Together This Season</h4>
+      <p style="font-size:0.8rem;color:#8b949e;margin:0 0 14px">
+        We'll pull this season's airing anime and let everyone vote on each matchup.
+      </p>
+      <div style="padding:10px 12px;background:rgba(255,255,255,0.04);border-radius:8px;font-size:0.82rem;margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text)">Filters</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;color:var(--text)">
+          <input type="checkbox" id="collab-filter-ranked" checked />
+          Skip shows anyone's already ranked
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text)">
+          <input type="checkbox" id="collab-filter-sequels" checked />
+          Skip sequels
+        </label>
+      </div>
+      <button class="btn-primary" style="width:100%;margin-bottom:8px"
+              onclick="collabFetchThisSeason()">
+        Fetch this season &amp; start →
+      </button>
+      <button class="btn-secondary" style="width:100%"
+              onclick="collabSeasonFiltersBack()">
+        ← Back
+      </button>
     </div>
 
     <!-- Nominations (shared by both modes) -->
@@ -423,15 +440,66 @@
 
 <!-- Live Challenge Mode modal -->
 <div id="lc-modal" role="dialog" aria-modal="true" aria-labelledby="lc-modal-title"
-     style="display:none" onclick="if(event.target===this)closeLiveChallengeModal()">
+     style="display:none">
   <div class="challenge-box">
     <button class="share-close" onclick="closeLiveChallengeModal()" aria-label="Close">✕</button>
     <h3 id="lc-modal-title" style="margin:0 0 4px">🌐 Live Challenge</h3>
 
-    <!-- Lobby (host creates session, guest joins) -->
+    <!-- Setup: enter your username before creating or joining -->
+    <div id="lc-panel-setup" style="display:none">
+      <!-- Rejoin banner — shown only when sessionStorage has an active LC session -->
+      <div id="lc-rejoin-banner" style="display:none;margin-bottom:14px">
+        <div class="collab-rejoin-box">
+          <span class="collab-rejoin-icon">🔌</span>
+          <div class="collab-rejoin-text">
+            <strong>Looks like you got disconnected</strong>
+            <span id="lc-rejoin-desc"></span>
+          </div>
+          <button class="btn-primary collab-rejoin-btn" onclick="lcRejoinSession()">Rejoin</button>
+        </div>
+        <button class="collab-rejoin-dismiss" onclick="lcDismissRejoin()">Start fresh instead</button>
+      </div>
+      <p style="font-size:0.78rem;color:#8b949e;margin:0 0 14px">
+        We'll fetch your watch history and find anime you've both seen.
+      </p>
+      <div style="margin-bottom:16px">
+        <div style="font-size:0.78rem;color:#8b949e;margin-bottom:6px;font-weight:600">Your username</div>
+        <div style="display:flex;gap:8px">
+          <select id="lc-setup-platform" style="padding:8px;border-radius:8px;border:1px solid var(--border-default);background:var(--bg-tertiary);color:var(--text);font-size:0.85rem;cursor:pointer">
+            <option value="anilist">AniList</option>
+            <option value="mal">MAL</option>
+          </select>
+          <input id="lc-setup-username" class="collab-name-input" style="flex:1"
+                 placeholder="Your username"
+                 onkeydown="if(event.key==='Enter')lcCreateSession()" />
+        </div>
+      </div>
+      <button class="btn-primary" style="width:100%;margin-bottom:14px" onclick="lcCreateSession()">
+        Create session →
+      </button>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <hr style="flex:1;border:none;border-top:1px solid rgba(255,255,255,0.07)" />
+        <span style="font-size:0.72rem;color:#8b949e">or join with a code</span>
+        <hr style="flex:1;border:none;border-top:1px solid rgba(255,255,255,0.07)" />
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="lc-setup-join-code" class="collab-name-input"
+               placeholder="6-character code"
+               style="flex:1;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1rem"
+               maxlength="6" onkeydown="if(event.key==='Enter')lcJoinSession()" />
+        <button class="btn-secondary" onclick="lcJoinSession()">Join →</button>
+      </div>
+    </div>
+
+    <!-- Lobby (shown after session is created or joined) -->
     <div id="lc-panel-lobby" style="display:none">
-      <p style="font-size:0.78rem;color:#8b949e;margin:0 0 14px">Share your code — first to know the other person's taste wins.</p>
-      <div id="lc-lobby-code" class="collab-session-code" style="margin-bottom:14px"></div>
+      <p style="font-size:0.78rem;color:#8b949e;margin:0 0 10px">
+        Share this link with your opponent:
+      </p>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div id="lc-lobby-code" class="collab-session-code" style="flex:1;margin:0"></div>
+        <button id="lc-share-btn" class="btn-secondary" style="flex-shrink:0;padding:8px 14px;font-size:0.82rem" onclick="lcShareLink()">Copy link</button>
+      </div>
       <div id="lc-player-list" style="margin-bottom:14px;min-height:40px"></div>
       <!-- Host only -->
       <button id="lc-start-btn" class="btn-primary" style="display:none;width:100%;margin-bottom:10px"
@@ -440,16 +508,10 @@
       <p id="lc-guest-status" style="display:none;font-size:0.82rem;color:#8b949e;text-align:center">
         Waiting for host to start…
       </p>
-      <!-- Join with code (always visible in lobby before the code is issued) -->
-      <div id="lc-join-section" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07)">
-        <p style="font-size:0.78rem;color:#8b949e;margin:0 0 8px">Have a code? Join instead:</p>
-        <div style="display:flex;gap:8px">
-          <input id="lc-join-input" class="collab-name-input"
-                 placeholder="Enter 6-character code"
-                 style="flex:1;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1rem"
-                 maxlength="6" onkeydown="if(event.key==='Enter')liveChallengeJoin()" />
-          <button class="btn-primary" onclick="liveChallengeJoin()">Join →</button>
-        </div>
+      <!-- Past games -->
+      <div style="margin-top:14px;border-top:1px solid var(--border-default);padding-top:12px">
+        <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#8b949e;margin-bottom:4px">Past games</div>
+        <div id="lc-history-list"></div>
       </div>
     </div>
 
@@ -460,24 +522,36 @@
 
     <!-- Disconnect banner (shown over any panel) -->
     <div id="lc-disconnect-banner" style="display:none;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#f85149;margin-bottom:12px;text-align:center">
-      ⚠️ Opponent disconnected — you can finish the round solo
+      ⚠️ Opponent disconnected — waiting for them to rejoin
     </div>
 
     <!-- Game -->
     <div id="lc-panel-game" style="display:none">
       <div class="challenge-hud">
         <span id="lc-progress" class="challenge-round"></span>
-        <span id="lc-diff-badge" class="challenge-diff"></span>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#8b949e;margin-bottom:8px">
         <span>You: <strong id="lc-my-score" style="color:var(--text)">0 pts</strong></span>
         <span id="lc-opponent-name-score">Opponent: <strong id="lc-opponent-score" style="color:var(--text)">0 pts</strong></span>
       </div>
-      <p id="lc-guess-prompt" style="font-size:0.8rem;color:#8b949e;margin:0 0 10px;text-align:center"></p>
+      <!-- Phase 1: Pick -->
+      <p id="lc-pick-prompt" style="font-size:0.85rem;font-weight:600;text-align:center;margin:0 0 10px">Which do you prefer?</p>
       <div class="challenge-pair">
-        <button class="challenge-card" id="lc-card-a" onclick="liveChallengeAnswer('a')"></button>
+        <button class="challenge-card" id="lc-card-a" onclick="liveChallengePick('a')"></button>
         <div class="challenge-vs">VS</div>
-        <button class="challenge-card" id="lc-card-b" onclick="liveChallengeAnswer('b')"></button>
+        <button class="challenge-card" id="lc-card-b" onclick="liveChallengePick('b')"></button>
+      </div>
+      <!-- Phase 2: Predict (shown after picking) -->
+      <div id="lc-predict-section" style="display:none;margin-top:14px">
+        <p id="lc-predict-prompt" style="font-size:0.8rem;color:#8b949e;text-align:center;margin:0 0 8px"></p>
+        <div style="display:flex;gap:8px">
+          <button id="lc-predict-a" class="btn-secondary"
+                  style="flex:1;font-size:0.75rem;padding:8px 6px;white-space:normal;line-height:1.3"
+                  onclick="liveChallengePredict('a')"></button>
+          <button id="lc-predict-b" class="btn-secondary"
+                  style="flex:1;font-size:0.75rem;padding:8px 6px;white-space:normal;line-height:1.3"
+                  onclick="liveChallengePredict('b')"></button>
+        </div>
       </div>
       <p id="lc-waiting-msg" style="display:none;font-size:0.78rem;color:#8b949e;text-align:center;margin-top:10px">
         Waiting for opponent…
@@ -501,7 +575,7 @@
       <div id="lc-breakdown" class="challenge-breakdown"></div>
       <div style="display:flex;gap:8px;margin-top:16px">
         <button class="btn-primary" style="flex:1" onclick="liveChallengeRematch()">Rematch →</button>
-        <button class="btn-secondary" style="flex:1" onclick="closeLiveChallengeModal()">Close</button>
+        <button class="btn-secondary" style="flex:1" onclick="closeLiveChallengeModalFinal()">Close</button>
       </div>
     </div>
 
@@ -992,6 +1066,15 @@
 
     <!-- ── PROFILE panel ─────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-profile" style="display:none">
+
+      <!-- Profile sub-tab bar -->
+      <div class="source-tabs">
+        <button class="source-tab active" id="profile-sub-taste"         onclick="switchProfileTab('taste')">🎨 Taste</button>
+        <button class="source-tab"        id="profile-sub-achievements"  onclick="switchProfileTab('achievements')">🏆 Achievements</button>
+      </div>
+
+      <!-- Taste sub-panel -->
+      <div id="profile-panel-taste">
       <div id="taste-empty" class="taste-empty" style="display:none">
         <h3>🎨 Your Profile</h3>
         <p>Battle at least 20 anime to unlock your profile. The more you battle, the sharper the picture.</p>
@@ -1084,6 +1167,13 @@
         </section>
 
       </div>
+      </div><!-- end profile-panel-taste -->
+
+      <!-- Achievements sub-panel -->
+      <div id="profile-panel-achievements" style="display:none">
+        <div id="achievements-content"></div>
+      </div>
+
     </div>
 
     <!-- ── SOCIAL panel ───────────────────────────────────────────────── -->
@@ -1112,7 +1202,7 @@
             <button class="btn-primary social-play-action-btn" onclick="openCollabMode()">Start a session →</button>
           </div>
 
-          <!-- Challenge Mode -->
+          <!-- Challenge Mode (static) -->
           <div class="social-play-card" id="challenge-section">
             <div class="social-play-card-top">
               <span class="social-play-icon">🎮</span>
@@ -1125,7 +1215,21 @@
               <input id="social-challenge-input" class="social-challenge-input"
                      placeholder="Friend's username…"
                      onkeydown="if(event.key==='Enter')openChallengeFromInput()" />
-              <button class="btn-primary" onclick="openChallengeFromInput()">Challenge →</button>
+              <button class="btn-primary" onclick="openChallengeFromInput()">Go →</button>
+            </div>
+          </div>
+
+          <!-- Live Challenge -->
+          <div class="social-play-card" id="live-challenge-section">
+            <div class="social-play-card-top">
+              <span class="social-play-icon">🌐</span>
+              <div class="social-play-text">
+                <strong>Live Challenge</strong>
+                <span>Play in real-time — create a session or join one with a code.</span>
+              </div>
+            </div>
+            <div class="social-challenge-row">
+              <button class="btn-primary" style="width:100%" onclick="openLiveChallengeMode()">Create or join →</button>
             </div>
           </div>
 
@@ -1165,7 +1269,6 @@
       <!-- Sub-tab bar -->
       <div class="source-tabs">
         <button class="source-tab active" id="manage-sub-settings" onclick="switchManageTab('settings')">⚙️ Settings</button>
-        <button class="source-tab"        id="manage-sub-achievements" onclick="switchManageTab('achievements')">🏆 Achievements</button>
       </div>
 
       <!-- Settings sub-panel -->
@@ -1218,11 +1321,13 @@
             <button class="manage-btn manage-btn-danger" onclick="deleteAllData()">🗑️ Delete all my data</button>
           </div>
         </div>
-      </div>
 
-      <!-- Achievements sub-panel -->
-      <div id="manage-panel-achievements" style="display:none">
-        <div id="achievements-content"></div>
+        <div class="manage-section manage-feedback-section">
+          <div class="manage-section-title">Feedback</div>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Found a bug or have a suggestion? We'd love to hear it.</p>
+          <a class="manage-btn manage-btn-feedback" href="mailto:feedback@kessen.co.uk?subject=Kessen%20Beta%20Feedback">✉️ Send feedback</a>
+        </div>
+
       </div>
 
     </div>
@@ -1326,16 +1431,16 @@
 
         <div class="help-section">
           <h4>📋 Rankings Filters &amp; Sort</h4>
-          <p>Filter by <strong>format</strong> (TV, Movie, OVA…) and <strong>episode length</strong> (Movie · ≤12 · 13–24 · 25–70 · 70+ · Unknown). Sort by ELO, Win Rate, Battles, or AniList Average. Toggle grid or list view. All filters and sort order are remembered between sessions.</p>
+          <p>Filter by <strong>format</strong> (TV, Movie, OVA…) and <strong>episode length</strong> (≤12 · 13–24 · 25–70 · 70+ · Unknown). Sort by ELO, Title, Win Rate, Battles, AniList Average, Tier, or Confidence. Toggle grid or list view. All filters and sort order are remembered between sessions.</p>
         </div>
 
         <div class="help-section">
           <h4>📊 Tabs</h4>
           <p><strong>Battles</strong> — battle stats, biggest upsets, rivalries, and your full battle history.<br>
-          <strong>Profile</strong> — your taste type, moods, how your top 10 has evolved, genre &amp; era breakdowns, studio affinity, and taste vs the community.<br>
+          <strong>Profile</strong> — your taste type, how your top 10 has evolved, genre &amp; era breakdowns, studio affinity, taste vs the community, and your achievements.<br>
           <strong>Discover</strong> — personalised picks (✨ For You), airing anime (📅 This Season), mood-based recs, and tier predictions (🔮 Predict).<br>
-          <strong>Social</strong> — get recs from a friend's list or compare taste with any AniList user.<br>
-          <strong>Manage</strong> — achievements, backup, export, sync to AniList, or reset everything.</p>
+          <strong>Social</strong> — play with friends via Watch Together, Challenge Mode, or Live Challenge; compare taste or get recommendations from any AniList user.<br>
+          <strong>Manage</strong> — backup, export, sync to AniList or MAL, and reset everything.</p>
         </div>
 
         <div class="help-section">

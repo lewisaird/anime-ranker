@@ -82,6 +82,29 @@
       display: block;
       flex-shrink: 0;
     }
+    .beta-chip {
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #e3b341;
+      background: rgba(227,179,65,0.12);
+      border: 1px solid rgba(227,179,65,0.35);
+      border-radius: 4px;
+      padding: 2px 6px;
+      line-height: 1;
+      align-self: center;
+      flex-shrink: 0;
+    }
+    .manage-feedback-section { border-top: 1px solid var(--border-subtle); }
+    .manage-btn-feedback {
+      display: inline-block;
+      text-decoration: none;
+      text-align: center;
+      color: var(--text-primary);
+      border-color: var(--border-default);
+    }
+    .manage-btn-feedback:hover { background: var(--bg-tertiary); color: var(--text-bright); }
 
     #progress-info {
       font-size: 0.85rem;
@@ -2639,6 +2662,30 @@
     #tab-panel-manage .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
     #tab-panel-manage .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
 
+    /* PROFILE SUB-TABS (Taste / Achievements) */
+    #tab-panel-profile .source-tabs {
+      display: flex;
+      gap: 0;
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 0 auto 24px;
+      max-width: 300px;
+    }
+    #tab-panel-profile .source-tab {
+      flex: 1;
+      padding: 9px 20px;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+    #tab-panel-profile .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
+    #tab-panel-profile .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
+
     /* DISCOVER SUB-TABS (For You / This Season / Predict) */
     #tab-panel-discover .source-tabs {
       display: flex;
@@ -2990,7 +3037,7 @@
     .collab-vote-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     .collab-vote-who { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); text-align: center; min-height: 1.4em; }
     .collab-vote-sub { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-bottom: 4px; min-height: 1.2em; }
-    .collab-vote-card { min-height: 160px; }
+    .collab-vote-card { min-height: 200px; }
     .collab-no-cover { width: 80px; height: 110px; background: var(--bg-primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 2rem; }
     /* Split vote colours */
     .collab-split-a { border-color: #58a6ff !important; background: rgba(88,166,255,0.08) !important; }
@@ -3015,7 +3062,7 @@
     .collab-result-ties { opacity: 0.7; }
 
     /* ── CHALLENGE MODE ── */
-    #challenge-modal {
+    #challenge-modal, #lc-modal {
       position: fixed; inset: 0; z-index: 1100;
       display: flex; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.75);
@@ -3048,27 +3095,31 @@
     }
     .challenge-card {
       flex: 1; min-width: 0;
-      background: var(--bg-tertiary);
+      background: var(--bg-secondary);
       border: 2px solid var(--border-default);
-      border-radius: 10px;
-      padding: 10px;
+      border-radius: 14px;
+      padding: 14px 10px;
       cursor: pointer;
-      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
       text-align: center;
-      transition: border-color 0.15s, transform 0.1s;
+      transition: border-color 0.18s, transform 0.1s, box-shadow 0.18s;
     }
     .challenge-card:hover:not(:disabled) {
       border-color: var(--accent-primary);
-      transform: translateY(-2px);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(88,166,255,0.15);
     }
     .challenge-card img {
-      width: 80px; height: 110px; object-fit: cover; border-radius: 6px;
+      width: 120px; height: 170px; object-fit: cover; border-radius: 8px;
       display: block;
     }
     .challenge-card-title {
-      font-size: 0.78rem; font-weight: 600;
-      color: var(--text-primary);
+      font-size: 0.88rem; font-weight: 600;
+      color: var(--text-bright);
       line-height: 1.3;
+    }
+    .challenge-card-meta {
+      display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;
     }
     .challenge-card-elo {
       font-size: 0.68rem; color: var(--text-secondary);
@@ -3081,6 +3132,16 @@
       border-color: #f85149;
       background: rgba(248,81,73,0.08);
       opacity: 0.6;
+    }
+    /* Applied to the card the player chose while waiting for others — keeps it
+       visible and highlighted even though the button is disabled */
+    .challenge-card.challenge-card-chosen {
+      opacity: 1 !important;
+      border-color: var(--accent-primary);
+      background: rgba(88,166,255,0.08);
+    }
+    .challenge-card.challenge-card-unchosen {
+      opacity: 0.35;
     }
     .challenge-reveal-text {
       font-size: 0.82rem; color: var(--text-primary);
@@ -3123,6 +3184,19 @@
     .ch-b-ranks   { font-size: 0.68rem; color: var(--text-secondary); }
     .ch-b-pts     { font-weight: 700; color: var(--accent-primary); flex-shrink: 0; }
 
+    /* Challenge history rows */
+    .lc-history-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 0.78rem;
+    }
+    .lc-history-row:last-child { border-bottom: none; }
+    .lc-history-outcome { font-size: 1rem; flex-shrink: 0; width: 20px; }
+    .lc-history-opponent { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .lc-history-score { font-weight: 600; color: var(--text); flex-shrink: 0; }
+    .lc-history-date { font-size: 0.7rem; color: #8b949e; flex-shrink: 0; }
+
     .compat-delta {
       font-size: 0.82rem;
       margin-top: 10px;
@@ -3140,7 +3214,7 @@
 
     /* Play cards grid */
     .social-play-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
     }
     .social-play-card {
       background: var(--bg-secondary); border-radius: 12px;
@@ -3154,6 +3228,11 @@
     .social-play-text span { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; }
     .social-play-action-btn { width: 100%; }
     .social-challenge-row { display: flex; gap: 8px; }
+    .social-challenge-divider {
+      font-size: 0.72rem; font-weight: 600; color: var(--text-secondary);
+      margin: 6px 0 6px; padding-top: 8px;
+      border-top: 1px solid var(--border-color, #21262d);
+    }
     .social-challenge-input {
       flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px;
       border: 1px solid var(--border-color, #30363d);
@@ -3401,6 +3480,7 @@
 
       /* ── Social / Compat tab ── */
       .social-play-grid { grid-template-columns: 1fr; }
+      .social-challenge-label { display: none; }
       .social-challenge-row { flex-direction: column; }
       .compat-input-row { flex-direction: column; align-items: stretch; }
       .compat-input-row input { width: 100% !important; }
