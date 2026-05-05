@@ -99,6 +99,7 @@
       line-height: 1;
       align-self: center;
       flex-shrink: 0;
+      margin-right: 8px;
     }
     .manage-feedback-section { border-top: 1px solid var(--border-subtle); }
     .manage-btn-feedback {
@@ -3378,14 +3379,12 @@
       .battle-actions { gap: 6px; }
       .battle-actions .btn-secondary { font-size: 0.78rem; padding: 7px 10px; }
 
-      /* When battle-actions wraps (e.g. mode active → wider mode button), the
-         filter/mode controls can land anywhere on the row. Switching from
-         right:0 to left:0 makes the popovers open rightward from the button
-         instead of leftward, preventing them sliding off-screen. */
+      /* On mobile the Mode/Filter buttons sit near the right edge of the toolbar.
+         Keep right:0 so the popovers open leftward and stay on-screen. */
       #filter-popover,
       #mode-popover {
-        right: auto;
-        left: 0;
+        right: 0;
+        left: auto;
       }
 
       /* Main padding */
