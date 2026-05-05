@@ -1637,11 +1637,11 @@ function _setSyncIndicator(state) {
   // state: 'saving' | 'saved' | 'error' | 'hidden'
   const el = byId(IDS.cloudSyncIndicator);
   if (!el) return;
-  if (state === 'hidden' || !_cloudSyncEnabled) { el.style.display = 'none'; return; }
+  if (state === 'hidden' || !_cloudSyncEnabled) { el.style.display = 'none'; el.classList.remove('sync-pulse'); return; }
   el.style.display = 'inline';
-  if (state === 'saving') { el.textContent = '☁️ Saving…';  el.style.color = '#8b949e'; }
-  if (state === 'saved')  { el.textContent = '☁️ Synced';   el.style.color = '#3fb950'; }
-  if (state === 'error')  { el.textContent = '☁️ Sync err'; el.style.color = '#f85149'; }
+  if (state === 'saving') { el.textContent = '☁️'; el.title = 'Saving…';     el.style.color = '#8b949e'; el.classList.add('sync-pulse'); }
+  if (state === 'saved')  { el.textContent = '☁️'; el.title = 'Synced';      el.style.color = '#3fb950'; el.classList.remove('sync-pulse'); }
+  if (state === 'error')  { el.textContent = '⚠️'; el.title = 'Sync error';  el.style.color = '#f85149'; el.classList.remove('sync-pulse'); }
 }
 
 // ── Real-time sync helpers ────────────────────────────────────────────────────
@@ -2683,10 +2683,14 @@ function _franchiseBaseName(title) {
     // to avoid mangling titles like "To Be Hero X" or "Danmachi I"
     .replace(/\s+(II|III|IV|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
     .replace(/[\s×✕✗]+[\d×✕✗]+$/, '')
+    // Strip "On the Side" spinoff marker (e.g. "Is it Wrong...? On the Side")
+    .replace(/[?!]?\s+On\s+the\s+Side[?!]?$/i, '')
     // Strip common spin-off/sequel single-word suffixes
-    .replace(/\s+(Twin|Twins|Origins?|Returns?|Revenge|Reborn|Reload|Revolution)$/i, '')
+    .replace(/\s+(Twin|Twins|Origins?|Returns?|Revenge|Reborn|Reload|Revolution|More|Plus|Ultra|Beyond|Kai|Heroes)$/i, '')
     // Strip trailing standalone numbers
     .replace(/\s+\d+$/, '')
+    // Strip #N / #N.N version markers (e.g. "BURN THE WITCH #0.8")
+    .replace(/\s+#[\d.]+$/, '')
     // Normalise trailing ? after all sequel markers removed
     .replace(/\?+$/, '')
     .trim();
@@ -2694,6 +2698,30 @@ function _franchiseBaseName(title) {
 
 function _franchiseKey(title) {
   return _franchiseBaseName(title).toLowerCase();
+}
+
+// Fallback lookup: checks whether `key` shares a word-boundary prefix or
+// suffix with any existing group key.
+//
+// Prefix match — "great pretender" is a prefix of "great pretender razbliuto"
+// Suffix match — "evangelion" is a suffix of "neon genesis evangelion"
+//
+// Requires the shared portion to be at least 6 characters to avoid false
+// positives on short common words.
+function _franchiseSuffixLookup(key, keyMap) {
+  if (!key || key.length < 6) return null;
+  for (const [existingKey, existingCanon] of keyMap) {
+    if (existingKey.length < 6) continue;
+    // Suffix: "Evangelion" ↔ "Neon Genesis Evangelion"
+    if (existingKey.endsWith(' ' + key) || key.endsWith(' ' + existingKey)) {
+      return existingCanon;
+    }
+    // Prefix: "Great Pretender" ↔ "Great Pretender razbliuto"
+    if (key.startsWith(existingKey + ' ') || existingKey.startsWith(key + ' ')) {
+      return existingCanon;
+    }
+  }
+  return null;
 }
 
 // Build franchise groups from the current animeList.
@@ -2711,8 +2739,18 @@ function _buildFranchiseGroups(sorted) {
     const enKey = _franchiseKey(enRaw);
     const roKey = _franchiseKey(roRaw);
 
-    // Check if either key already has a group
-    const canon = keyMap.get(enKey) || keyMap.get(roKey) || enKey;
+    // For "SpinoffName: FranchiseName" patterns (e.g. "Sword Oratoria: Is it Wrong…"),
+    // also try the part after the colon as a franchise key so it joins the right group.
+    const enAfterColon = enRaw.includes(':') ? _franchiseKey(enRaw.replace(/^[^:]+:\s*/, '')) : null;
+    const roAfterColon = roRaw.includes(':') ? _franchiseKey(roRaw.replace(/^[^:]+:\s*/, '')) : null;
+
+    // Check if any key already has a group
+    const canon = keyMap.get(enKey) || keyMap.get(roKey)
+               || (enAfterColon && keyMap.get(enAfterColon))
+               || (roAfterColon && keyMap.get(roAfterColon))
+               || _franchiseSuffixLookup(enKey, keyMap)
+               || _franchiseSuffixLookup(roKey, keyMap)
+               || enKey;
 
     if (!groups.has(canon)) {
       // Display name uses the current language preference
@@ -2720,9 +2758,11 @@ function _buildFranchiseGroups(sorted) {
       groups.set(canon, { name: _franchiseBaseName(displayRaw) || _franchiseBaseName(enRaw), members: [] });
     }
 
-    // Register both keys so future anime with either title variant find this group
+    // Register all key variants so future anime with any title variant find this group
     keyMap.set(enKey, canon);
     if (roKey !== enKey) keyMap.set(roKey, canon);
+    if (enAfterColon && enAfterColon !== enKey) keyMap.set(enAfterColon, canon);
+    if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) keyMap.set(roAfterColon, canon);
 
     groups.get(canon).members.push(a);
   }
@@ -3294,29 +3334,41 @@ function exportCSV() {
 }
 
 // ─── TIER LIST IMAGE EXPORT ──────────────────────────────────────────────────
-// Load a cover image for canvas drawing by fetching it fresh as a blob URL.
-// This bypasses any cached non-CORS version (which would taint the canvas),
-// and works regardless of whether the user is on AniList, MAL, or guest mode.
-async function _loadCoverForCanvas(url, timeoutMs = 3000) {
+// Load a cover image for canvas drawing.
+// First attempts fetch() → blob URL (avoids canvas tainting on CORS-enabled CDNs).
+// Falls back to img.crossOrigin = 'anonymous' if the CDN doesn't return CORS
+// headers on the fetch — AniList's CDN occasionally skips them on cache misses.
+async function _loadCoverForCanvas(url, timeoutMs = 4000) {
   if (!url) return null;
+
+  // ── Primary: fetch → blob URL ─────────────────────────────────────────────
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(url, { mode: 'cors', cache: 'no-cache', signal: controller.signal });
+    const resp = await fetch(url, { mode: 'cors', cache: 'no-store', signal: controller.signal });
     clearTimeout(timer);
-    if (!resp.ok) return null;
-    const blob = await resp.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    return new Promise(resolve => {
-      const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
-      img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(null); };
-      img.src = objectUrl;
-    });
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(null); };
+        img.src = objectUrl;
+      });
+    }
   } catch {
     clearTimeout(timer);
-    return null;
   }
+
+  // ── Fallback: crossOrigin img (may taint canvas, but better than blank) ───
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload  = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now();
+  });
 }
 
 // ─── TIER LIST IMAGE GENERATION (§5.2.5) ─────────────────────────────────────
@@ -8505,8 +8557,8 @@ function buildSparkline(history) {
 }
 
 // ─── MILESTONES ───────────────────────────────────────────────────────────────
-const TASTE_STORY_MILESTONES = [50, 100, 200, 300, 500];
-const TASTE_STORY_REPEAT_INTERVAL = 250;
+const TASTE_STORY_MILESTONES = [50, 100, 150, 200, 300, 400, 500, 600];
+const TASTE_STORY_REPEAT_INTERVAL = 200;
 
 // Returns the milestone value crossed between before and after, or null.
 // Fixed early milestones first, then every TASTE_STORY_REPEAT_INTERVAL after 500.
@@ -8521,6 +8573,17 @@ function _findTasteStoryMilestone(before, after) {
 }
 
 // Returns a sequential index for any milestone value, used to alternate titles.
+// Returns the most recent taste story milestone the user has crossed, so the
+// taste tab always shows the same archetype as the last popup they saw.
+function _lastTasteStoryMilestone(count) {
+  // Walk fixed milestones in reverse
+  for (let i = TASTE_STORY_MILESTONES.length - 1; i >= 0; i--) {
+    if (count >= TASTE_STORY_MILESTONES[i]) return TASTE_STORY_MILESTONES[i];
+  }
+  // Shouldn't happen if caller checks count >= first milestone, but safe fallback
+  return TASTE_STORY_MILESTONES[0];
+}
+
 function _tasteArchetypeIndex(milestone) {
   const fixedIdx = TASTE_STORY_MILESTONES.indexOf(milestone);
   if (fixedIdx !== -1) return fixedIdx;
@@ -10461,7 +10524,7 @@ async function renderTasteProfile(forceRefetch = false) {
   const identityEl = document.getElementById('taste-identity-card');
   if (battleCount >= TASTE_STORY_MILESTONES[0]) {
     if (identityEl) identityEl.style.display = '';
-    const insights = _computeTasteInsights(battleCount);
+    const insights = _computeTasteInsights(_lastTasteStoryMilestone(battleCount));
     const archetype = insights.find(c => c.type === 'archetype');
     byId(IDS.tasteHeadline).textContent = archetype?.headline || profile.headline;
 
@@ -11673,6 +11736,41 @@ function setMode(name) {
 // Toggles the popover. Uses a one-shot outside-click listener (registered on
 // the next tick so the opening click doesn't immediately dismiss it) and an
 // Escape-key handler. Both listeners unwire cleanly on close.
+function toggleAvatarMenu(event, which) {
+  if (event) event.stopPropagation();
+  const badgeId = which === 'auth' ? 'auth-header-badge' : 'mal-header-badge';
+  const dropId  = which === 'auth' ? 'auth-avatar-dropdown' : 'mal-avatar-dropdown';
+  const badge = document.getElementById(badgeId);
+  const drop  = document.getElementById(dropId);
+  if (!drop) return;
+  const willOpen = !drop.classList.contains('open');
+  closeAvatarMenus();
+  if (willOpen) {
+    drop.classList.add('open');
+    badge?.setAttribute('aria-expanded', 'true');
+    // Close when next click lands outside the badge
+    setTimeout(() => document.addEventListener('click', _avatarOutsideClick, { once: true }), 0);
+  }
+}
+
+function _avatarOutsideClick(e) {
+  if (!e.target.closest('.avatar-badge-wrap')) {
+    closeAvatarMenus();
+  } else {
+    // Click was inside — re-arm so another outside click closes it
+    setTimeout(() => document.addEventListener('click', _avatarOutsideClick, { once: true }), 0);
+  }
+}
+
+function closeAvatarMenus() {
+  ['auth-avatar-dropdown', 'mal-avatar-dropdown'].forEach(id => {
+    document.getElementById(id)?.classList.remove('open');
+  });
+  ['auth-header-badge', 'mal-header-badge'].forEach(id => {
+    document.getElementById(id)?.setAttribute('aria-expanded', 'false');
+  });
+}
+
 function toggleModeMenu(event) {
   if (event) event.stopPropagation();
   const pop = byId(IDS.modePopover);

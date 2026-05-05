@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.58" />
+  <meta name="version" content="1.0.59" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -103,20 +103,16 @@
       🔔
       <span id="notif-badge" style="display:none"></span>
     </button>
-    <div id="auth-header-badge" class="avatar-badge-wrap">
-      <button class="avatar-menu-btn" id="auth-avatar-btn" onclick="toggleAvatarMenu(event,'auth')" title="Account menu" aria-haspopup="true" aria-expanded="false">
-        <img id="auth-hdr-avatar" src="" alt="Profile" />
-      </button>
-      <div class="avatar-dropdown" id="auth-avatar-dropdown">
+    <div id="auth-header-badge" class="avatar-badge-wrap" onclick="toggleAvatarMenu(event,'auth')" role="button" tabindex="0" title="Account menu" aria-haspopup="true" aria-expanded="false">
+      <img id="auth-hdr-avatar" src="" alt="Profile" />
+      <div class="avatar-dropdown" id="auth-avatar-dropdown" onclick="event.stopPropagation()">
         <span class="avatar-dropdown-name" id="auth-hdr-name"></span>
         <button class="avatar-dropdown-logout" onclick="clearAuth();closeAvatarMenus()">Logout</button>
       </div>
     </div>
-    <div id="mal-header-badge" class="avatar-badge-wrap">
-      <button class="avatar-menu-btn" id="mal-avatar-btn" onclick="toggleAvatarMenu(event,'mal')" title="Account menu" aria-haspopup="true" aria-expanded="false">
-        <img id="mal-hdr-avatar" src="" alt="Profile" />
-      </button>
-      <div class="avatar-dropdown" id="mal-avatar-dropdown">
+    <div id="mal-header-badge" class="avatar-badge-wrap" onclick="toggleAvatarMenu(event,'mal')" role="button" tabindex="0" title="Account menu" aria-haspopup="true" aria-expanded="false">
+      <img id="mal-hdr-avatar" src="" alt="Profile" />
+      <div class="avatar-dropdown" id="mal-avatar-dropdown" onclick="event.stopPropagation()">
         <span class="avatar-dropdown-name" id="mal-hdr-name"></span>
         <button class="avatar-dropdown-logout" onclick="logoutMAL();closeAvatarMenus()">Logout</button>
       </div>

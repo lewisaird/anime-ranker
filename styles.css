@@ -115,6 +115,9 @@
       font-size: 0.85rem;
       color: var(--text-secondary);
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
 
     #main {
@@ -2034,12 +2037,8 @@
       display: none;
     }
     /* Avatar dropdown shared styles */
-    .avatar-badge-wrap { position: relative; }
-    .avatar-menu-btn {
-      background: none; border: none; padding: 0; cursor: pointer;
-      display: flex; align-items: center; border-radius: 50%;
-    }
-    .avatar-menu-btn img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; display: block; }
+    .avatar-badge-wrap { position: relative; cursor: pointer; flex-shrink: 0; }
+    .avatar-badge-wrap img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; display: block; }
     .avatar-dropdown {
       display: none;
       position: absolute;
@@ -2236,6 +2235,7 @@
       align-items: center;
       gap: 4px;
       transition: border-color 0.15s, color 0.15s;
+      flex-shrink: 0;
     }
     #notif-bell:hover { border-color: var(--accent-blue); color: var(--text-bright); }
 
