@@ -630,6 +630,10 @@ function _clearRankingState() {
   _pendingNewAnime     = [];
   _pendingRemovedAnime = [];
 
+  // Clear any stored Live Challenge session so a stale rejoin banner
+  // from a previous auth provider can't appear for the new user.
+  try { sessionStorage.removeItem('kessen-lc'); } catch {}
+
   // Hide the bell — it's only valid during an active logged-in session
   const bell = byId(IDS.notifBell);
   if (bell) bell.style.display = 'none';
@@ -5277,21 +5281,25 @@ async function _lcFetchUserWatchedIds(username, platform) {
   }
 
   if (platform === 'mal') {
-    // Fetch completed + watching from Jikan v4
-    const [compRes, watchRes] = await Promise.all([
-      fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=2&limit=300`),
-      fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=1&limit=300`),
-    ]);
-    if (!compRes.ok && !watchRes.ok)
-      throw new Error(`MAL user "${username}" not found or their list is private.`);
+    // Fetch completed + watching from Jikan v4 (max 300 per request)
+    const fetchJikan = async (status) => {
+      const r = await fetch(
+        `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&limit=300`
+      );
+      if (r.status === 404) throw new Error(`MAL user "${username}" not found — check the username.`);
+      if (r.status === 429) throw new Error('MAL is rate-limiting requests right now — please wait a moment and try again.');
+      if (r.status === 403) throw new Error(`MAL user "${username}"'s list is set to private.`);
+      if (!r.ok) throw new Error(`MAL returned an error (HTTP ${r.status}) — please try again.`);
+      return r.json();
+    };
+
+    const [compJson, watchJson] = await Promise.all([fetchJikan(2), fetchJikan(1)]);
 
     const malIds = new Set();
-    for (const r of [compRes, watchRes]) {
-      if (!r.ok) continue;
-      const j = await r.json();
+    for (const j of [compJson, watchJson]) {
       (j.data || []).forEach(e => { if (e.mal_id) malIds.add(e.mal_id); });
     }
-    if (malIds.size === 0) throw new Error(`No completed anime found for MAL user "${username}".`);
+    if (malIds.size === 0) throw new Error(`No watched anime found for MAL user "${username}" — make sure the list is public.`);
 
     // Convert MAL IDs → AniList IDs in chunks of 50
     const malIdArr = [...malIds];
@@ -5304,6 +5312,7 @@ async function _lcFetchUserWatchedIds(username, platform) {
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ query: q, variables: { ids: chunk } }),
       });
+      if (!r.ok) throw new Error(`AniList returned an error (HTTP ${r.status}) while converting MAL IDs.`);
       const j = await r.json();
       (j?.data?.Page?.media ?? []).forEach(m => anilistIds.push(m.id));
       if (i + 50 < malIdArr.length) await new Promise(r => setTimeout(r, 350));
@@ -5677,7 +5686,7 @@ async function lcCreateSession() {
     _lcSetupPresence(ref, pid);
     _lcListenToSession(ref);
   } catch (err) {
-    showToast('⚠️ Could not create session — please check your connection and try again.');
+    showToast('⚠️ ' + (err?.message || 'Could not create session — please check your connection and try again.'));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
   }
@@ -5739,7 +5748,7 @@ async function lcJoinSession() {
     _lcSetupPresence(ref, pid);
     _lcListenToSession(ref);
   } catch (err) {
-    showToast('⚠️ Could not join session — check the code and try again.');
+    showToast('⚠️ ' + (err?.message || 'Could not join session — check the code and try again.'));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Join →'; }
   }
@@ -5793,6 +5802,15 @@ function _lcSync(data) {
   }
 
   if (data.phase === 'building') {
+    // Clear local game state so the 'playing' handler can repopulate fresh.
+    // Without this, rematches leave the guest's _lc.pairs non-empty and the
+    // !_lc.pairs.length guard in the 'playing' block silently no-ops.
+    _lc.pairs               = [];
+    _lc.currentPair         = 0;
+    _lc.picks               = {};
+    _lc.predictions         = {};
+    _lc.opponentPicks       = {};
+    _lc.opponentPredictions = {};
     _lcPanel(IDS.lcPanelBuilding);
   }
 
@@ -6125,7 +6143,8 @@ function _lcEndGame() {
 function _lcShowResults() {
   _lcPanel(IDS.lcPanelResults);
   if (!_lc?.pairs?.length) return;
-  _lcSaveHistory(); // fire-and-forget — persists to Firebase in background
+  _lcSaveHistory();
+  _lcLoadHistory();
 
   const myTotal  = _lcMyScore();
   const oppTotal = _lcOpponentScore();
@@ -6200,10 +6219,11 @@ function _lcShowResults() {
 // ── CHALLENGE HISTORY ─────────────────────────────────────────────────────────
 // Saves the completed game to Firebase under the user's personal path so they
 // can browse past results. Both players write their own copy independently.
-async function _lcSaveHistory() {
-  if (!_lc?.pairs?.length || !_firebaseApp) return;
-  const basePath = _getUserFirebasePath();
-  if (!basePath) return; // guest users — no cloud path
+const _LC_HISTORY_KEY = 'kessen_lc_history';
+const _LC_HISTORY_MAX = 20;
+
+function _lcSaveHistory() {
+  if (!_lc?.pairs?.length) return;
 
   const myTotal  = _lcMyScore();
   const oppTotal = _lcOpponentScore();
@@ -6221,58 +6241,42 @@ async function _lcSaveHistory() {
     tasteMatches,
     rounds:       _lc.pairs.length,
     outcome:      myTotal > oppTotal ? 'win' : myTotal < oppTotal ? 'loss' : 'draw',
-    pairs: _lc.pairs.map((pair, idx) => ({
-      aTitle:   pair.aTitle,
-      bTitle:   pair.bTitle,
-      myPick:   (_lc.picks        || {})[idx] || null,
-      oppPick:  (_lc.opponentPicks || {})[idx] || null,
-      myPred:   (_lc.predictions  || {})[idx] || null,
-      oppPred:  (_lc.opponentPredictions || {})[idx] || null,
-    })),
   };
 
   try {
-    await _firebaseApp.database()
-      .ref(`${basePath}/challenge-history`)
-      .push(record);
+    const history = JSON.parse(localStorage.getItem(_LC_HISTORY_KEY) || '[]');
+    history.unshift(record);
+    if (history.length > _LC_HISTORY_MAX) history.length = _LC_HISTORY_MAX;
+    localStorage.setItem(_LC_HISTORY_KEY, JSON.stringify(history));
   } catch (err) {
     console.warn('Could not save challenge history:', err.message);
   }
 }
 
-// Load and render challenge history in the lobby panel (host only).
-// Shows the last 10 games condensed — opponent, score, outcome, date.
-async function _lcLoadHistory() {
-  const basePath = _getUserFirebasePath();
-  const el = document.getElementById('lc-history-list');
-  if (!basePath || !el || !_firebaseApp) return;
+// Render challenge history into all lc-history elements on screen.
+function _lcLoadHistory() {
+  const targets = [
+    document.getElementById('lc-history-list'),
+    document.getElementById('lc-history-list-lobby'),
+  ].filter(Boolean);
+  if (!targets.length) return;
 
   try {
-    const snap = await _firebaseApp.database()
-      .ref(`${basePath}/challenge-history`)
-      .orderByChild('playedAt')
-      .limitToLast(10)
-      .once('value');
-
-    const records = [];
-    snap.forEach(child => records.unshift({ key: child.key, ...child.val() }));
-
-    if (!records.length) {
-      el.innerHTML = '<div style="font-size:0.75rem;color:#8b949e;margin-top:8px">No past games yet — your history will appear here.</div>';
-      return;
-    }
-
-    el.innerHTML = records.map(r => {
-      const outcome  = r.outcome === 'win' ? '🏆' : r.outcome === 'draw' ? '🤝' : '💀';
-      const scoreStr = `${r.myScore}–${r.oppScore}`;
-      const date     = new Date(r.playedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      return `<div class="lc-history-row">
-        <span class="lc-history-outcome">${outcome}</span>
-        <span class="lc-history-opponent">${esc(r.opponent)}</span>
-        <span class="lc-history-score">${scoreStr}</span>
-        <span class="lc-history-date">${date}</span>
-      </div>`;
-    }).join('');
+    const records = JSON.parse(localStorage.getItem(_LC_HISTORY_KEY) || '[]').slice(0, 10);
+    const html = records.length
+      ? records.map(r => {
+          const outcome  = r.outcome === 'win' ? '🏆' : r.outcome === 'draw' ? '🤝' : '💀';
+          const scoreStr = `${r.myScore}–${r.oppScore}`;
+          const date     = new Date(r.playedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          return `<div class="lc-history-row">
+            <span class="lc-history-outcome">${outcome}</span>
+            <span class="lc-history-opponent">${esc(r.opponent)}</span>
+            <span class="lc-history-score">${scoreStr}</span>
+            <span class="lc-history-date">${date}</span>
+          </div>`;
+        }).join('')
+      : '<div style="font-size:0.75rem;color:#8b949e;margin-top:8px">No past games yet — your history will appear here.</div>';
+    targets.forEach(el => { el.innerHTML = html; });
   } catch (err) {
     console.warn('Could not load challenge history:', err.message);
   }
