@@ -5281,25 +5281,35 @@ async function _lcFetchUserWatchedIds(username, platform) {
   }
 
   if (platform === 'mal') {
-    // Fetch completed + watching from Jikan v4 (max 300 per request)
-    const fetchJikan = async (status) => {
-      const r = await fetch(
-        `https://api.jikan.moe/v4/users/${encodeURIComponent(username)}/animelist?status=${status}&limit=300`
-      );
-      if (r.status === 404) throw new Error(`MAL user "${username}" not found — check the username.`);
-      if (r.status === 429) throw new Error('MAL is rate-limiting requests right now — please wait a moment and try again.');
-      if (r.status === 403) throw new Error(`MAL user "${username}"'s list is set to private.`);
-      if (!r.ok) throw new Error(`MAL returned an error (HTTP ${r.status}) — please try again.`);
-      return r.json();
-    };
-
-    const [compJson, watchJson] = await Promise.all([fetchJikan(2), fetchJikan(1)]);
+    // MAL no longer allows public API access — Jikan (the public mirror) is
+    // blocked. Playing as a MAL user requires being logged in via MAL OAuth
+    // so we can call the MAL API through our authenticated server-side proxy.
+    if (!malAuthToken) {
+      throw new Error('To play as a MAL user, please log in with MAL first.');
+    }
 
     const malIds = new Set();
-    for (const j of [compJson, watchJson]) {
-      (j.data || []).forEach(e => { if (e.mal_id) malIds.add(e.mal_id); });
-    }
-    if (malIds.size === 0) throw new Error(`No watched anime found for MAL user "${username}" — make sure the list is public.`);
+    const fetchMALAuth = async (status) => {
+      let offset = 0;
+      const limit = 1000;
+      while (true) {
+        const path = `/v2/users/@me/animelist?fields=list_status&limit=${limit}&offset=${offset}&status=${status}`;
+        const res = await fetch('/.netlify/functions/mal-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, token: malAuthToken }),
+        });
+        if (res.status === 401) throw new Error('MAL session expired — please log in with MAL again.');
+        if (!res.ok) throw new Error(`MAL API error (HTTP ${res.status}) — please try again.`);
+        const data = await res.json();
+        (data.data || []).forEach(item => { if (item.node?.id) malIds.add(item.node.id); });
+        if (!data.paging?.next) break;
+        offset += limit;
+      }
+    };
+    await Promise.all([fetchMALAuth('completed'), fetchMALAuth('watching')]);
+
+    if (malIds.size === 0) throw new Error('No watched anime found in your MAL account.');
 
     // Convert MAL IDs → AniList IDs in chunks of 50
     const malIdArr = [...malIds];
@@ -5625,12 +5635,32 @@ function _lcPrefillSetup() {
   const platformEl  = byId(IDS.lcSetupPlatform);
   const usernameEl  = byId(IDS.lcSetupUsername);
   if (!platformEl || !usernameEl) return;
+
+  const loggedIn = !!(authUser || malAuthUser);
+
   if (authUser?.name) {
-    platformEl.value  = 'anilist';
-    usernameEl.value  = authUser.name;
+    platformEl.value = 'anilist';
+    usernameEl.value = authUser.name;
   } else if (malAuthUser?.name) {
-    platformEl.value  = 'mal';
-    usernameEl.value  = malAuthUser.name;
+    platformEl.value = 'mal';
+    usernameEl.value = malAuthUser.name;
+  }
+
+  // Lock the identity fields when logged in — Live Challenge must be played
+  // as the authenticated account. MAL requires OAuth; we can't use Jikan.
+  usernameEl.readOnly      = loggedIn;
+  platformEl.disabled      = loggedIn;
+  usernameEl.style.opacity = loggedIn ? '0.65' : '';
+  usernameEl.style.cursor  = loggedIn ? 'default' : '';
+  platformEl.style.opacity = loggedIn ? '0.65' : '';
+  platformEl.style.cursor  = loggedIn ? 'default' : '';
+
+  // Update the helper text to guide users who aren't logged in
+  const hint = document.querySelector('#lc-panel-setup > p');
+  if (hint) {
+    hint.textContent = loggedIn
+      ? "We'll fetch your watch history and find anime you've both seen."
+      : "Log in with AniList or MAL, then come back to start a Live Challenge.";
   }
 }
 
