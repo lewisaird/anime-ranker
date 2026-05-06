@@ -4006,7 +4006,7 @@ function setRecsTab(tab, fromMood = false) {
     } else {
       const { season, year } = getCurrentSeason();
       const nextS = getNextSeason(season, year);
-      sub.textContent = `Airing this season (${season} ${year}) and next (${nextS.season} ${nextS.year}) — filtered to titles you haven't watched.`;
+      sub.innerHTML = `Airing this season (${season} ${year}) and next (${nextS.season} ${nextS.year}) — filtered to titles you haven't watched.<br>All recommendations are worth a look; 🎯 <strong>Strong match</strong> highlights the ones that best fit your taste.`;
     }
 
     if (_moodRecActive) {
@@ -4164,7 +4164,7 @@ function recCardHtml(media, opts = {}) {
     : '';
   // Show a taste badge on seasonal cards that match the user's genres well
   const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
-    ? '<span style="font-size:0.65rem;background:#1a2d1a;color:#3fb950;border:1px solid #238636;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Matches your taste</span>'
+    ? '<span style="font-size:0.65rem;background:#1a2d1a;color:#3fb950;border:1px solid #238636;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">🎯 Strong match</span>'
     : '';
   const recUrl = (_isMalCloudSession() && media.idMal)
     ? `https://myanimelist.net/anime/${media.idMal}`
@@ -5648,12 +5648,19 @@ function _lcPrefillSetup() {
 
   // Lock the identity fields when logged in — Live Challenge must be played
   // as the authenticated account. MAL requires OAuth; we can't use Jikan.
-  usernameEl.readOnly      = loggedIn;
-  platformEl.disabled      = loggedIn;
-  usernameEl.style.opacity = loggedIn ? '0.65' : '';
-  usernameEl.style.cursor  = loggedIn ? 'default' : '';
-  platformEl.style.opacity = loggedIn ? '0.65' : '';
-  platformEl.style.cursor  = loggedIn ? 'default' : '';
+  usernameEl.readOnly           = loggedIn;
+  platformEl.disabled           = loggedIn;
+  usernameEl.style.opacity      = loggedIn ? '0.65' : '';
+  usernameEl.style.cursor       = loggedIn ? 'default' : '';
+  // When locked, strip all dropdown styling so it reads as a plain label
+  platformEl.style.appearance         = loggedIn ? 'none' : '';
+  platformEl.style.webkitAppearance   = loggedIn ? 'none' : '';
+  platformEl.style.border             = loggedIn ? 'none' : '';
+  platformEl.style.background         = loggedIn ? 'transparent' : '';
+  platformEl.style.padding            = loggedIn ? '8px 4px' : '';
+  platformEl.style.cursor             = loggedIn ? 'default' : '';
+  platformEl.style.opacity            = loggedIn ? '0.65' : '';
+  platformEl.style.fontWeight         = loggedIn ? '600' : '';
 
   // Update the helper text to guide users who aren't logged in
   const hint = document.querySelector('#lc-panel-setup > p');
