@@ -627,7 +627,13 @@ function _clearRankingState() {
   _newAnimePollingTimer = null;
   byId(IDS.newAnimeBanner)?.classList.remove('active');
   byId(IDS.removedAnimeBanner)?.classList.remove('active');
+  _pendingNewAnime     = [];
   _pendingRemovedAnime = [];
+
+  // Hide the bell — it's only valid during an active logged-in session
+  const bell = byId(IDS.notifBell);
+  if (bell) bell.style.display = 'none';
+  closeNotifCentre();
 
   // Clear discover cache so a different user gets fresh recommendations
   Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
@@ -678,7 +684,7 @@ function _updateAuthUI() {
     if (loggedIn) {
       const hdrAvatar = byId(IDS.authHdrAvatar);
       const hdrName   = byId(IDS.authHdrName);
-      if (hdrAvatar) hdrAvatar.src = authUser.avatar || '';
+      if (hdrAvatar) { hdrAvatar.classList.remove('img-broken'); hdrAvatar.src = authUser.avatar || ''; }
       if (hdrName)   hdrName.textContent = authUser.name;
     }
   }
@@ -693,7 +699,7 @@ function _updateAuthUI() {
   if (loggedIn && loggedBadge) {
     const av = byId(IDS.authBadgeAvatar);
     const nm = byId(IDS.authBadgeName);
-    if (av) av.src = authUser.avatar || '';
+    if (av) { av.classList.remove('img-broken'); av.src = authUser.avatar || ''; }
     if (nm) nm.textContent = authUser.name;
   }
 
@@ -1011,6 +1017,7 @@ function _updateMALAuthUI() {
       const avatarEl = byId(IDS.malBadgeAvatar);
       if (nameEl) nameEl.textContent = malAuthUser.name;
       if (avatarEl && malAuthUser.picture) {
+        avatarEl.classList.remove('img-broken');
         avatarEl.src = malAuthUser.picture;
         avatarEl.style.display = '';
       }
@@ -1025,6 +1032,7 @@ function _updateMALAuthUI() {
       const hdrAvatar = byId(IDS.malHdrAvatar);
       const hdrName   = byId(IDS.malHdrName);
       if (hdrAvatar) {
+        hdrAvatar.classList.remove('img-broken');
         hdrAvatar.src = malAuthUser.picture || '';
         hdrAvatar.style.display = malAuthUser.picture ? '' : 'none';
       }
