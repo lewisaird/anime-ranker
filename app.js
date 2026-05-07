@@ -2378,14 +2378,18 @@ function renderPair(ia, ib) {
   linkB.href        = _animeExternalUrl(b);
   linkB.textContent = `↗ ${_animeExternalLabel(b)}`;
 
-  // Fuzzy button states
+  // Fuzzy button states — label stays static; the .active class (amber tint)
+  // is what communicates whether the anime is currently flagged. Swapping
+  // labels was confusing testers because the inactive label described the
+  // action ("Can't remember") and the active one described the resulting
+  // state ("Fuzzy") — two different things on the same button.
   const fuzzyBtnA = byId(IDS.fuzzyA);
   fuzzyBtnA.classList.toggle('active', !!a.fuzzy);
-  fuzzyBtnA.textContent = a.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+  fuzzyBtnA.textContent = "🌫 Can't remember";
 
   const fuzzyBtnB = byId(IDS.fuzzyB);
   fuzzyBtnB.classList.toggle('active', !!b.fuzzy);
-  fuzzyBtnB.textContent = b.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+  fuzzyBtnB.textContent = "🌫 Can't remember";
 
   // Synopsis panels — reset, scroll back to top, and pre-fill content
   const synA = byId(IDS.synopsisA);
@@ -2656,8 +2660,8 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   card.innerHTML = `
     <span class="rank-number ${numClass}">#${displayRank}</span>
     <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
-    <img src="${anime.cover}" alt="${displayTitle(anime)}" loading="lazy" />
-    <div class="rank-title">${displayTitle(anime)}</div>
+    <img src="${safeUrl(anime.cover)}" alt="${esc(displayTitle(anime))}" loading="lazy" />
+    <div class="rank-title">${esc(displayTitle(anime))}</div>
     ${epBadge}
     ${_statusBadge(anime.status)}
     ${sortExtra}
@@ -2758,36 +2762,54 @@ function _buildFranchiseGroups(sorted) {
   const keyMap = new Map();
   const groups = new Map(); // canonical key → { name, members }
 
+  // Relations-graph component map (AniList SEQUEL/PREQUEL/SIDE_STORY/etc).
+  // For anime that have relations data, this catches franchises where the
+  // titles don't share a stem (Monogatari, Fate, Madoka×Magia Record).
+  // Returns Map<animeId, canonicalRootId>; absent entries fall back to the
+  // title-pattern grouper below.
+  const relMap = _computeFranchiseIds();
+
   for (const a of sorted) {
     const enRaw = a.titleEn || a.title || '';
     const roRaw = a.titleRo || a.title || '';
     const enKey = _franchiseKey(enRaw);
     const roKey = _franchiseKey(roRaw);
 
-    // For "SpinoffName: FranchiseName" patterns (e.g. "Sword Oratoria: Is it Wrong…"),
-    // also try the part after the colon as a franchise key so it joins the right group.
-    const enAfterColon = enRaw.includes(':') ? _franchiseKey(enRaw.replace(/^[^:]+:\s*/, '')) : null;
-    const roAfterColon = roRaw.includes(':') ? _franchiseKey(roRaw.replace(/^[^:]+:\s*/, '')) : null;
+    // Prefer the relations-graph canonical root when available — it groups
+    // entries the title heuristic can't possibly catch. Fall back to the
+    // title-pattern logic for anime that haven't been enriched yet.
+    let canon;
+    const relRoot = relMap.get(a.id);
+    if (relRoot != null) {
+      canon = 'rel:' + relRoot;
+    } else {
+      // For "SpinoffName: FranchiseName" patterns (e.g. "Sword Oratoria: Is it Wrong…"),
+      // also try the part after the colon as a franchise key so it joins the right group.
+      const enAfterColon = enRaw.includes(':') ? _franchiseKey(enRaw.replace(/^[^:]+:\s*/, '')) : null;
+      const roAfterColon = roRaw.includes(':') ? _franchiseKey(roRaw.replace(/^[^:]+:\s*/, '')) : null;
 
-    // Check if any key already has a group
-    const canon = keyMap.get(enKey) || keyMap.get(roKey)
-               || (enAfterColon && keyMap.get(enAfterColon))
-               || (roAfterColon && keyMap.get(roAfterColon))
-               || _franchiseSuffixLookup(enKey, keyMap)
-               || _franchiseSuffixLookup(roKey, keyMap)
-               || enKey;
+      // Check if any key already has a group
+      canon = keyMap.get(enKey) || keyMap.get(roKey)
+           || (enAfterColon && keyMap.get(enAfterColon))
+           || (roAfterColon && keyMap.get(roAfterColon))
+           || _franchiseSuffixLookup(enKey, keyMap)
+           || _franchiseSuffixLookup(roKey, keyMap)
+           || enKey;
+
+      // Register all key variants so future anime with any title variant find
+      // this group. Only matters for the title-pattern fallback path; relations
+      // groups don't need title-key registration.
+      keyMap.set(enKey, canon);
+      if (roKey !== enKey) keyMap.set(roKey, canon);
+      if (enAfterColon && enAfterColon !== enKey) keyMap.set(enAfterColon, canon);
+      if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) keyMap.set(roAfterColon, canon);
+    }
 
     if (!groups.has(canon)) {
       // Display name uses the current language preference
       const displayRaw = preferRomaji ? (a.titleRo || a.title || '') : enRaw;
       groups.set(canon, { name: _franchiseBaseName(displayRaw) || _franchiseBaseName(enRaw), members: [] });
     }
-
-    // Register all key variants so future anime with any title variant find this group
-    keyMap.set(enKey, canon);
-    if (roKey !== enKey) keyMap.set(roKey, canon);
-    if (enAfterColon && enAfterColon !== enKey) keyMap.set(enAfterColon, canon);
-    if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) keyMap.set(roAfterColon, canon);
 
     groups.get(canon).members.push(a);
   }
@@ -2889,6 +2911,11 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   const card = document.createElement('div');
   card.className = 'rank-card franchise-group' + (isSingle ? ' franchise-single' : '');
   card.dataset.franchiseName = group.name;
+  // Stash member IDs so _filterFranchise can apply per-member filters
+  // (format / episode-length / excluded / fuzzy-only) without rebuilding the
+  // franchise grouper. A franchise card is hidden iff NO member passes the
+  // current filters.
+  card.dataset.memberIds = group.members.map(a => a.id).join(',');
 
   // Tier is always based on ELO rank, not current sort position
   const tier = getTier(group.eloRank ?? rank, totalGroups);
@@ -3069,10 +3096,12 @@ function showFranchiseDetail(groupName) {
 
   byId(IDS.detailModal).style.display = 'flex';
   byId(IDS.detailModal).scrollTop = 0;
+  pushModalBack('detail', closeDetailModal);
 }
 
 function closeDetailModal() {
   byId(IDS.detailModal).style.display = 'none';
+  popModalBack('detail');
 }
 
 function toggleFranchiseExpand(el) {
@@ -3282,16 +3311,44 @@ function renderHistory() {
 
 function _filterFranchise() {
   const q = (byId(IDS.searchInput)?.value || '').toLowerCase().trim();
+  // Per-member filter check: format / episode-length / excluded / fuzzy-only.
+  // Mirrors the predicates in filterRankings() for non-franchise mode so that
+  // toggling a filter while franchise mode is on actually does something.
+  const animeById = new Map(animeList.map(a => [a.id, a]));
+  const memberPasses = (a) => {
+    if (!a) return false;
+    if (excludedIds.has(a.id))                              return false;
+    if (hiddenFormats.has(a.format))                        return false;
+    if (hiddenEpRanges.has(epRange(a.episodes, a.format)))  return false;
+    if (showFuzzyOnly && !a.fuzzy)                          return false;
+    return true;
+  };
+  // A franchise group is shown iff at least ONE member passes the filters —
+  // otherwise the group has nothing visible and should be hidden too.
+  const groupHasVisibleMember = (csv) => {
+    if (!csv) return true; // legacy card without member-id list — assume visible
+    const ids = csv.split(',');
+    for (const idStr of ids) {
+      const id = Number(idStr);
+      if (memberPasses(animeById.get(id))) return true;
+    }
+    return false;
+  };
+
   if (rankingView === 'grid') {
     document.querySelectorAll('#ranking-list .franchise-group').forEach(card => {
       const name = (card.dataset.franchiseName || '').toLowerCase();
-      card.style.display = (!q || name.includes(q)) ? '' : 'none';
+      const matchesSearch  = !q || name.includes(q);
+      const matchesFilters = groupHasVisibleMember(card.dataset.memberIds);
+      card.style.display = (matchesSearch && matchesFilters) ? '' : 'none';
     });
   } else {
     // List mode — filter group header rows and hide/show their members together
     document.querySelectorAll('#ranking-table-body .franchise-table-group').forEach(row => {
       const title = row.querySelector('.tbl-title')?.textContent?.toLowerCase() || '';
-      const show  = !q || title.includes(q);
+      const matchesSearch  = !q || title.includes(q);
+      const matchesFilters = groupHasVisibleMember(row.dataset.memberIds);
+      const show  = matchesSearch && matchesFilters;
       row.style.display = show ? '' : 'none';
       const gid = row.dataset.gid;
       if (gid) document.querySelectorAll(`[data-member-gid="${gid}"]`).forEach(r => {
@@ -4500,7 +4557,7 @@ async function _loadRecsGrid() {
   if (result.grouped && result.groups.length) {
     mainHtml = result.groups.map(({ seed, recs }) => `
       <div class="recs-group">
-        <h4 class="recs-group-heading">Because you loved <em>${displayTitle(seed)}</em></h4>
+        <h4 class="recs-group-heading">Because you loved <em>${esc(displayTitle(seed))}</em></h4>
         <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media)).join('')}</div>
       </div>`).join('');
   } else {
@@ -6526,6 +6583,7 @@ function openCollabMode() {
   };
   byId(IDS.collabModal).style.display = 'flex';
   _collabPanel(IDS.collabPanelMode);
+  pushModalBack('collab', closeCollabModal);
 
   const multiBtn  = document.getElementById('collab-mode-multi-btn');
   const multiNote = document.getElementById('collab-multi-note');
@@ -6551,6 +6609,7 @@ function closeCollabModal() {
   _collabClearSession(); // session ended intentionally — don't offer rejoin
   byId(IDS.collabModal).style.display = 'none';
   _collab = null;
+  popModalBack('collab');
   // Re-attach the autosync listener that collabCreateSession/collabJoinSession
   // detached. Safe to call even if it was never running — _startFirebaseSync
   // is idempotent and short-circuits if cloud sync isn't enabled.
@@ -9071,6 +9130,7 @@ function shareRankings() {
   if (subEl) subEl.textContent = 'Export your tier list as an image — or share a link to your top 20.';
   _updateShareModalCapabilities();
   byId(IDS.shareModal).style.display = 'flex';
+  pushModalBack('share', closeShare);
 }
 
 function copyShareLink() {
@@ -9221,17 +9281,69 @@ function _shareEscHandler(e) { if (e.key === 'Escape') closeShare(); }
 function closeShare() {
   byId(IDS.shareModal).style.display = 'none';
   document.removeEventListener('keydown', _shareEscHandler);
+  popModalBack('share');
 }
 function closeShareOnOverlay(e) { if (e.target === byId(IDS.shareModal)) closeShare(); }
 
 // Opens the share modal from the Manage tab — equivalent to shareRankings().
 function openShareFromManage() { shareRankings(); }
 
+// ─── HARDWARE BACK BUTTON / MODAL DISMISS (TWA) ─────────────────────────────
+// On Android — especially as a TWA on Play Store — the hardware back button
+// and the back-gesture are the primary navigation. Without this handler,
+// tapping back inside an open modal exits the whole app instead of dismissing
+// the modal, which is the #1 most-reported beta complaint on Android PWAs.
+//
+// Pattern: when a modal opens we push a synthetic history entry. A back press
+// fires `popstate` and we use it to dismiss whichever modal is on top of an
+// internal stack. When a modal closes via the X / Cancel / OK button we call
+// `history.back()` ourselves so the synthetic entry doesn't leak into the
+// user's normal browser history.
+//
+// pushModalBack(name, closeFn) — call AFTER showing a modal
+// popModalBack(name)            — call AFTER hiding a modal via X/Cancel/etc.
+const _modalBackStack = [];
+let _modalBackIgnoreNext = false;
+let _modalBackInstalled  = false;
+
+function _installModalBack() {
+  if (_modalBackInstalled) return;
+  _modalBackInstalled = true;
+  window.addEventListener('popstate', () => {
+    if (_modalBackIgnoreNext) { _modalBackIgnoreNext = false; return; }
+    const top = _modalBackStack.pop();
+    if (top) top.close();
+  });
+}
+
+function pushModalBack(name, closeFn) {
+  _installModalBack();
+  // Strip any prior entry for the same modal — guards against re-open without
+  // close (e.g. opening the detail modal on a second anime without dismissing
+  // the first).
+  const existing = _modalBackStack.findIndex(e => e.name === name);
+  if (existing >= 0) _modalBackStack.splice(existing, 1);
+  _modalBackStack.push({ name, close: closeFn });
+  try { history.pushState({ kessenModal: name }, ''); } catch (_e) {}
+}
+
+function popModalBack(name) {
+  const idx = _modalBackStack.findIndex(e => e.name === name);
+  if (idx < 0) return; // already popped (e.g. via popstate / back-button)
+  _modalBackStack.splice(idx, 1);
+  _modalBackIgnoreNext = true;
+  try { history.back(); } catch (_e) { _modalBackIgnoreNext = false; }
+}
+
 // ─── HELP MODAL ───────────────────────────────────────────────────────────────
-function showHelp()  { byId(IDS.helpModal).style.display = 'flex'; }
+function showHelp()  {
+  byId(IDS.helpModal).style.display = 'flex';
+  pushModalBack('help', closeHelp);
+}
 function closeHelp() {
   localStorage.setItem(KESSEN_KEYS.ui.helpSeen, '1');
   byId(IDS.helpModal).style.display = 'none';
+  popModalBack('help');
 }
 function closeHelpOnOverlay(e) { if (e.target === byId(IDS.helpModal)) closeHelp(); }
 function maybeShowHelp() {
@@ -9252,6 +9364,7 @@ function maybeShowWelcome() {
       nextBtn.onclick = dismissWelcome;
     }
     byId(IDS.welcomeModal).style.display = 'flex';
+    pushModalBack('welcome', dismissWelcome);
   }
 }
 function welcomeNextPage() {
@@ -9265,6 +9378,7 @@ function dismissWelcome() {
   // Also mark the full help modal as seen so it doesn't auto-show right after
   localStorage.setItem(KESSEN_KEYS.ui.helpSeen, '1');
   byId(IDS.welcomeModal).style.display = 'none';
+  popModalBack('welcome');
   // Reset pages for next time (e.g. if welcomeSeen is cleared in testing)
   const page1 = byId(IDS.welcomeModal)?.querySelector('.welcome-page:first-child');
   const page2 = byId('welcome-page-2');
@@ -9832,11 +9946,13 @@ function showSessionSummary() {
     </div>`).join('');
 
   byId(IDS.sessionSummaryModal).style.display = 'flex';
+  pushModalBack('sessionSummary', () => closeSessionSummary());
 }
 
 function closeSessionSummary(e) {
   if (!e || e.target === byId(IDS.sessionSummaryModal)) {
     byId(IDS.sessionSummaryModal).style.display = 'none';
+    popModalBack('sessionSummary');
   }
 }
 
@@ -9932,9 +10048,12 @@ function flagFuzzy(event, side) {
   saveState();
   const btnId = side === 0 ? 'fuzzy-a' : 'fuzzy-b';
   const btn = document.getElementById(btnId);
-  const isFuzzy = animeList[idx].fuzzy;
-  btn.classList.toggle('active', isFuzzy);
-  btn.textContent = isFuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+  btn.classList.toggle('active', animeList[idx].fuzzy);
+  // Label stays static — the .active class is the state indicator.
+  btn.textContent = "🌫 Can't remember";
+  // Force-blur so mobile :hover doesn't visually freeze the button in the
+  // active style after the user un-toggles it.
+  btn.blur();
 }
 
 // ─── SEARCH / FILTER ──────────────────────────────────────────────────────────
@@ -10231,6 +10350,7 @@ async function _enrichGenresAndEras(onProgress) {
             source
             studios(isMain: true) { nodes { name } }
             tags { name rank isAdult isGeneralSpoiler }
+            relations { edges { relationType node { id type } } }
           }
         }
       }`;
@@ -10257,6 +10377,22 @@ async function _enrichGenresAndEras(onProgress) {
           .filter(t => !t.isAdult && !t.isGeneralSpoiler)
           .map(t => ({ name: t.name, rank: t.rank ?? 0 }));
       }
+      if (!Array.isArray(a.relations)) {
+        // Store only ANIME-type relations of franchise-meaningful types — the
+        // union-find in _computeFranchiseIds traverses these to group sequels,
+        // prequels, side stories, alternative versions, spin-offs and recap
+        // compilations. ADAPTATION/SOURCE/CHARACTER edges cross-medium or
+        // weakly-related, so we drop them to avoid pulling unrelated anime
+        // into a franchise (e.g. a manga adaptation's source).
+        const FRANCHISE_REL_TYPES = new Set([
+          'SEQUEL', 'PREQUEL', 'SIDE_STORY', 'PARENT',
+          'ALTERNATIVE', 'SPIN_OFF', 'COMPILATION', 'SUMMARY',
+        ]);
+        a.relations = (m.relations?.edges || [])
+          .filter(e => e.node?.type === 'ANIME'
+                    && FRANCHISE_REL_TYPES.has(e.relationType))
+          .map(e => e.node.id);
+      }
     });
     if (typeof onProgress === 'function') {
       onProgress({ done: Math.min(i + PAGE_SIZE, ids.length), total: ids.length });
@@ -10266,15 +10402,71 @@ async function _enrichGenresAndEras(onProgress) {
   saveState();
 }
 
-// Returns true if any item on animeList is missing tags/studios/genres — i.e.
-// needs a Taste-Profile enrichment pass. Source and seasonYear come from the
-// same GraphQL query so we don't need to check them explicitly.
+// Returns true if any item on animeList is missing tags/studios/genres/relations
+// — i.e. needs an enrichment pass. Source and seasonYear come from the same
+// GraphQL query so we don't need to check them explicitly. Relations were
+// added later (§ franchise-grouping upgrade), so older saves won't have them
+// until the next enrichment fires.
 function _needsTasteEnrichment() {
   return animeList.some(a =>
     !Array.isArray(a.tags) ||
     !Array.isArray(a.genres) ||
-    !Array.isArray(a.studios)
+    !Array.isArray(a.studios) ||
+    !Array.isArray(a.relations)
   );
+}
+
+// ─── FRANCHISE UNION-FIND (§ relations-based grouping) ──────────────────────
+// Computes a canonical "franchise id" for every anime in the list by walking
+// AniList's relations graph as a union-find. Two anime end up in the same
+// component iff there's a chain of franchise-meaningful relations between
+// them (via the relation types whitelisted in _enrichGenresAndEras).
+//
+// This catches franchises that the title-pattern grouper misses — e.g. the
+// Monogatari Series (every entry has a different leading word) and the Fate
+// universe (Fate/stay night ↔ Fate/Zero share no title stem). For anime
+// without populated relations (older saves, fetch failures), the caller
+// falls back to the title-pattern grouper for those items only.
+//
+// Returns a Map<animeId, canonicalRootId>. Animes with no relations data
+// are absent from the map — caller should treat absence as "use fallback."
+function _computeFranchiseIds() {
+  const inList = new Set(animeList.map(a => a.id));
+  const parent = new Map();
+  // Only seed items that have relations data — others fall through to the
+  // title-pattern grouper.
+  for (const a of animeList) {
+    if (Array.isArray(a.relations)) parent.set(a.id, a.id);
+  }
+  const find = (id) => {
+    let r = id;
+    while (parent.get(r) !== r) r = parent.get(r);
+    // Path compression: flatten the chain so subsequent finds are O(1)
+    let cur = id;
+    while (parent.get(cur) !== r) {
+      const next = parent.get(cur);
+      parent.set(cur, r);
+      cur = next;
+    }
+    return r;
+  };
+  const union = (a, b) => {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const a of animeList) {
+    if (!Array.isArray(a.relations) || !parent.has(a.id)) continue;
+    for (const relId of a.relations) {
+      // Only union with anime that are both in the user's list AND have
+      // their own relations data — keeps the graph well-formed and avoids
+      // half-connections through unenriched neighbours.
+      if (inList.has(relId) && parent.has(relId)) union(a.id, relId);
+    }
+  }
+  // Final pass with path compression so the returned map is O(1)-lookable.
+  const out = new Map();
+  for (const id of parent.keys()) out.set(id, find(id));
+  return out;
 }
 
 // ─── TASTE PROFILE (§6.4.1) ───────────────────────────────────────────────────
@@ -11138,10 +11330,12 @@ function showAnimeDetail(id) {
   byId(IDS.detailModal).style.display = 'block';
   byId(IDS.detailModal).scrollTop = 0;
   byId(IDS.modalDescription).scrollTop = 0;
+  pushModalBack('detail', closeDetail);
 }
 
 function closeDetail() {
   byId(IDS.detailModal).style.display = 'none';
+  popModalBack('detail');
 }
 
 function closeDetailOnOverlay(event) {
@@ -11376,9 +11570,9 @@ function renderDisagreements() {
     const cls  = d.delta > 0 ? 'delta-up' : 'delta-down';
     const globalPct = (d.anime.globalScore / 10).toFixed(1); // 85 → 8.5
     el.innerHTML = `
-      <img src="${d.anime.cover}" alt="${displayTitle(d.anime)}" />
+      <img src="${safeUrl(d.anime.cover)}" alt="${esc(displayTitle(d.anime))}" />
       <div class="disagree-item-info">
-        <div class="disagree-item-title">${displayTitle(d.anime)}</div>
+        <div class="disagree-item-title">${esc(displayTitle(d.anime))}</div>
         <div class="disagree-item-meta">Your ELO #${d.eloRank} · Community ${globalPct}/10 (#${d.globalRank})</div>
       </div>
       <div class="disagree-delta ${cls}">${sign}${d.delta}</div>
@@ -12015,7 +12209,8 @@ function _paintTrio(fresh = false) {
 
       const extUrl    = esc(_animeExternalUrl(a));
       const extLabel  = esc(_animeExternalLabel(a));
-      const fuzzyText = a.fuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+      // Label stays static; .active class (amber tint) shows the flagged state.
+      const fuzzyText = "🌫 Can't remember";
       const fuzzyCls  = a.fuzzy ? ' active' : '';
 
       return `
@@ -12086,9 +12281,9 @@ function trioFlagFuzzy(event, pos) {
   if (card) {
     const btn = card.querySelector('.fuzzy-btn');
     if (btn) {
-      const isFuzzy = animeList[idx].fuzzy;
-      btn.classList.toggle('active', isFuzzy);
-      btn.textContent = isFuzzy ? '🌫 Fuzzy' : "🌫 Can't remember";
+      btn.classList.toggle('active', animeList[idx].fuzzy);
+      btn.textContent = "🌫 Can't remember";
+      btn.blur(); // clear sticky :hover on touch
     }
   }
 }
@@ -12271,7 +12466,7 @@ function _applyBlindState() {
 // (fuzzy / synopsis / AniList / exclude) are hidden by default to keep the
 // battle card uncluttered. Users reveal them by either:
 //   (a) long-pressing the card body (500 ms), or
-//   (b) tapping the visible "⋯ Hold for more" chip directly.
+//   (b) tapping the visible "⋯ More" chip directly.
 // A first-use tooltip (one-shot, guarded by KESSEN_KEYS.ui.longPressTipSeen)
 // explains the gesture the first time the battle screen is shown on touch.
 const _LONG_PRESS_MS = 350;
@@ -12329,7 +12524,7 @@ function _attachCardLongPress(cardEl, side) {
   }, true);
 }
 
-// Toggle handler for the "⋯ Hold for more" chip. Keeps the gesture-free
+// Toggle handler for the "⋯ More" chip. Keeps the gesture-free
 // fallback working (tap the chip) and explicitly stops propagation so the
 // underlying card onclick doesn't also fire pickWinner.
 function toggleCardActions(event, side) {
@@ -12426,6 +12621,7 @@ function openTowerModal() {
   populateTowerList('');
   byId(IDS.towerSearch).value = '';
   byId(IDS.towerModal).classList.add('open');
+  pushModalBack('tower', closeTowerModal);
 
   // First-use tip (§5.2.2) — shown inline above the list, dismissed with the
   // "Got it" button. One-shot via KESSEN_KEYS.ui.towerFirstTipSeen.
@@ -12447,6 +12643,7 @@ function dismissTowerTip() {
 
 function closeTowerModal() {
   byId(IDS.towerModal).classList.remove('open');
+  popModalBack('tower');
 }
 
 function filterTowerList() {
@@ -12470,8 +12667,8 @@ function populateTowerList(q) {
     const el = document.createElement('div');
     el.className = 'tower-anime-item';
     el.innerHTML = `
-      <img src="${a.cover}" alt="${displayTitle(a)}" />
-      <span>${displayTitle(a)}</span>
+      <img src="${safeUrl(a.cover)}" alt="${esc(displayTitle(a))}" />
+      <span>${esc(displayTitle(a))}</span>
       <span class="tower-anime-elo">ELO ${a.elo}</span>
     `;
     el.addEventListener('click', () => startTower(i));
@@ -12591,9 +12788,9 @@ function finishTower() {
     const row = document.createElement('div');
     row.className = `tower-result-row ${r.championWon ? 'won' : 'lost'}`;
     row.innerHTML = `
-      <img src="${opp.cover}" alt="${displayTitle(opp)}" />
+      <img src="${safeUrl(opp.cover)}" alt="${esc(displayTitle(opp))}" />
       <div class="tower-result-info">
-        <div class="name">${displayTitle(opp)}</div>
+        <div class="name">${esc(displayTitle(opp))}</div>
         <div class="meta">ELO ${opp.elo} · ${opp.battles || 0} battles</div>
       </div>
       <div class="tower-result-outcome">${r.championWon ? '✅ Win' : '❌ Loss'}</div>
@@ -12737,7 +12934,7 @@ function renderFranchiseTable() {
       ? `showAnimeDetail(${group.members[0].id})`
       : `showFranchiseDetail('${esc(group.name).replace(/'/g, "\\'")}')`;
     html += `
-      <tr class="franchise-table-group" data-gid="${gid}" onclick="${clickHandler}">
+      <tr class="franchise-table-group" data-gid="${gid}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
         <td class="tbl-rank">${rank + 1}</td>
         <td><img class="tbl-cover" src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
@@ -12891,10 +13088,12 @@ function openSyncModal() {
   byId(IDS.syncDoneMsg).style.display = 'none';
   byId(IDS.syncActionBtns).style.display = 'flex';
   byId(IDS.syncModal).style.display = 'flex';
+  pushModalBack('sync', closeSyncModal);
 }
 
 function closeSyncModal() {
   byId(IDS.syncModal).style.display = 'none';
+  popModalBack('sync');
 }
 
 function closeSyncOnOverlay(e) {
@@ -13144,10 +13343,12 @@ function openMALSyncModal() {
   byId(IDS.malSyncDoneMsg).style.display = 'none';
   byId(IDS.malSyncActionBtns).style.display = 'flex';
   byId(IDS.malSyncModal).style.display = 'flex';
+  pushModalBack('malSync', closeMALSyncModal);
 }
 
 function closeMALSyncModal() {
   byId(IDS.malSyncModal).style.display = 'none';
+  popModalBack('malSync');
 }
 
 function closeMALSyncOnOverlay(e) {

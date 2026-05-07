@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.64" />
+  <meta name="version" content="1.0.70" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -807,7 +807,7 @@
           <div class="title" id="title-a"></div>
           <div class="elo-badge" id="elo-a"></div>
           <div id="ep-meta-a"></div>
-          <button type="button" class="card-more-chip" data-side="0" onclick="toggleCardActions(event,0)" aria-expanded="false" aria-controls="card-actions-0">⋯ Hold for more</button>
+          <button type="button" class="card-more-chip" data-side="0" onclick="toggleCardActions(event,0)" aria-expanded="false" aria-controls="card-actions-0">⋯ More</button>
           <div class="card-actions" id="card-actions-0">
             <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">🌫 Can't remember</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,0)" title="About this show">ℹ About</button>
@@ -824,7 +824,7 @@
           <div class="title" id="title-b"></div>
           <div class="elo-badge" id="elo-b"></div>
           <div id="ep-meta-b"></div>
-          <button type="button" class="card-more-chip" data-side="1" onclick="toggleCardActions(event,1)" aria-expanded="false" aria-controls="card-actions-1">⋯ Hold for more</button>
+          <button type="button" class="card-more-chip" data-side="1" onclick="toggleCardActions(event,1)" aria-expanded="false" aria-controls="card-actions-1">⋯ More</button>
           <div class="card-actions" id="card-actions-1">
             <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">🌫 Can't remember</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,1)" title="About this show">ℹ About</button>
@@ -1356,7 +1356,7 @@
   <div id="long-press-tip" style="display:none">
     <h5>💡 Tip</h5>
     <p style="font-size:0.82rem;color:#c9d1d9;margin-bottom:10px">
-      <b>Long-press a card</b> (or tap the <b>⋯ Hold for more</b> chip) to open fuzzy / synopsis / exclude options.
+      <b>Long-press a card</b> (or tap the <b>⋯ More</b> chip) to open fuzzy / synopsis / exclude options.
     </p>
     <button class="btn-secondary" style="font-size:0.78rem;padding:5px 16px" onclick="_markLongPressTipSeen()">Got it ✓</button>
   </div>

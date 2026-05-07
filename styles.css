@@ -1214,7 +1214,13 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    .fuzzy-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); background: #2d1b00; }
+    /* Hover only on real pointer devices — without this guard, mobile
+       browsers leave :hover "stuck" on the last-tapped element until the
+       user taps elsewhere, which made the fuzzy toggle look unable to
+       deselect because :hover and .active had identical styles. */
+    @media (hover: hover) {
+      .fuzzy-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); background: #2d1b00; }
+    }
     .fuzzy-btn.active { border-color: var(--accent-amber); color: var(--accent-amber); background: #2d1b00; }
     .card-anilist-link {
       color: var(--text-secondary);
@@ -1842,7 +1848,9 @@
       background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
       font-size: 0.7rem; padding: 3px 8px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
     }
-    .exclude-btn:hover { border-color: var(--accent-red); color: var(--accent-red); background: #2a0a0a; }
+    @media (hover: hover) {
+      .exclude-btn:hover { border-color: var(--accent-red); color: var(--accent-red); background: #2a0a0a; }
+    }
 
     /* EXCLUDED SECTION */
     #excluded-section { margin: 24px 0; }
@@ -3584,7 +3592,7 @@
       }
 
       /* Collapse the secondary action row on touch (§5.3). The long-press
-         gesture (or a tap on the "⋯ Hold for more" chip) toggles
+         gesture (or a tap on the "⋯ More" chip) toggles
          .actions-expanded on the card, which un-collapses the row. */
       .anime-card .card-actions { display: none; }
       .anime-card.actions-expanded .card-actions {
@@ -3679,8 +3687,10 @@
     body.light-mode .card-anilist-link:hover { background: #dbeafe; }
 
     body.light-mode .fuzzy-filter-btn.active,
-    body.light-mode .fuzzy-btn:hover,
     body.light-mode .fuzzy-btn.active { background: #fff8e1; }
+    @media (hover: hover) {
+      body.light-mode .fuzzy-btn:hover { background: #fff8e1; }
+    }
 
     body.light-mode .util-btn.util-danger:hover,
     body.light-mode .manage-btn-danger:hover { background: #fff0f0; }
