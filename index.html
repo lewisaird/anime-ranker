@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.71" />
+  <meta name="version" content="1.0.73" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -94,7 +94,7 @@
       <line x1="256" y1="256" x2="233" y2="279" stroke="#f0c040" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
     </svg>
     <h1>Kessen</h1>
-    <span class="beta-chip">Beta</span>
+    <button type="button" class="beta-chip" onclick="sendBetaFeedback()" title="You're on a beta build — tap to send feedback or report a bug" aria-label="Send beta feedback">Beta</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
@@ -1331,7 +1331,7 @@
         <div class="manage-section manage-feedback-section">
           <div class="manage-section-title">Feedback</div>
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Found a bug or have a suggestion? We'd love to hear it.</p>
-          <a class="manage-btn manage-btn-feedback" href="mailto:feedback@kessen.co.uk?subject=Kessen%20Beta%20Feedback">✉️ Send feedback</a>
+          <button type="button" class="manage-btn manage-btn-feedback" onclick="sendBetaFeedback()">✉️ Send feedback</button>
         </div>
 
       </div>

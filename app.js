@@ -9352,6 +9352,46 @@ function maybeShowHelp() {
   }
 }
 
+// ─── BETA FEEDBACK ────────────────────────────────────────────────────────────
+// Triggered by tapping the BETA chip in the header (and by the "Send feedback"
+// button in the Manage tab). Pre-fills version + user-agent into the mailto
+// body so reports arrive triage-ready rather than as a bare "it's broken."
+//
+// We intentionally don't auto-attach username, AniList ID, or anything that
+// could surprise a privacy-conscious tester — only build metadata they'd
+// already give us if asked. Anything beyond that, the tester types themselves.
+function sendBetaFeedback() {
+  const version =
+    document.querySelector('meta[name="version"]')?.content || 'unknown';
+  const ua = (navigator.userAgent || 'unknown').slice(0, 200);
+  const lang = navigator.language || 'unknown';
+  const body =
+    `\n\n\n` +
+    `--- please leave the lines below for diagnostics ---\n` +
+    `Version: ${version}\n` +
+    `Browser: ${ua}\n` +
+    `Locale:  ${lang}\n` +
+    `URL:     ${location.href}\n`;
+  const subject = `Kessen Beta Feedback (v${version})`;
+  const url =
+    'mailto:feedback@kessen.co.uk' +
+    '?subject=' + encodeURIComponent(subject) +
+    '&body=' + encodeURIComponent(body);
+  // location.href is the most reliable way to trigger mailto across browsers
+  // including in-app webviews and TWA. Fallback: copy the address to clipboard
+  // so the user can paste it into whatever mail client they prefer.
+  try {
+    window.location.href = url;
+  } catch (_e) {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText('feedback@kessen.co.uk');
+      showToast('Email client unavailable — feedback@kessen.co.uk copied to clipboard');
+    } else {
+      showToast('Please email feedback@kessen.co.uk');
+    }
+  }
+}
+
 // ─── WELCOME MODAL ────────────────────────────────────────────────────────────
 function maybeShowWelcome() {
   // Show once per device — guarded solely by KESSEN_KEYS.ui.welcomeSeen.
@@ -11931,8 +11971,65 @@ function _renderPrediction(media, pred, container) {
 //   'blind'  — hide ELO ratings so the user picks on instinct
 // `settleMode` and `blindMode` are kept as derived globals for any legacy
 // call-site that reads them directly; all writes funnel through setMode.
+// Abandons an in-progress tower run without showing the summary screen. Used
+// when the user switches mode mid-tower via setMode() — the picks they've
+// already made stay committed (tower commits ELO on each pick) but the run
+// stops cleanly and tower-specific UI is reset to defaults. This is the bug
+// fix path for "switching from tower to trio (or any other mode) leaves
+// towerMode hot and routes every subsequent pick through pickWinnerTower."
+function _exitTowerState() {
+  if (!towerMode) return;
+  towerMode      = false;
+  towerOpponents = [];
+  towerResults   = [];
+  towerChampIdx  = -1;
+  towerRound     = 0;
+  byId(IDS.towerProgressWrap)?.style.setProperty('display', 'none');
+  byId(IDS.towerStatus)?.style.setProperty('display', 'none');
+  byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
+  byId(IDS.battlePromptP).textContent  = "Click your favourite — or skip if you can't decide.";
+  const undo = byId(IDS.undoBtn);
+  if (undo) undo.disabled = false;
+  const skip = byId(IDS.skipBtn);
+  if (skip) skip.disabled = false;
+  const btn = byId(IDS.modeBtn);
+  if (btn) btn.classList.remove('active-tower');
+}
+
+// Exits any settle/blind/trio mode cleanly — used by startTower() so its
+// flags and DOM state don't linger when entering tower. Without this, a
+// user entering tower while trioMode was true would have both flags set;
+// renderBattle's `if (trioMode)` check fires before tower's, so the trio
+// arena would render over the tower opponent — exactly what users hit when
+// switching from trio to tower.
+function _exitNonTowerModes() {
+  if (!settleMode && !blindMode && !trioMode) return;
+  settleMode = false;
+  blindMode  = false;
+  trioMode   = false;
+  byId(IDS.settleBanner)?.classList.remove('active');
+  byId(IDS.blindBanner)?.classList.remove('active');
+  byId(IDS.trioBanner)?.classList.remove('active');
+  const screen = byId(IDS.battleScreen);
+  if (screen) screen.classList.remove('blind');
+  const stdArena  = document.querySelector('.battle-arena');
+  const trioArena = byId(IDS.trioArena);
+  if (stdArena)  stdArena.style.display  = '';
+  if (trioArena) trioArena.style.display = 'none';
+  document.querySelectorAll('#mode-popover [role="menuitemradio"]').forEach(el => {
+    el.setAttribute('aria-checked', el.dataset.mode === 'normal' ? 'true' : 'false');
+  });
+  const btn = byId(IDS.modeBtn);
+  if (btn) btn.classList.remove('active-settle', 'active-blind', 'active-trio');
+}
+
 function setMode(name) {
   if (!['normal', 'settle', 'blind', 'trio'].includes(name)) name = 'normal';
+
+  // If currently in tower, exit cleanly first. Tower is mutually exclusive
+  // with the standard modes — keeping its flag set would route every battle
+  // pick through pickWinnerTower regardless of the visible UI.
+  _exitTowerState();
 
   const prevSettle = settleMode;
   const prevTrio   = trioMode;
@@ -12678,6 +12775,11 @@ function populateTowerList(q) {
 
 function startTower(championIdx) {
   closeTowerModal();
+  // Exit any other active mode cleanly — tower is mutually exclusive with
+  // trio / settle / blind. Without this reset, the prior mode's flags and
+  // DOM state would linger and produce broken renders (e.g. trio arena
+  // visible alongside tower opponent cards).
+  _exitNonTowerModes();
   towerChampIdx  = championIdx;
   towerRound     = 0;
   towerResults   = [];

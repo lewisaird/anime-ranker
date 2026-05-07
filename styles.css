@@ -100,6 +100,19 @@
       align-self: center;
       flex-shrink: 0;
       margin-right: 8px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    @media (hover: hover) {
+      .beta-chip:hover {
+        background: rgba(227,179,65,0.22);
+        border-color: rgba(227,179,65,0.55);
+      }
+    }
+    .beta-chip:focus-visible {
+      outline: 2px solid #e3b341;
+      outline-offset: 2px;
     }
     .tab-new-badge {
       display: inline-block;
