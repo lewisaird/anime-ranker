@@ -2385,11 +2385,11 @@ function renderPair(ia, ib) {
   // state ("Fuzzy") — two different things on the same button.
   const fuzzyBtnA = byId(IDS.fuzzyA);
   fuzzyBtnA.classList.toggle('active', !!a.fuzzy);
-  fuzzyBtnA.textContent = "🌫 Can't remember";
+  fuzzyBtnA.textContent = "🌫 Fuzzy";
 
   const fuzzyBtnB = byId(IDS.fuzzyB);
   fuzzyBtnB.classList.toggle('active', !!b.fuzzy);
-  fuzzyBtnB.textContent = "🌫 Can't remember";
+  fuzzyBtnB.textContent = "🌫 Fuzzy";
 
   // Synopsis panels — reset, scroll back to top, and pre-fill content
   const synA = byId(IDS.synopsisA);
@@ -2666,7 +2666,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     ${_statusBadge(anime.status)}
     ${sortExtra}
     <span class="confidence ${conf.cls}" title="${conf.title}">${conf.dot} ${conf.label}</span>
-    ${anime.fuzzy ? '<span class="fuzzy-tag" title="Can&#39;t Remember \u2014 you selected this option during a battle. This anime appears less often until you&#39;ve refreshed your memory of it.">&#x1F32B; Fuzzy</span>' : ''}
+    ${anime.fuzzy ? '<span class="fuzzy-tag" title="Fuzzy \u2014 you flagged this as not remembered well enough to judge fairly. It appears less often until you\u2019ve refreshed your memory.">&#x1F32B; Fuzzy</span>' : ''}
     ${streakBadge(anime)}
   `;
   if (showFuzzyOnly && !anime.fuzzy)                             card.style.display = 'none';
@@ -10050,7 +10050,7 @@ function flagFuzzy(event, side) {
   const btn = document.getElementById(btnId);
   btn.classList.toggle('active', animeList[idx].fuzzy);
   // Label stays static — the .active class is the state indicator.
-  btn.textContent = "🌫 Can't remember";
+  btn.textContent = "🌫 Fuzzy";
   // Force-blur so mobile :hover doesn't visually freeze the button in the
   // active style after the user un-toggles it.
   btn.blur();
@@ -12210,7 +12210,7 @@ function _paintTrio(fresh = false) {
       const extUrl    = esc(_animeExternalUrl(a));
       const extLabel  = esc(_animeExternalLabel(a));
       // Label stays static; .active class (amber tint) shows the flagged state.
-      const fuzzyText = "🌫 Can't remember";
+      const fuzzyText = "🌫 Fuzzy";
       const fuzzyCls  = a.fuzzy ? ' active' : '';
 
       return `
@@ -12282,7 +12282,7 @@ function trioFlagFuzzy(event, pos) {
     const btn = card.querySelector('.fuzzy-btn');
     if (btn) {
       btn.classList.toggle('active', animeList[idx].fuzzy);
-      btn.textContent = "🌫 Can't remember";
+      btn.textContent = "🌫 Fuzzy";
       btn.blur(); // clear sticky :hover on touch
     }
   }

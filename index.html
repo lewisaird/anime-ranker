@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.70" />
+  <meta name="version" content="1.0.71" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -809,7 +809,7 @@
           <div id="ep-meta-a"></div>
           <button type="button" class="card-more-chip" data-side="0" onclick="toggleCardActions(event,0)" aria-expanded="false" aria-controls="card-actions-0">⋯ More</button>
           <div class="card-actions" id="card-actions-0">
-            <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">🌫 Can't remember</button>
+            <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">🌫 Fuzzy</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,0)" title="About this show">ℹ About</button>
             <a class="card-anilist-link" id="anilist-a" href="#" target="_blank" onclick="event.stopPropagation()">↗ AniList</a>
             <button class="exclude-btn" onclick="excludeAnime(event,0)" title="Remove from ranking pool permanently">✗ Not seen</button>
@@ -826,7 +826,7 @@
           <div id="ep-meta-b"></div>
           <button type="button" class="card-more-chip" data-side="1" onclick="toggleCardActions(event,1)" aria-expanded="false" aria-controls="card-actions-1">⋯ More</button>
           <div class="card-actions" id="card-actions-1">
-            <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">🌫 Can't remember</button>
+            <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">🌫 Fuzzy</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,1)" title="About this show">ℹ About</button>
             <a class="card-anilist-link" id="anilist-b" href="#" target="_blank" onclick="event.stopPropagation()">↗ AniList</a>
             <button class="exclude-btn" onclick="excludeAnime(event,1)" title="Remove from ranking pool permanently">✗ Not seen</button>
@@ -1417,7 +1417,7 @@
 
         <div class="help-section">
           <h4>🌫 Fuzzy &amp; ✗ Not Seen</h4>
-          <p><strong>Can't Remember</strong> — can't judge an anime fairly? Mark it fuzzy and it'll appear far less often until you've refreshed your memory.<br>
+          <p><strong>Fuzzy</strong> — can't judge an anime fairly because you don't remember it well? Mark it fuzzy and it'll appear far less often until you've refreshed your memory.<br>
           <strong>Not Seen</strong> — removes the anime from your ranking pool entirely. Re-add it any time from the Excluded section at the bottom of Rankings.</p>
         </div>
 
