@@ -1531,6 +1531,15 @@
     /* TASTE EVOLUTION */
     .evo-timeline { display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
     .evo-arrow { color: var(--border-default); font-size: 1.2rem; padding-top: 32px; flex-shrink: 0; }
+    /* Gap-arrow: shown between non-consecutive snapshots so the user knows
+       intermediate milestones weren't recorded (rather than thinking the
+       timeline is broken). Slightly dimmer + ellipsis. */
+    .evo-arrow.evo-arrow-gap {
+      color: var(--accent-amber, #d29922);
+      font-size: 1rem;
+      letter-spacing: -1px;
+      cursor: help;
+    }
     .evo-card { background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 10px; padding: 12px; min-width: 150px; flex-shrink: 0; }
     .evo-card-current { border-color: var(--accent-blue); }
     .evo-card-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 10px; }

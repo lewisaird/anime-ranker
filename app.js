@@ -3990,6 +3990,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
   saveKey = existingSaveKey;
   battleCount = 0;
   excludedIds = new Set();
+  _clearTasteSnapshots(); // fresh load — discard any leftovers from a prior session
   saveState();
   _clearLoadCancelTimer();
   hide('loading-screen');
@@ -8410,6 +8411,7 @@ async function startLoading() {
     saveKey = existingSaveKey;
     battleCount = 0;
     excludedIds = new Set();
+    _clearTasteSnapshots(); // fresh load — discard any leftovers from a prior session
     saveState();
     // Push initial state to cloud immediately for fresh loads
     if (isOAuthUser) _doCloudSave();
@@ -8534,6 +8536,7 @@ async function startGuestMode() {
     animeList = await fetchGuestPool();
     battleCount = 0;
     excludedIds = new Set();
+    _clearTasteSnapshots(); // fresh guest pool — discard any leftovers from a prior session
     byId(IDS.loadingMsg).textContent =
       `Loaded ${animeList.length} popular anime. Let's go!`;
     await new Promise(r => setTimeout(r, 600));
@@ -11045,10 +11048,21 @@ async function applyMoodRec(moodKey) {
 // ── Taste snapshots (for drift tracking) ────────────────────────────────────
 const TASTE_SNAPSHOT_KEY = 'kessen.data.tasteSnapshots';
 
+// Wipes the global taste-snapshot store. Called from every fresh-load path
+// that resets battleCount to 0 (AniList load, MAL load, guest load, full
+// reset). Without this, snapshots from a prior account or session linger
+// and the timeline shows milestones the new user couldn't possibly have
+// reached. The proper fix would be to scope this key per-saveKey, but for
+// now an explicit clear at every reset surface is the smaller change.
+function _clearTasteSnapshots() {
+  try { localStorage.removeItem(TASTE_SNAPSHOT_KEY); } catch (_e) {}
+}
+
 function _maybeSaveTasteSnapshot() {
   try {
     const snaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
-    // Save a snapshot every 50 battles, keep last 5
+    // Save a snapshot at each 50-battle milestone, keep up to 40 (2000 battles
+    // of history). Each snapshot is ~200 bytes so 40 ≈ 8 KB.
     const milestone = Math.floor(battleCount / 50) * 50;
     if (milestone < 50) return;
     if (snaps.some(s => s.battleCount === milestone)) return;
@@ -11066,23 +11080,34 @@ function _maybeSaveTasteSnapshot() {
       if (v.count >= 3) genreAvgs[g] = Math.round(v.sum / v.count);
     });
 
+    // Self-healing: if the most recent saved snapshot is more than one
+    // milestone behind the current one, mark this one as having a gap so the
+    // renderer can show the user "you missed some snapshots between here and
+    // the previous entry." This happens when the user wasn't on this version
+    // of the app for some battles, ran tower-only sessions (which don't bump
+    // battleCount), restored from cloud, etc.
+    const lastSaved = snaps.length ? snaps[snaps.length - 1].battleCount : 0;
+    const gappedFromPrev = lastSaved > 0 && (milestone - lastSaved) > 50;
+
     snaps.push({
       battleCount: milestone,
       timestamp: new Date().toISOString(),
       genreAvgs,
       top10: [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 10).map(a => a.id),
+      gapBefore: gappedFromPrev || undefined,
     });
-    // Keep up to 40 snapshots — covers 2000 battles at 50-battle intervals.
-    // Each snapshot is ~200 bytes, so 40 ≈ 8 KB, well within localStorage limits.
     if (snaps.length > 40) snaps.splice(0, snaps.length - 40);
     localStorage.setItem(TASTE_SNAPSHOT_KEY, JSON.stringify(snaps));
-  } catch { /* storage full — skip */ }
+  } catch { /* storage full / corrupt — skip */ }
 }
 
 function _paintTasteDrift(el) {
   if (!el) return;
   try {
-    const snaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    // Same stale-filter as _paintTasteEvolution — drop snapshots from a prior
+    // account/reset whose battle count is ahead of ours.
+    const rawSnaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    const snaps    = rawSnaps.filter(s => (s.battleCount || 0) <= battleCount);
     if (snaps.length < 2) {
       const needed = Math.max(0, 50 - battleCount);
       el.innerHTML = needed > 0
@@ -11150,7 +11175,19 @@ function _paintTasteDrift(el) {
 function _paintTasteEvolution(el) {
   if (!el) return;
   try {
-    const allSnaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    // Filter out any snapshots whose battle count is ahead of the user's
+    // current count. Those are leftovers from a prior account / reset path
+    // (TASTE_SNAPSHOT_KEY is a global localStorage entry, not per-user, so it
+    // leaks across guest switches, fresh-loads, etc). Showing them produces
+    // the "Battle 200" cards for a user who only has 113 battles bug.
+    const rawSnaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    const allSnaps = rawSnaps.filter(s => (s.battleCount || 0) <= battleCount);
+    // If we discarded any, persist the cleaned list so the renderer doesn't
+    // re-filter on every paint and the next snapshot save starts from a
+    // clean baseline.
+    if (allSnaps.length !== rawSnaps.length) {
+      localStorage.setItem(TASTE_SNAPSHOT_KEY, JSON.stringify(allSnaps));
+    }
     if (!allSnaps.length) {
       const needed = Math.max(0, 50 - battleCount);
       el.innerHTML = `<p class="taste-drift-placeholder">${
@@ -11183,6 +11220,20 @@ function _paintTasteEvolution(el) {
       points.push(allPoints[allPoints.length - 1]);
     }
 
+    // Detect gaps in the milestone sequence (saved snapshots more than 50
+    // battles apart, or marked gapBefore). Used to render a subtle indicator
+    // between cards so the user understands why some milestones are missing
+    // rather than thinking the timeline is broken.
+    const isGap = (snap, prev) => {
+      if (!prev) return false;
+      if (snap.gapBefore) return true;
+      // For points coming from the in-memory subsample we may not have the
+      // gapBefore flag — fall back to comparing battle counts directly.
+      const a = prev.battleCount || 0;
+      const b = snap.isCurrent ? battleCount : (snap.battleCount || 0);
+      return (b - a) > 75; // > 50 + small slack for the trio +3 jump
+    };
+
     const cards = points.map((snap, i) => {
       const prevSet = new Set(i > 0 ? points[i - 1].top10 : []);
       const top5    = snap.top10.slice(0, 5);
@@ -11203,12 +11254,21 @@ function _paintTasteEvolution(el) {
       </div>`;
     });
 
+    // Build the timeline with gap-aware connectors between cards.
+    const timeline = cards.map((card, i) => {
+      if (i === 0) return card;
+      const arrow = isGap(points[i], points[i - 1])
+        ? `<div class="evo-arrow evo-arrow-gap" title="Some milestones between these snapshots weren't recorded">⋯→</div>`
+        : `<div class="evo-arrow">→</div>`;
+      return arrow + card;
+    }).join('');
+
     const totalSnaps = allSnaps.length;
     const note = totalSnaps > MAX_DISPLAY - 1
       ? `<p class="taste-drift-placeholder" style="margin-top:10px">Showing ${points.length} of ${totalSnaps + 1} snapshots — evenly spread across your ${battleCount} battles.</p>`
       : '';
 
-    el.innerHTML = `<div class="evo-timeline">${cards.join('<div class="evo-arrow">→</div>')}</div>${note}`;
+    el.innerHTML = `<div class="evo-timeline">${timeline}</div>${note}`;
   } catch {
     el.innerHTML = '';
   }
@@ -13096,8 +13156,11 @@ document.addEventListener('keydown', e => {
   switch (e.key) {
     case 'ArrowLeft':  e.preventDefault(); pickWinner(0); break;
     case 'ArrowRight': e.preventDefault(); pickWinner(1); break;
-    case 's': case 'S': skipBattle(); break;
-    case 'u': case 'U': undoLast(); break;
+    // Mirror the visible UI: if the on-screen Skip / Undo buttons are
+    // disabled (e.g. during a tower run), the keyboard shortcut must be too,
+    // otherwise users can bypass the constraint and corrupt run integrity.
+    case 's': case 'S': if (!byId(IDS.skipBtn)?.disabled) skipBattle(); break;
+    case 'u': case 'U': if (!byId(IDS.undoBtn)?.disabled) undoLast();   break;
   }
 });
 
