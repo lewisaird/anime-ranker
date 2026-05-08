@@ -3776,6 +3776,17 @@ async function deleteAllData() {
   );
   if (!ok) return;
 
+  // Cancel any pending debounced cloud save and block all future ones for
+  // the rest of this function. Without this guard, a battle finished within
+  // the last ~5s before the user clicked Delete will fire its debounced
+  // save AFTER our wipe marker is written, overwriting the wipe with the
+  // pre-deletion session — which is exactly the "Newer cloud save found"
+  // surprise we hit during beta testing. _suppressCloudSave is reset by
+  // _applyCloudSaveToMemory the next time the user logs in.
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = null;
+  _suppressCloudSave = true;
+
   // 1. Replace the cloud save with a wipe marker — do NOT delete the blob.
   //    Leaving the marker means other devices will see it on next login and
   //    clear themselves. It will be overwritten naturally when the user next saves.
@@ -8737,20 +8748,23 @@ function checkMilestone(before, after) {
 // ─── TASTE STORY ("WRAPPED" EXPERIENCE) ──────────────────────────────────────
 
 const _TASTE_ARCHETYPES = {
-  'Psychological': ['Read the Wiki After Every Episode', 'The 4D Chess Enjoyer'],
-  'Drama':         ['Onion Ninja Survivor',     'Cried at Episode 5'],
-  'Action':        ['Sakuga Connoisseur',       'AOTY Every Season'],
-  'Comedy':        ['Laughed During the Sad Part', 'Reaction Face Collector'],
-  'Sci-Fi':        ['The Infodump Appreciator',  'The Hard Sci-Fi Purist'],
-  'Fantasy':       ['Isekai Truck Survivor',    'Reincarnated With Great Taste'],
-  'Romance':       ['Just Confess Already',     'The Slow Burn Masochist'],
-  'Horror':        ['Watches Alone at 3am',     'Unfazed by the Gore'],
-  'Slice of Life': ['Iyashikei Devotee',        'Tea and Existential Dread'],
-  'Sports':        ['Cried at the Training Arc','Peak Fiction Finder'],
-  'Mystery':       ['Paused at Every Frame',    'The Theory Poster'],
-  'Supernatural':  ['Ayakashi Whisperer',       'Spirit World Citizen'],
-  'Mecha':         ['Get in the Robot',         'Unit 01 Apologist'],
-  'Shounen':       ['Power of Friendship Believer', 'Never Skips the Training Arc'],
+  'Psychological': ['Read the Wiki After Every Episode', 'The 4D Chess Enjoyer',     'Has Bookmarked the Timeline'],
+  'Drama':         ['Onion Ninja Survivor',              'Cried at Episode 5',       'Cries on Schedule'],
+  'Action':        ['Sakuga Connoisseur',                'AOTY Every Season',        'Slows It to 0.25x'],
+  'Comedy':        ['Laughed During the Sad Part',       'Reaction Face Collector',  "Is the Group Chat's Anime Person"],
+  'Sci-Fi':        ['The Infodump Appreciator',          'The Hard Sci-Fi Purist',   'Time Loop Apologist'],
+  'Fantasy':       ['Isekai Truck Survivor',             'Reincarnated With Great Taste', 'World-Building Connoisseur'],
+  'Romance':       ['Just Confess Already',              'The Slow Burn Masochist',  'Shipper Strategist'],
+  'Horror':        ['Watches Alone at 3am',              'Unfazed by the Gore',      'Sleeps With the Light On'],
+  'Slice of Life': ['Cosy Anime Specialist',             'Tea and Existential Dread', 'Rewatches When Sad'],
+  'Sports':        ['Cried at the Training Arc',         'Peak Fiction Finder',      'Believes the Coach Speech'],
+  'Mystery':       ['Paused at Every Frame',             'The Theory Poster',        'Solved It Before the Detective'],
+  'Supernatural':  ['Yokai Whisperer',                   'Spirit World Citizen',     'Talks to the Foxes'],
+  'Mecha':         ['Get in the Robot',                  'Unit 01 Apologist',        'Gundam Lore Encyclopaedia'],
+  'Shounen':       ['Power of Friendship Believer',      'Never Skips the Training Arc', 'Has a Take on the Tournament Arc'],
+  'Adventure':     ['Plots the Route Mid-Episode',       'Always One Town Over',     'Born Adventurer'],
+  'Thriller':      ['Plot Twist Connoisseur',            'Trust No Character',       'Suspects the Quiet One'],
+  'Mahou Shoujo':  ['Transformation Sequence Devotee',   'Says the Transformation Phrase Out Loud', 'Cried at Sailor Moon'],
 };
 
 const _ERA_NICKNAMES = {
