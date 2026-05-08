@@ -3787,16 +3787,33 @@ async function deleteAllData() {
   _cloudSaveTimer = null;
   _suppressCloudSave = true;
 
-  // 1. Replace the cloud save with a wipe marker — do NOT delete the blob.
-  //    Leaving the marker means other devices will see it on next login and
-  //    clear themselves. It will be overwritten naturally when the user next saves.
+  // 1. Tear down the cloud save belt-and-braces:
+  //    (a) HARD-DELETE the blob via /delete-session so even if a subsequent
+  //        write somehow races us, there's nothing to find on the next load.
+  //    (b) Then write a wipe marker via /save-session so other devices
+  //        syncing this account see _wiped: true and clear their local
+  //        copy too. (Step (b) recreates the blob with the marker in it.)
+  //
+  //    Earlier versions only did (b). When that single write was overwritten
+  //    by anything (in-flight debounce, multi-device race, transient retry),
+  //    the user's old session reappeared on next login. Doing both means
+  //    the blob is either the marker, or absent — both cases short-circuit
+  //    checkAndApplyCloudSave and no prompt is shown.
   let cloudDeleteOk = true;
   try {
     const body = authToken
       ? { token: authToken }
       : { malToken: malAuthToken, malUserId: malAuthUser?.id };
     if (body.token || body.malToken) {
-      const resp = await fetch('/.netlify/functions/save-session', {
+      // (a) Hard-delete the blob first
+      const delResp = await fetch('/.netlify/functions/delete-session', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      if (!delResp.ok) cloudDeleteOk = false;
+      // (b) Write the wipe marker so multi-device sync still sees the wipe
+      const wipeResp = await fetch('/.netlify/functions/save-session', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -3804,7 +3821,7 @@ async function deleteAllData() {
           session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }),
         }),
       });
-      if (!resp.ok) cloudDeleteOk = false;
+      if (!wipeResp.ok) cloudDeleteOk = false;
     }
   } catch { cloudDeleteOk = false; }
 
