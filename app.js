@@ -3768,6 +3768,78 @@ function resetAll() {
   );
 }
 
+// Tears down the cloud session for the currently-authenticated user.
+// Returns { ok, reason } where reason is one of:
+//   'success'         — both writes landed and verified clean
+//   'not-signed-in'   — guest mode, no cloud blob to touch
+//   'verify-failed'   — writes succeeded but read-back still showed non-wipe
+//                       data (a stale autosync from another device raced us);
+//                       we retry once internally, this is reported only if
+//                       the retry also failed verification
+//   'http-XXX' / err  — the underlying fetch threw or returned non-2xx
+//
+// The function is intentionally chatty about failure modes so the toast in
+// deleteAllData can tell the user *why* their cloud data wasn't wiped if
+// something went wrong, instead of falsely claiming success.
+async function _wipeCloudSession() {
+  const body = authToken
+    ? { token: authToken }
+    : (malAuthToken
+        ? { malToken: malAuthToken, malUserId: malAuthUser?.id }
+        : null);
+  if (!body) return { ok: false, reason: 'not-signed-in' };
+
+  const headers = { 'Content-Type': 'application/json' };
+  const wipeBody = () => JSON.stringify({
+    ...body,
+    session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }),
+  });
+
+  // (a) Hard-delete the blob
+  let firstError = '';
+  try {
+    const r = await fetch('/.netlify/functions/delete-session', {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    if (!r.ok) firstError = 'http-' + r.status + '@delete';
+  } catch (e) { firstError = (e && e.message) || 'delete-failed'; }
+
+  // (b) Write the wipe marker
+  try {
+    const r = await fetch('/.netlify/functions/save-session', {
+      method: 'POST', headers, body: wipeBody(),
+    });
+    if (!r.ok) firstError = firstError || ('http-' + r.status + '@save');
+  } catch (e) { firstError = firstError || ((e && e.message) || 'save-failed'); }
+
+  // (c) Verify by reading back. If a stale write raced us, retry the marker.
+  try {
+    const r = await fetch('/.netlify/functions/load-session', {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      const { session } = await r.json();
+      if (session && !session._wiped && session.animeList) {
+        // Stale write present — retry the wipe and re-verify
+        await fetch('/.netlify/functions/save-session', {
+          method: 'POST', headers, body: wipeBody(),
+        });
+        const r2 = await fetch('/.netlify/functions/load-session', {
+          method: 'POST', headers, body: JSON.stringify(body),
+        });
+        if (r2.ok) {
+          const { session: s2 } = await r2.json();
+          if (s2 && !s2._wiped && s2.animeList) {
+            return { ok: false, reason: 'verify-failed' };
+          }
+        }
+      }
+    }
+  } catch (_e) { /* verification is best-effort — fall through */ }
+
+  return { ok: !firstError, reason: firstError || 'success' };
+}
+
 async function deleteAllData() {
   const ok = await _confirmAsync(
     '🗑️ Delete all my data?',
@@ -3787,43 +3859,19 @@ async function deleteAllData() {
   _cloudSaveTimer = null;
   _suppressCloudSave = true;
 
-  // 1. Tear down the cloud save belt-and-braces:
-  //    (a) HARD-DELETE the blob via /delete-session so even if a subsequent
-  //        write somehow races us, there's nothing to find on the next load.
-  //    (b) Then write a wipe marker via /save-session so other devices
-  //        syncing this account see _wiped: true and clear their local
-  //        copy too. (Step (b) recreates the blob with the marker in it.)
+  // 1. Tear down the cloud save with verification:
+  //    (a) HARD-DELETE the blob via /delete-session
+  //    (b) Write a wipe marker via /save-session so multi-device sync sees it
+  //    (c) Read back via /load-session — if the blob still contains a non-wipe
+  //        session, something raced us (e.g. a Firebase autosync write from
+  //        another device). Retry the wipe once.
   //
-  //    Earlier versions only did (b). When that single write was overwritten
-  //    by anything (in-flight debounce, multi-device race, transient retry),
-  //    the user's old session reappeared on next login. Doing both means
-  //    the blob is either the marker, or absent — both cases short-circuit
-  //    checkAndApplyCloudSave and no prompt is shown.
-  let cloudDeleteOk = true;
-  try {
-    const body = authToken
-      ? { token: authToken }
-      : { malToken: malAuthToken, malUserId: malAuthUser?.id };
-    if (body.token || body.malToken) {
-      // (a) Hard-delete the blob first
-      const delResp = await fetch('/.netlify/functions/delete-session', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      });
-      if (!delResp.ok) cloudDeleteOk = false;
-      // (b) Write the wipe marker so multi-device sync still sees the wipe
-      const wipeResp = await fetch('/.netlify/functions/save-session', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          ...body,
-          session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }),
-        }),
-      });
-      if (!wipeResp.ok) cloudDeleteOk = false;
-    }
-  } catch { cloudDeleteOk = false; }
+  //    Returns one of three reasons we surface in the toast: 'success',
+  //    'not-signed-in' (user was in guest mode — cloud wasn't ours to wipe),
+  //    or a short HTTP/network error string so the user can report it
+  //    accurately rather than seeing a misleading "deleted ✓" message.
+  const cloudResult = await _wipeCloudSession();
+  const cloudDeleteOk = cloudResult.ok;
 
   // 2. Remove every Kessen key from localStorage. Covers the consolidated
   //    `kessen.*` namespace (§6.2.17) plus legacy `anime_elo_*` and `kessen_*`
@@ -3847,9 +3895,13 @@ async function deleteAllData() {
   _clearRankingState();
 
   if (cloudDeleteOk) {
-    showToast('✓ All your data has been deleted.');
+    showToast('✓ All your data has been deleted (local + cloud).');
+  } else if (cloudResult.reason === 'not-signed-in') {
+    showToast("⚠️ Local data cleared. You weren't signed in, so nothing to delete from cloud.", 6000);
+  } else if (cloudResult.reason === 'verify-failed') {
+    showToast('⚠️ Local data cleared, but the cloud copy keeps coming back — another device may be re-uploading. Sign out everywhere and try again.', 8000);
   } else {
-    showToast('⚠️ Local data cleared, but cloud data could not be deleted. Log back in and try again, or email feedback@kessen.co.uk.', 6000);
+    showToast(`⚠️ Local data cleared, but cloud delete failed (${cloudResult.reason}). Log back in and try again, or email feedback@kessen.co.uk.`, 6000);
   }
 }
 
