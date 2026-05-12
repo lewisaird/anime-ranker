@@ -13555,10 +13555,43 @@ function _eloToScore10(rank0, total) {
   return 1;
 }
 
-function _formatScoreForAniList(score10, format) {
+// Anchors mirror the bucket cutoffs in _eloToScore10 exactly: (percentile, score).
+// Used by _eloToFineScore10 to interpolate linearly between buckets for the
+// scoring formats that support sub-integer precision (POINT_100, POINT_10_DECIMAL).
+// Integer formats still use the bucket logic in _eloToScore10 so the user's
+// existing 1/2/3/.../10 distribution doesn't change for them.
+const _SCORE_ANCHORS = [
+  [0.00, 1], [0.02, 2], [0.04, 3], [0.08, 4], [0.15, 5],
+  [0.30, 6], [0.50, 7], [0.70, 8], [0.85, 9], [0.95, 10], [1.00, 10],
+];
+
+function _eloToFineScore10(rank0, total) {
+  const pct = 1 - (rank0 / Math.max(total, 1));
+  for (let i = 0; i < _SCORE_ANCHORS.length - 1; i++) {
+    const [pLo, sLo] = _SCORE_ANCHORS[i];
+    const [pHi, sHi] = _SCORE_ANCHORS[i + 1];
+    if (pct < pHi) {
+      const t = (pct - pLo) / (pHi - pLo);
+      return sLo + t * (sHi - sLo);
+    }
+  }
+  return 10;
+}
+
+function _formatScoreForAniList(score10, format, rank0, total) {
   switch (format) {
-    case 'POINT_100':       return score10 * 10;
-    case 'POINT_10_DECIMAL':return score10;
+    case 'POINT_100': {
+      // Map continuously to 1-100 instead of multiples of 10. A user with 200
+      // ranked anime gets ~200 distinct values instead of 10 (rank0/total are
+      // passed in because score10 alone has already been quantised).
+      const fine = _eloToFineScore10(rank0, total);
+      return Math.max(1, Math.min(100, Math.round(fine * 10)));
+    }
+    case 'POINT_10_DECIMAL': {
+      // 1.0-10.0 in 0.1 steps.
+      const fine = _eloToFineScore10(rank0, total);
+      return Math.round(Math.max(1, Math.min(10, fine)) * 10) / 10;
+    }
     case 'POINT_10':        return score10;
     case 'POINT_5':         return Math.max(1, Math.round(score10 / 2));
     case 'POINT_3':         return score10 >= 8 ? 3 : score10 >= 5 ? 2 : 1;
@@ -13589,7 +13622,7 @@ function openSyncModal() {
     .filter(a => !excludedIds.has(a.id) && a.id && Number.isFinite(a.id))
     .map((a, i) => {
       const score10 = _eloToScore10(i, total);
-      return { mediaId: a.id, title: a.title, cover: a.cover, score10, apiScore: _formatScoreForAniList(score10, format) };
+      return { mediaId: a.id, title: a.title, cover: a.cover, score10, apiScore: _formatScoreForAniList(score10, format, i, total) };
     });
 
   // Format labels
