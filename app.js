@@ -8874,6 +8874,54 @@ const _STUDIO_QUIPS = {
   'CloverWorks':     "You ride the hype. Sometimes it pays off.",
 };
 
+// AniList sometimes lists the same studio under multiple distinct names —
+// "Bones" produces most MHA seasons but the Vigilantes spinoff is credited
+// to "bones film", so without canonicalisation the user sees two separate
+// studio buckets in Studio Affinity and the Wrapped studio-loyalty insight.
+// Map alternate names to the canonical display name. Lookup is case-
+// insensitive via the lower-keyed clone below.
+const _STUDIO_ALIASES = Object.freeze({
+  'bones film':                'Bones',
+  'Bones Inc.':                'Bones',
+  'BONES':                     'Bones',
+  'MAPPA':                     'MAPPA',
+  'Mappa':                     'MAPPA',
+  'Wit Studio':                'Wit Studio',
+  'WIT STUDIO':                'Wit Studio',
+  'TRIGGER':                   'TRIGGER',
+  'Trigger':                   'TRIGGER',
+  'Studio Trigger':            'TRIGGER',
+  'ufotable':                  'ufotable',
+  'Ufotable':                  'ufotable',
+  'UFOTABLE':                  'ufotable',
+  'Kyoto Animation':           'Kyoto Animation',
+  'KyoAni':                    'Kyoto Animation',
+  'Madhouse':                  'Madhouse',
+  'Studio Madhouse':           'Madhouse',
+  'Madhouse Inc.':             'Madhouse',
+  'Sunrise':                   'Sunrise',
+  'Sunrise Inc.':              'Sunrise',
+  'Bandai Namco Pictures':     'Bandai Namco Pictures',
+  'Bandai Namco':              'Bandai Namco Pictures',
+  'Production I.G':            'Production I.G',
+  'Production IG':             'Production I.G',
+  'A-1 Pictures':              'A-1 Pictures',
+  'A1 Pictures':               'A-1 Pictures',
+  'Toei Animation':            'Toei Animation',
+  'Toei Animation Co., Ltd.':  'Toei Animation',
+  'P.A. Works':                'P.A. Works',
+  'P.A.Works':                 'P.A. Works',
+  'P.A. WORKS':                'P.A. Works',
+  'PA Works':                  'P.A. Works',
+});
+const _STUDIO_ALIASES_LOWER = Object.freeze(
+  Object.fromEntries(Object.entries(_STUDIO_ALIASES).map(([k, v]) => [k.toLowerCase(), v]))
+);
+function _canonicalStudio(name) {
+  if (!name) return name;
+  return _STUDIO_ALIASES_LOWER[name.toLowerCase()] || name;
+}
+
 function _computeTasteInsights(battleMilestone) {
   const sorted    = [...animeList].sort((a, b) => b.elo - a.elo);
   const battled   = sorted.filter(a => (a.battles || 0) > 0);
@@ -8981,7 +9029,8 @@ function _computeTasteInsights(battleMilestone) {
   const hasStudios  = top10.some(a => Array.isArray(a.studios) && a.studios.length);
   if (hasStudios) {
     const studioCount = {};
-    top10.forEach(a => (a.studios || []).forEach(s => {
+    top10.forEach(a => (a.studios || []).forEach(rawS => {
+      const s = _canonicalStudio(rawS);
       studioCount[s] = (studioCount[s] || 0) + 1;
     }));
     const topStudio = Object.entries(studioCount).sort((a, b) => b[1] - a[1])[0];
@@ -10354,7 +10403,8 @@ function renderStudioAffinity() {
   const overallAvg = Math.round(animeList.reduce((s, a) => s + a.elo, 0) / animeList.length);
   const studioMap = {};
   animeList.forEach(a => {
-    (a.studios || []).forEach(s => {
+    (a.studios || []).forEach(rawS => {
+      const s = _canonicalStudio(rawS);
       if (!studioMap[s]) studioMap[s] = { sum: 0, count: 0 };
       studioMap[s].sum += a.elo;
       studioMap[s].count++;
@@ -10671,8 +10721,9 @@ function computeTasteProfile() {
   // ── Studios ───────────────────────────────────────────────────────────────
   const studioMap = new Map();
   list.forEach(a => {
-    (a.studios || []).forEach(s => {
-      if (!s) return;
+    (a.studios || []).forEach(rawS => {
+      if (!rawS) return;
+      const s = _canonicalStudio(rawS);
       let bucket = studioMap.get(s);
       if (!bucket) { bucket = { sum: 0, count: 0 }; studioMap.set(s, bucket); }
       bucket.sum   += a.elo;
