@@ -6290,6 +6290,15 @@ function _lcReveal() {
     btn.style.display  = '';
     btn.textContent    = isLast ? 'See Results →' : 'Next →';
     byId(IDS.lcWaitingNext).style.display = 'none';
+    // Auto-advance after a beat so the reveal has time to register without
+    // requiring an extra tap. The Next button stays visible as a "skip ahead"
+    // override. Mirrors the multi-device Watch Together pattern but slightly
+    // longer because LC's reveal has more info (pick + prediction + points).
+    if (_lc._autoNextTimer) clearTimeout(_lc._autoNextTimer);
+    _lc._autoNextTimer = setTimeout(() => {
+      if (_lc) _lc._autoNextTimer = null;
+      liveChallengeNext();
+    }, 3500);
   } else {
     byId(IDS.lcNextBtn).style.display     = 'none';
     byId(IDS.lcWaitingNext).style.display = '';
@@ -6298,6 +6307,7 @@ function _lcReveal() {
 
 function liveChallengeNext() {
   if (!_lc?.firebaseRef || _lc.mode !== 'host') return;
+  if (_lc._autoNextTimer) { clearTimeout(_lc._autoNextTimer); _lc._autoNextTimer = null; }
   const next = _lc.currentPair + 1;
   if (next >= _lc.pairs.length) {
     _lc.firebaseRef.update({ phase: 'results' });
@@ -6462,6 +6472,7 @@ function _lcLoadHistory() {
 // Host only triggers rematch; guest is taken back to lobby to wait.
 async function liveChallengeRematch() {
   if (!_lc?.firebaseRef || _lc.mode !== 'host') return;
+  if (_lc._autoNextTimer) { clearTimeout(_lc._autoNextTimer); _lc._autoNextTimer = null; }
 
   // Re-read both players' rank maps from Firebase (they may have updated)
   const snap = await _lc.firebaseRef.child('players').once('value');
@@ -6520,6 +6531,7 @@ async function liveChallengeRematch() {
 function closeLiveChallengeModal() {
   _lcClearDeepLink();
   byId(IDS.lcModal).style.display = 'none';
+  if (_lc?._autoNextTimer) { clearTimeout(_lc._autoNextTimer); _lc._autoNextTimer = null; }
   if (_lc?.unsubscribe) _lc.unsubscribe();
   if (_lc?.firebaseRef) _lc.firebaseRef.off();
   _lc = null;
@@ -6684,10 +6696,17 @@ function openCollabMode() {
   _collabCheckRejoinBanner();
 }
 
+// Two close paths, mirroring the Live Challenge pattern:
+// - closeCollabModal()       — dismiss UI but KEEP sessionStorage so the user
+//                              can rejoin a still-running multi-device session.
+//                              Wired to the ✕ close button and hardware back.
+// - closeCollabModalFinal()  — game is genuinely done; wipe sessionStorage so
+//                              we don't offer rejoin to a finished session.
+//                              Wired to "Done" on the results panel.
 function closeCollabModal() {
+  if (_collab?._autoNextTimer) { clearTimeout(_collab._autoNextTimer); _collab._autoNextTimer = null; }
   if (_collab?.presenceUnsub) _collab.presenceUnsub();
   if (_collab?.unsubscribe)   _collab.unsubscribe();
-  _collabClearSession(); // session ended intentionally — don't offer rejoin
   byId(IDS.collabModal).style.display = 'none';
   _collab = null;
   popModalBack('collab');
@@ -6695,6 +6714,12 @@ function closeCollabModal() {
   // detached. Safe to call even if it was never running — _startFirebaseSync
   // is idempotent and short-circuits if cloud sync isn't enabled.
   _startFirebaseSync();
+}
+
+// Called from the "Done" button on the results panel — game is done, no rejoin needed.
+function closeCollabModalFinal() {
+  _collabClearSession();
+  closeCollabModal();
 }
 
 // ── PRESENCE ──────────────────────────────────────────────────────────────────
@@ -7807,6 +7832,15 @@ function _collabRevealVotes() {
     byId(IDS.collabVoteNextBtn).style.display = 'block';
   }
   byId(IDS.collabVoteReveal).style.display = 'block';
+
+  // Auto-advance after the reveal — matches the 2.8s timer used by the
+  // multi-device flow at _collabAdvanceFromReveal. Next button stays visible
+  // as a "skip ahead" override.
+  if (_collab._autoNextTimer) clearTimeout(_collab._autoNextTimer);
+  _collab._autoNextTimer = setTimeout(() => {
+    if (_collab) _collab._autoNextTimer = null;
+    collabNextPair();
+  }, 2800);
 }
 
 function collabTiebreaker() {
@@ -7818,6 +7852,8 @@ function collabTiebreaker() {
 }
 
 function collabNextPair() {
+  if (!_collab) return; // belt+braces — auto-advance timer can fire after close
+  if (_collab._autoNextTimer) { clearTimeout(_collab._autoNextTimer); _collab._autoNextTimer = null; }
   _collab.currentPair++;
   byId(IDS.collabVoteNextBtn).style.display = 'none';
   document.getElementById('collab-tiebreak-btn').style.display = 'none';
