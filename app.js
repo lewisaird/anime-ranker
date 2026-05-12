@@ -7333,15 +7333,35 @@ function _collabSyncFromFirebase(data) {
 
   if (data.phase === 'results') {
     _collab.battles = data.results || [];
-    // Rebuild pool from player nominations if not set
+    // Rebuild pool from Firebase — guest never gets _collab.pool from any
+    // write path (host sets it locally only). Use pairs as the canonical
+    // source since it's written for both flows ("This Season" + "Nominate")
+    // and is guaranteed to exist by results phase. Each pair's a/b are full
+    // show objects with title + cover, so we just dedupe by title.
+    // Previously rebuilt from player nominations only — broke "This Season"
+    // because there are no per-player nominations in that flow, so the pool
+    // stayed empty and the results list rendered blank on guests.
     if (!_collab.pool?.length) {
       const seen = new Set();
       _collab.pool = [];
-      Object.values(data.players || {}).forEach(p => {
-        (p.nominations || []).forEach(n => {
-          if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); _collab.pool.push(n); }
+      (data.pairs || []).forEach(p => {
+        [p.a, p.b].forEach(show => {
+          if (show?.title && !seen.has(show.title.toLowerCase())) {
+            seen.add(show.title.toLowerCase());
+            _collab.pool.push(show);
+          }
         });
       });
+      // Belt-and-braces: if pairs somehow doesn't yield a pool (shouldn't
+      // happen at results phase, but a corrupted session could), fall back
+      // to player nominations.
+      if (!_collab.pool.length) {
+        Object.values(data.players || {}).forEach(p => {
+          (p.nominations || []).forEach(n => {
+            if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); _collab.pool.push(n); }
+          });
+        });
+      }
     }
     _collabPanel(IDS.collabPanelResults);
     _collabRenderResults();

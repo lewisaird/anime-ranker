@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.97" />
+  <meta name="version" content="1.0.100" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -202,6 +202,20 @@
     <!-- Mode selection -->
     <div id="collab-panel-mode">
       <h3 style="margin:0 0 6px">🤝 Watch Together</h3>
+      <!-- Rejoin banner — shown only when sessionStorage has an active session.
+           Placed at the top of the panel (matching Live Challenge) so it's
+           the first thing a returning user sees. -->
+      <div id="collab-rejoin-banner" style="display:none;margin-bottom:14px">
+        <div class="collab-rejoin-box">
+          <span class="collab-rejoin-icon">🔌</span>
+          <div class="collab-rejoin-text">
+            <strong>Looks like you got disconnected</strong>
+            <span id="collab-rejoin-desc"></span>
+          </div>
+          <button class="btn-primary collab-rejoin-btn" onclick="collabRejoinSession()">Rejoin</button>
+        </div>
+        <button class="collab-rejoin-dismiss" onclick="collabDismissRejoin()">Start fresh instead</button>
+      </div>
       <p style="font-size:0.82rem;color:#8b949e;margin:0 0 24px">Nominate shows, battle them head-to-head, and let the votes decide what you watch.</p>
       <div class="collab-mode-btns">
         <button class="collab-mode-btn" onclick="collabChooseMode('single')">
@@ -218,18 +232,6 @@
       <p id="collab-multi-note" style="font-size:0.75rem;color:#8b949e;margin-top:12px;text-align:center;display:none">
         Multi-device requires Firebase — see app.js to configure.
       </p>
-      <!-- Rejoin banner — shown only when sessionStorage has an active session -->
-      <div id="collab-rejoin-banner" style="display:none;margin-top:14px">
-        <div class="collab-rejoin-box">
-          <span class="collab-rejoin-icon">🔌</span>
-          <div class="collab-rejoin-text">
-            <strong>Looks like you got disconnected</strong>
-            <span id="collab-rejoin-desc"></span>
-          </div>
-          <button class="btn-primary collab-rejoin-btn" onclick="collabRejoinSession()">Rejoin</button>
-        </div>
-        <button class="collab-rejoin-dismiss" onclick="collabDismissRejoin()">Start fresh instead</button>
-      </div>
     </div>
 
     <!-- Single device: player names -->

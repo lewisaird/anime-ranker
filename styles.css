@@ -3154,62 +3154,6 @@
         box-shadow: 0 12px 28px rgba(88,166,255,0.22);
       }
     }
-    /* Mobile: stack vote cards vertically (Watch Together + Live Challenge +
-       async Challenge Mode all use .challenge-pair) to match the main battle.
-       Each card uses a 2×2 grid so the image spans both rows on the left and
-       title+meta stack to its right — without this, the .challenge-card's
-       child siblings (img + title + meta with no wrapper) would all become
-       row items and make the card too tall and oddly shaped. Compact
-       70×98 cover so the reveal text + Next button stay above the fold. */
-    @media (max-width: 600px) {
-      .challenge-pair {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-      }
-      .challenge-vs {
-        /* width:100% (not auto) so the flex container spans the column —
-           without an explicit width, display:flex + content-only would
-           collapse to "VS" text width and justify-content:center couldn't
-           push the text away from the left edge. */
-        width: 100%; height: auto;
-        padding: 4px 0;
-        font-size: 0.85rem;
-      }
-      .challenge-card {
-        display: grid;
-        grid-template-columns: 70px 1fr;
-        grid-template-rows: auto auto;
-        align-items: center;
-        column-gap: 12px;
-        row-gap: 2px;
-        padding: 10px 12px;
-        text-align: left;
-        min-height: 0;
-        gap: 2px 12px;
-      }
-      .challenge-card img {
-        grid-row: 1 / span 2;
-        width: 70px; height: 98px;
-        border-radius: 6px;
-      }
-      .challenge-card .challenge-card-title {
-        grid-column: 2;
-        align-self: end;
-        font-size: 0.92rem;
-        text-align: left;
-        line-height: 1.25;
-      }
-      .challenge-card-meta {
-        grid-column: 2;
-        align-self: start;
-        justify-content: flex-start;
-      }
-      /* Watch Together's polish overrides — adapt for the compact row layout */
-      .collab-vote-card { min-height: 0; padding: 10px 12px; gap: 2px 12px; box-shadow: none; }
-      .collab-vote-card img { width: 70px; height: 98px; box-shadow: none; }
-      .collab-vote-card .challenge-card-title { font-size: 0.92rem; }
-    }
     /* "VS" separator made slightly more subtle so the cards lead the eye. */
     .challenge-pair:has(.collab-vote-card) .challenge-vs {
       opacity: 0.55;
@@ -3329,6 +3273,71 @@
     .challenge-card.challenge-card-unchosen {
       opacity: 0.35;
     }
+
+    /* Mobile: stack vote cards vertically (Watch Together + Live Challenge +
+       async Challenge Mode all use .challenge-pair) to match the main battle.
+       Each card uses a 2×2 grid so the image spans both rows on the left and
+       title+meta stack to its right — without this, the .challenge-card's
+       child siblings (img + title + meta with no wrapper) would all become
+       row items and make the card too tall and oddly shaped. Compact 70×98
+       cover so the reveal text + Next button stay above the fold.
+
+       MUST stay AFTER the desktop .challenge-* rules so the cascade resolves
+       in favour of the mobile declarations — they have the same specificity
+       so source order decides the winner, and @media doesn't bump specificity.
+       (v1.0.95 placed this block before the desktop rules and the desktop
+       declarations silently won, leaving the cards in column layout and the
+       VS divider stuck at 28px wide on phones — fixed in v1.0.100.) */
+    @media (max-width: 600px) {
+      .challenge-pair {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .challenge-vs {
+        /* width:100% (not auto) so the flex container spans the column —
+           without an explicit width, display:flex + content-only would
+           collapse to "VS" text width and justify-content:center couldn't
+           push the text away from the left edge. */
+        width: 100%; height: auto;
+        padding: 4px 0;
+        font-size: 0.85rem;
+      }
+      .challenge-card {
+        display: grid;
+        grid-template-columns: 70px 1fr;
+        grid-template-rows: auto auto;
+        align-items: center;
+        column-gap: 12px;
+        row-gap: 2px;
+        padding: 10px 12px;
+        text-align: left;
+        min-height: 0;
+        gap: 2px 12px;
+      }
+      .challenge-card img {
+        grid-row: 1 / span 2;
+        width: 70px; height: 98px;
+        border-radius: 6px;
+      }
+      .challenge-card .challenge-card-title {
+        grid-column: 2;
+        align-self: end;
+        font-size: 0.92rem;
+        text-align: left;
+        line-height: 1.25;
+      }
+      .challenge-card-meta {
+        grid-column: 2;
+        align-self: start;
+        justify-content: flex-start;
+      }
+      /* Watch Together's polish overrides — adapt for the compact row layout */
+      .collab-vote-card { min-height: 0; padding: 10px 12px; gap: 2px 12px; box-shadow: none; }
+      .collab-vote-card img { width: 70px; height: 98px; box-shadow: none; }
+      .collab-vote-card .challenge-card-title { font-size: 0.92rem; }
+    }
+
     .challenge-reveal-text {
       font-size: 0.82rem; color: var(--text-primary);
       padding: 10px 12px;
