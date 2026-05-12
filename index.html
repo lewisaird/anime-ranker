@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.100" />
+  <meta name="version" content="1.0.102" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -580,7 +580,7 @@
       <h4 style="margin:18px 0 8px;font-size:0.82rem;color:#8b949e">Round breakdown</h4>
       <div id="lc-breakdown" class="challenge-breakdown"></div>
       <div style="display:flex;gap:8px;margin-top:16px">
-        <button class="btn-primary" style="flex:1" onclick="liveChallengeRematch()">Rematch →</button>
+        <button id="lc-rematch-btn" class="btn-primary" style="flex:1" onclick="liveChallengeRematch()">Rematch →</button>
         <button class="btn-secondary" style="flex:1" onclick="closeLiveChallengeModalFinal()">Close</button>
       </div>
       <div style="margin-top:16px;border-top:1px solid var(--border-default);padding-top:12px">

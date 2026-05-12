@@ -309,6 +309,7 @@ const IDS = Object.freeze({
   lcNextBtn:            'lc-next-btn',
   lcWaitingNext:        'lc-waiting-next',
   lcResults:            'lc-results',
+  lcRematchBtn:         'lc-rematch-btn',
   lcBreakdown:          'lc-breakdown',
   undoBtn:                'undo-btn',
   usernameInput:          'username-input',
@@ -6008,6 +6009,19 @@ function _lcSync(data) {
   if (data.phase === 'results') {
     _lc.pairs = data.pairs || _lc.pairs;
     _lcShowResults();
+    // Guest can ask for a rematch by writing rematchRequested. Host fulfills
+    // by running the normal rebuild. _handlingRematch guards re-entry — sync
+    // can fire several times before phase transitions to 'building' so the
+    // flag stops us from kicking off multiple parallel rebuilds.
+    if (
+      _lc.mode === 'host' &&
+      data.rematchRequested &&
+      data.rematchRequested !== _lc.myPlayerId &&
+      !_lc._handlingRematch
+    ) {
+      _lc._handlingRematch = true;
+      liveChallengeRematch().finally(() => { if (_lc) _lc._handlingRematch = false; });
+    }
   }
 }
 
@@ -6327,6 +6341,10 @@ function _lcEndGame() {
 // ── RESULTS ────────────────────────────────────────────────────────────────────
 function _lcShowResults() {
   _lcPanel(IDS.lcPanelResults);
+  // Reset rematch button (guest may have left it in "Asked — waiting…" from a
+  // previous game; host's "Rematch →" is always enabled).
+  const rematchBtn = byId(IDS.lcRematchBtn);
+  if (rematchBtn) { rematchBtn.disabled = false; rematchBtn.textContent = 'Rematch →'; }
   if (!_lc?.pairs?.length) return;
   _lcSaveHistory();
   _lcLoadHistory();
@@ -6469,10 +6487,30 @@ function _lcLoadHistory() {
 
 // ── REMATCH ────────────────────────────────────────────────────────────────────
 // Reuses the same Firebase session — resets answers, currentPair, regenerates pairs.
-// Host only triggers rematch; guest is taken back to lobby to wait.
+// EITHER side can press Rematch:
+//   - Host: rebuilds pairs and writes the new round directly to Firebase.
+//   - Guest: writes a rematchRequested signal that the host's _lcSync picks
+//     up; host then runs the rebuild. Guest's button shows a "waiting" state
+//     during the brief Firebase round-trip before phase transitions away
+//     from 'results'.
 async function liveChallengeRematch() {
-  if (!_lc?.firebaseRef || _lc.mode !== 'host') return;
+  if (!_lc?.firebaseRef) return;
   if (_lc._autoNextTimer) { clearTimeout(_lc._autoNextTimer); _lc._autoNextTimer = null; }
+
+  // Guest path: signal the host and wait. No local state change yet — when
+  // the host's update arrives, the panel will transition naturally.
+  if (_lc.mode !== 'host') {
+    const btn = byId(IDS.lcRematchBtn);
+    if (btn) { btn.disabled = true; btn.textContent = 'Asked — waiting…'; }
+    try {
+      await _lc.firebaseRef.update({ rematchRequested: _lc.myPlayerId });
+    } catch (err) {
+      console.error('guest rematch signal failed:', err);
+      if (btn) { btn.disabled = false; btn.textContent = 'Rematch →'; }
+      showToast('⚠️ Could not ask for a rematch — check your connection and try again.');
+    }
+    return;
+  }
 
   // Re-read both players' rank maps from Firebase (they may have updated)
   const snap = await _lc.firebaseRef.child('players').once('value');
@@ -6482,14 +6520,15 @@ async function liveChallengeRematch() {
   const oppPid  = pids.find(id => id !== myPid);
   if (!oppPid) return;
 
-  // Reset picks/predictions for all players
+  // Reset picks/predictions for all players + clear any rematch request flag.
   const resetUpdates = {};
   pids.forEach(pid => {
     resetUpdates[`players/${pid}/picks`]       = {};
     resetUpdates[`players/${pid}/predictions`] = {};
   });
-  resetUpdates['currentPair'] = 0;
-  resetUpdates['phase']       = 'building';
+  resetUpdates['currentPair']      = 0;
+  resetUpdates['phase']            = 'building';
+  resetUpdates['rematchRequested'] = null;
   await _lc.firebaseRef.update(resetUpdates);
 
   // Find mutual watched anime from saved watchedIds
@@ -7333,34 +7372,35 @@ function _collabSyncFromFirebase(data) {
 
   if (data.phase === 'results') {
     _collab.battles = data.results || [];
-    // Rebuild pool from Firebase — guest never gets _collab.pool from any
-    // write path (host sets it locally only). Use pairs as the canonical
-    // source since it's written for both flows ("This Season" + "Nominate")
-    // and is guaranteed to exist by results phase. Each pair's a/b are full
-    // show objects with title + cover, so we just dedupe by title.
-    // Previously rebuilt from player nominations only — broke "This Season"
-    // because there are no per-player nominations in that flow, so the pool
-    // stayed empty and the results list rendered blank on guests.
+    // Reconstruct pool on the guest from whatever Firebase has — host sets
+    // _collab.pool locally and (since v1.0.101) also writes it to Firebase.
+    // Priority order, most-complete first:
+    //   1. data.pool     — full list, host wrote it in collabStartWithRounds
+    //   2. data.pairs    — only includes shows that landed in matchups; some
+    //                      shows missing if rounds < total possible pairs
+    //   3. nominations   — last-ditch fallback for sessions hosted before
+    //                      v1.0.101 (where data.pool was never written)
     if (!_collab.pool?.length) {
-      const seen = new Set();
-      _collab.pool = [];
-      (data.pairs || []).forEach(p => {
-        [p.a, p.b].forEach(show => {
-          if (show?.title && !seen.has(show.title.toLowerCase())) {
-            seen.add(show.title.toLowerCase());
-            _collab.pool.push(show);
-          }
-        });
-      });
-      // Belt-and-braces: if pairs somehow doesn't yield a pool (shouldn't
-      // happen at results phase, but a corrupted session could), fall back
-      // to player nominations.
-      if (!_collab.pool.length) {
-        Object.values(data.players || {}).forEach(p => {
-          (p.nominations || []).forEach(n => {
-            if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); _collab.pool.push(n); }
+      if (Array.isArray(data.pool) && data.pool.length) {
+        _collab.pool = data.pool;
+      } else {
+        const seen = new Set();
+        _collab.pool = [];
+        (data.pairs || []).forEach(p => {
+          [p.a, p.b].forEach(show => {
+            if (show?.title && !seen.has(show.title.toLowerCase())) {
+              seen.add(show.title.toLowerCase());
+              _collab.pool.push(show);
+            }
           });
         });
+        if (!_collab.pool.length) {
+          Object.values(data.players || {}).forEach(p => {
+            (p.nominations || []).forEach(n => {
+              if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); _collab.pool.push(n); }
+            });
+          });
+        }
       }
     }
     _collabPanel(IDS.collabPanelResults);
@@ -7728,7 +7768,12 @@ function collabStartWithRounds() {
       Object.keys(_collab.players).map(pid => [pid, null])
     );
     _collab.firebaseRef.update({
-      phase: 'voting', pairs: _collab.pairs, currentPair: 0,
+      // pool is the FULL list of nominated/seasonal shows. Pairs only contain
+      // shows that landed in a matchup — with a low round count vs a large
+      // pool, some shows never appear in any pair, so a pool rebuilt from
+      // pairs alone misses them. Writing pool here lets guests rank every
+      // show (including 0-win ones) on the results screen.
+      phase: 'voting', pool: _collab.pool, pairs: _collab.pairs, currentPair: 0,
       votes: initialVotes,
     });
   } else {
