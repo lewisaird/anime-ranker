@@ -15,6 +15,11 @@
       --accent-green-dark:#238636;
       --accent-red:       #f85149;
       --accent-amber:     #e3a000;
+      /* Tells browsers to render native form controls (select, scrollbar,
+         checkbox, date picker) in dark theme. Without this, macOS Chrome
+         renders <select> in light-mode regardless of CSS color values —
+         which gave us black-on-dark text on the LC platform dropdown. */
+      color-scheme: dark;
     }
 
     body.light-mode {
@@ -33,6 +38,7 @@
       --accent-green-dark:#1a7f37;
       --accent-red:       #cf222e;
       --accent-amber:     #9a6700;
+      color-scheme: light;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2960,6 +2966,10 @@
     .challenge-pill-btn { font-size: 1rem; padding: 2px 8px; }
 
     /* ── WATCH TOGETHER / COLLABORATIVE MODE ── */
+    /* v1.0.89 — reverted from full-screen back to a centered modal, bumped
+       from 520→720px max-width with more vertical room so the polished vote
+       cards fit comfortably on desktop and the panel feels less cramped on
+       mobile. Dimmed overlay restored. */
     #collab-modal {
       position: fixed; inset: 0; z-index: 1100;
       display: flex; align-items: center; justify-content: center;
@@ -2970,9 +2980,9 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
       border-radius: 14px;
-      padding: 24px 20px 20px;
-      width: min(94vw, 520px);
-      max-height: 90vh;
+      padding: 28px 26px 24px;
+      width: min(94vw, 720px);
+      max-height: 92vh;
       overflow-y: auto;
     }
     /* Mode selection */
@@ -3118,7 +3128,75 @@
     .collab-vote-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     .collab-vote-who { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); text-align: center; min-height: 1.4em; }
     .collab-vote-sub { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-bottom: 4px; min-height: 1.2em; }
-    .collab-vote-card { min-height: 200px; }
+    /* Watch Together vote cards — scoped polish to make them feel weightier
+       and more deliberate than the static Challenge Mode card. Larger cover,
+       bolder title, stronger card outline + shadow. The container .challenge-pair
+       gap is widened to give each card room to breathe inside the collab modal. */
+    .collab-vote-card {
+      min-height: 240px;
+      padding: 18px 14px;
+      gap: 14px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .collab-vote-card img {
+      width: 150px;
+      height: 210px;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+    }
+    .collab-vote-card .challenge-card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    @media (hover: hover) {
+      .collab-vote-card:hover:not(:disabled) {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 28px rgba(88,166,255,0.22);
+      }
+    }
+    /* Mobile: stack vote cards vertically (Watch Together + Live Challenge +
+       async Challenge Mode all use .challenge-pair) to match the main battle
+       layout. Cards become horizontal rows (image left, content right) like
+       .anime-card does on mobile, so they read as a comparison the same way. */
+    @media (max-width: 600px) {
+      .challenge-pair {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .challenge-vs {
+        width: auto; height: auto;
+        padding: 4px 0;
+        font-size: 0.85rem;
+      }
+      .challenge-card {
+        flex-direction: row;
+        align-items: center;
+        text-align: left;
+        gap: 12px;
+        padding: 12px;
+        min-height: 0;
+      }
+      .challenge-card img {
+        width: 80px; height: 112px;
+        flex-shrink: 0;
+      }
+      .challenge-card .challenge-card-title {
+        font-size: 0.95rem;
+        text-align: left;
+        line-height: 1.3;
+      }
+      .challenge-card-meta { justify-content: flex-start; }
+      /* Watch Together's polish overrides — adapt for the stacked row layout */
+      .collab-vote-card { min-height: 0; padding: 12px; gap: 12px; }
+      .collab-vote-card img { width: 80px; height: 112px; box-shadow: none; }
+      .collab-vote-card .challenge-card-title { font-size: 0.95rem; }
+    }
+    /* "VS" separator made slightly more subtle so the cards lead the eye. */
+    .challenge-pair:has(.collab-vote-card) .challenge-vs {
+      opacity: 0.55;
+      font-size: 0.68rem;
+    }
     .collab-no-cover { width: 80px; height: 110px; background: var(--bg-primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 2rem; }
     /* Split vote colours */
     .collab-split-a { border-color: #58a6ff !important; background: rgba(88,166,255,0.08) !important; }
@@ -3143,6 +3221,10 @@
     .collab-result-ties { opacity: 0.7; }
 
     /* ── CHALLENGE MODE ── */
+    /* v1.0.89 — both async Challenge Mode and Live Challenge share the same
+       modal shell. Live Challenge bumped to 720px (same as Watch Together)
+       so the head-to-head cards have proper room; async Challenge stays at
+       540 because it's a lightweight self-contained mini-game. */
     #challenge-modal, #lc-modal {
       position: fixed; inset: 0; z-index: 1100;
       display: flex; align-items: center; justify-content: center;
@@ -3157,6 +3239,11 @@
       width: min(92vw, 540px);
       max-height: 90vh;
       overflow-y: auto;
+    }
+    #lc-modal .challenge-box {
+      padding: 28px 26px 24px;
+      width: min(94vw, 720px);
+      max-height: 92vh;
     }
     .challenge-hud {
       display: flex; align-items: center; gap: 8px;
@@ -3274,8 +3361,8 @@
     }
     .lc-history-row:last-child { border-bottom: none; }
     .lc-history-outcome { font-size: 1rem; flex-shrink: 0; width: 20px; }
-    .lc-history-opponent { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-    .lc-history-score { font-weight: 600; color: var(--text); flex-shrink: 0; }
+    .lc-history-opponent { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+    .lc-history-score { font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
     .lc-history-date { font-size: 0.7rem; color: #8b949e; flex-shrink: 0; }
 
     .compat-delta {

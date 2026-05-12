@@ -9,7 +9,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION = '1.0.84';
+const APP_VERSION = '1.0.93';
 const CACHE_NAME  = `kessen-v${APP_VERSION}`;
 
 // Cache the canonical root only. Netlify serves index.html at both '/' and

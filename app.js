@@ -6259,11 +6259,11 @@ function _lcReveal() {
       : `<div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:10px;gap:8px">
            <div style="text-align:center;flex:1">
              <div style="color:#8b949e;font-size:0.73rem;margin-bottom:2px">You picked</div>
-             <strong style="color:var(--text)">${esc(myPickTitle)}</strong>
+             <strong style="color:var(--text-primary)">${esc(myPickTitle)}</strong>
            </div>
            <div style="text-align:center;flex:1">
              <div style="color:#8b949e;font-size:0.73rem;margin-bottom:2px">${esc(_lc.opponentName)} picked</div>
-             <strong style="color:var(--text)">${esc(oppPickTitle)}</strong>
+             <strong style="color:var(--text-primary)">${esc(oppPickTitle)}</strong>
            </div>
          </div>`}
     <div style="display:flex;justify-content:space-between;font-size:0.82rem;gap:8px">
@@ -7949,7 +7949,12 @@ function _collabRenderResults() {
   const ties  = new Map(_collab.pool.map(s => [s.title, 0]));
 
   _collab.battles.forEach(b => {
-    if (b.winner === null) {
+    // Loose `== null` deliberately catches both null AND undefined. Firebase
+    // Realtime Database strips `null` values on write, so a battle pushed as
+    // { winner: null } reads back as { } on guests — `winner` is undefined,
+    // not null. Strict `=== null` here would mis-treat synced ties as wins
+    // for `undefined`, which silently disappears from the results screen.
+    if (b.winner == null) {
       // It was a tie — credit both shows (b.a / b.b are show objects)
       const titleA = (b.a?.title ?? b.a);
       const titleB = (b.b?.title ?? b.b);
