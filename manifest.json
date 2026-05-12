@@ -6,7 +6,6 @@
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#0d1117",
   "theme_color": "#161b22",
   "orientation": "any",
@@ -85,6 +84,6 @@
       "label": "Discover anime tailored to your top picks"
     }
   ],
-  "categories": ["entertainment", "utilities"],
+  "categories": ["entertainment", "games", "utilities"],
   "prefer_related_applications": false
 }

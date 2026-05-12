@@ -144,7 +144,9 @@
       color: var(--text-primary);
       border-color: var(--border-default);
     }
+    @media (hover: hover) {
     .manage-btn-feedback:hover { background: var(--bg-tertiary); color: var(--text-bright); }
+    }
 
     #progress-info {
       font-size: 0.85rem;
@@ -193,7 +195,9 @@
       cursor: pointer;
       transition: border-color 0.2s, color 0.2s;
     }
+    @media (hover: hover) {
     #loading-cancel-btn:hover { border-color: var(--accent-red); color: var(--accent-red); }
+    }
 
     /* USERNAME INPUT */
     #username-screen {
@@ -281,14 +285,18 @@
       background: var(--accent-green-dark);
       color: #fff;
     }
+    @media (hover: hover) {
     .btn-primary:hover { background: #2ea043; }
+    }
 
     .btn-secondary {
       background: var(--border-subtle);
       color: var(--text-bright);
       border: 1px solid var(--border-default);
     }
+    @media (hover: hover) {
     .btn-secondary:hover { background: var(--border-default); }
+    }
     /* Mode toggle — single button replaces the old settle-btn + blind-btn pair (§5.2.3).
        Colour-coded when a mode is active so the battle bar reflects the current state
        at a glance. The popover lives in .mode-control; see #mode-popover below. */
@@ -367,7 +375,9 @@
       background: #da3633;
       color: #fff;
     }
+    @media (hover: hover) {
     .btn-danger:hover { background: var(--accent-red); }
+    }
 
     /* BATTLE SCREEN */
     #battle-screen { display: none; }
@@ -507,7 +517,9 @@
       letter-spacing: 0.01em;
       margin-bottom: 10px;
     }
+    @media (hover: hover) {
     .btn-keep-ranking:hover { background: #2ea043; transform: translateY(-1px); }
+    }
     .results-util-bar {
       display: flex;
       gap: 8px;
@@ -526,8 +538,12 @@
       transition: all 0.15s;
     }
     @media (hover: hover) {
+      @media (hover: hover) {
       .util-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
+      }
+      @media (hover: hover) {
       .util-btn.util-danger:hover { border-color: var(--accent-red); color: var(--accent-red); background: #3d0f0a; }
+      }
     }
 
     /* MANAGE TAB */
@@ -540,11 +556,17 @@
       border-radius: 8px; padding: 10px 16px; font-size: 0.9rem; cursor: pointer;
       text-align: left; transition: border-color 0.15s, background 0.15s;
     }
+    @media (hover: hover) {
     .manage-btn:hover { border-color: var(--accent-blue); background: #1c2940; }
+    }
     .manage-btn-anilist { border-color: #1a6fd4; color: var(--accent-blue); }
+    @media (hover: hover) {
     .manage-btn-anilist:hover { background: #1c2940; border-color: var(--accent-blue); }
+    }
     .manage-btn-danger { border-color: #6e3232; color: var(--accent-red); }
+    @media (hover: hover) {
     .manage-btn-danger:hover { border-color: var(--accent-red); background: #3d0f0a; }
+    }
     .manage-danger-box { background: #1a0d0d; border: 1px solid #6e3232; border-radius: 10px; padding: 16px; }
 
     .results-tabs {
@@ -596,7 +618,9 @@
       cursor: pointer;
       transition: all 0.15s;
     }
+    @media (hover: hover) {
     .synopsis-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
+    }
     .synopsis-panel {
       background: var(--bg-primary);
       border: 1px solid var(--border-default);
@@ -788,7 +812,9 @@
     .ts-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-default); transition: background 0.2s; }
     .ts-dot.active { background: var(--accent-blue); }
     .ts-close { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 4px; }
+    @media (hover: hover) {
     .ts-close:hover { color: var(--text-bright); }
+    }
     .ts-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
     .ts-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 600; }
     .ts-headline { font-size: 1.8rem; font-weight: 800; line-height: 1.2; color: var(--accent-blue); }
@@ -808,7 +834,9 @@
       background: none; border: none; color: var(--accent-blue); font-size: 0.82rem;
       cursor: pointer; padding: 0; text-align: left; margin-top: 4px;
     }
+    @media (hover: hover) {
     .ts-profile-link:hover { text-decoration: underline; }
+    }
 
     .ts-prev, .ts-next {
       background: none; border: 1px solid var(--border-default); color: var(--text-secondary);
@@ -886,7 +914,9 @@
       cursor: pointer;
       transition: opacity 0.15s;
     }
+    @media (hover: hover) {
     .welcome-cta:hover { opacity: 0.9; }
+    }
 
     .welcome-page { width: 100%; }
 
@@ -907,7 +937,9 @@
       color: var(--accent-blue); font-size: 0.88rem; padding: 10px;
       cursor: pointer; margin-top: 8px;
     }
+    @media (hover: hover) {
     .welcome-login-link:hover { text-decoration: underline; }
+    }
 
     .ranking-list {
       display: grid;
@@ -974,7 +1006,9 @@
       background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px;
       padding: 8px 10px; cursor: pointer;
     }
+    @media (hover: hover) {
     .franchise-detail-member:hover { background: var(--bg-tertiary); }
+    }
     .franchise-detail-member img { width: 36px; height: 50px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
     .franchise-detail-member-info { flex: 1; min-width: 0; }
     .franchise-detail-member-title { font-size: 0.85rem; font-weight: 600; color: var(--text-bright); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -995,7 +1029,9 @@
       padding: 2px 0;
       margin-top: 2px;
     }
+    @media (hover: hover) {
     .franchise-expand-btn:hover { text-decoration: underline; }
+    }
     .franchise-header {
       display: flex;
       align-items: center;
@@ -1003,7 +1039,9 @@
       padding: 12px 14px;
       cursor: pointer;
     }
+    @media (hover: hover) {
     .franchise-header:hover { background: var(--bg-tertiary); }
+    }
     .franchise-group .franchise-header img {
       width: 48px !important;
       height: 68px !important;
@@ -1033,7 +1071,9 @@
       border-bottom: 1px solid var(--border-subtle);
     }
     .franchise-member:last-child { border-bottom: none; }
+    @media (hover: hover) {
     .franchise-member:hover { background: var(--bg-tertiary); }
+    }
     .franchise-group .franchise-member img { width: 28px !important; height: 40px !important; max-width: none !important; object-fit: cover; border-radius: 3px; flex-shrink: 0; }
     .franchise-member-title { flex: 1; font-size: 0.82rem; color: var(--text-primary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .franchise-member-elo { font-size: 0.75rem; color: var(--text-secondary); flex-shrink: 0; }
@@ -1217,7 +1257,9 @@
       font-family: inherit;
       transition: all 0.15s;
     }
+    @media (hover: hover) {
     .card-more-chip:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+    }
     .anime-card.actions-expanded .card-more-chip {
       border-color: var(--accent-blue);
       color: var(--accent-blue);
@@ -1250,7 +1292,9 @@
       border: 1px solid var(--border-default);
       transition: all 0.15s;
     }
+    @media (hover: hover) {
     .card-anilist-link:hover { color: var(--accent-blue); border-color: var(--accent-blue); background: #1c2940; }
+    }
 
     /* FUZZY TAG on rank cards */
     .fuzzy-tag {
@@ -1327,7 +1371,9 @@
       transition: background 0.12s;
       user-select: none;
     }
+    @media (hover: hover) {
     .studio-affinity-row:hover { background: var(--border-subtle); }
+    }
 
     .studio-anime-panel {
       margin: 2px 0 6px 0;
@@ -1345,7 +1391,9 @@
       transition: background 0.12s;
       font-size: 0.84rem;
     }
+    @media (hover: hover) {
     .studio-anime-item:hover { background: var(--border-subtle); }
+    }
 
     .studio-anime-rank {
       width: 36px;
@@ -1523,7 +1571,9 @@
       background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 10px;
       overflow: hidden; cursor: pointer; transition: border-color 0.15s;
     }
+    @media (hover: hover) {
     .taste-mood-tile:hover { border-color: var(--accent-blue); }
+    }
     .taste-mood-tile.active { border-color: var(--accent-blue); background: var(--bg-tertiary); }
     #moods-section { margin-bottom: 20px; }
     .taste-mood-covers { display: flex; height: 70px; overflow: hidden; }
@@ -1877,7 +1927,9 @@
       font-size: 0.7rem; padding: 3px 8px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
     }
     @media (hover: hover) {
+      @media (hover: hover) {
       .exclude-btn:hover { border-color: var(--accent-red); color: var(--accent-red); background: #2a0a0a; }
+      }
     }
 
     /* EXCLUDED SECTION */
@@ -2009,7 +2061,9 @@
       margin-bottom: 4px;
       width: 240px;
     }
+    @media (hover: hover) {
     .btn-anilist-login:hover { background: linear-gradient(135deg, #2d7cf7, #22b8ff); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(26,110,245,0.35); }
+    }
     .btn-mal-login {
       background: linear-gradient(135deg, #2e51a2, #4a74d8);
       color: #fff;
@@ -2019,7 +2073,9 @@
       margin-bottom: 4px;
       width: 240px;
     }
+    @media (hover: hover) {
     .btn-mal-login:hover { background: linear-gradient(135deg, #3d62b8, #5a84e8); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(46,81,162,0.4); }
+    }
 
     .auth-logged-in-row {
       display: flex;
@@ -2035,7 +2091,9 @@
     .auth-logged-in-row img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
     .auth-logged-in-name { flex: 1; font-size: 0.87rem; font-weight: 600; color: var(--text-bright); }
     .auth-logout-btn { background: none; border: none; color: var(--text-secondary); font-size: 0.72rem; padding: 2px 6px; cursor: pointer; border-radius: 4px; }
+    @media (hover: hover) {
     .auth-logout-btn:hover { color: var(--accent-red); background: var(--border-subtle); }
+    }
 
     .auth-setup-panel {
       background: var(--bg-secondary);
@@ -2133,7 +2191,9 @@
       background: var(--border-subtle); border: 1px solid var(--border-default); color: var(--text-primary);
       padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.74rem; white-space: nowrap;
     }
+    @media (hover: hover) {
     .auth-copy-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+    }
 
     /* manual fallback collapsible */
     .auth-manual-details { margin-top: 12px; }
@@ -2182,9 +2242,13 @@
     .confirm-modal-box p  { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; }
     .confirm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
     .confirm-btn-cancel  { padding: 7px 16px; border-radius: 6px; border: 1px solid var(--border-default); background: transparent; color: var(--text-primary); cursor: pointer; font-size: 0.85rem; }
+    @media (hover: hover) {
     .confirm-btn-cancel:hover  { background: var(--border-subtle); }
+    }
     .confirm-btn-danger  { padding: 7px 16px; border-radius: 6px; border: none; background: #da3633; color: #fff; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    @media (hover: hover) {
     .confirm-btn-danger:hover  { background: var(--accent-red); }
+    }
     .sync-preview-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-bottom: 20px; }
     .sync-preview-table th {
       text-align: left; font-size: 0.72rem; color: var(--text-secondary); font-weight: 600;
@@ -2223,7 +2287,9 @@
       font-weight: 500;
       display: none; /* shown only when authed */
     }
+    @media (hover: hover) {
     .util-btn-anilist:hover { background: linear-gradient(135deg, #2d7cf7, #22b8ff); }
+    }
 
     /* SETTLE MODE BANNER */
     #pool-warning-banner {
@@ -2289,7 +2355,9 @@
       transition: border-color 0.15s, color 0.15s;
       flex-shrink: 0;
     }
+    @media (hover: hover) {
     #notif-bell:hover { border-color: var(--accent-blue); color: var(--text-bright); }
+    }
 
     #notif-badge {
       background: #f85149;
@@ -2347,7 +2415,9 @@
       padding: 3px 10px;
       cursor: pointer;
     }
+    @media (hover: hover) {
     .nc-clear-btn:hover { border-color: var(--accent-red); color: var(--accent-red); }
+    }
 
     .nc-close-btn {
       background: none;

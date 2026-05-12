@@ -9,7 +9,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION = '1.0.102';
+const APP_VERSION = '1.0.109';
 const CACHE_NAME  = `kessen-v${APP_VERSION}`;
 
 // Cache the canonical root only. Netlify serves index.html at both '/' and
@@ -95,6 +95,10 @@ self.addEventListener('fetch', event => {
         if (request.mode === 'navigate') {
           return cache.match('/offline.html');
         }
+        // v1.0.109 — non-navigate fetch with no cache and no network. Return
+        // an explicit network error so callers see a real failure instead of
+        // an undefined response, which some browsers turn into "Failed to fetch".
+        return Response.error();
       })
     );
   }

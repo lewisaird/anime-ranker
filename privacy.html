@@ -34,7 +34,7 @@
   <a class="back" href="/">← Back to Kessen</a>
 
   <h1>Privacy Policy</h1>
-  <p class="subtitle">Last updated: April 2026</p>
+  <p class="subtitle">Last updated: May 2026</p>
 
   <p>Kessen is a personal anime ranking tool. This page explains what data is stored when you use it, and how to have it removed.</p>
 
@@ -50,7 +50,19 @@
   <ul>
     <li><strong>In your browser</strong> — your session data (rankings, battle history) is saved to <code>localStorage</code> on your device. Clearing your browser data removes it.</li>
     <li><strong>In Netlify Blob Storage</strong> — if you are logged in via AniList or MAL OAuth, your session is also backed up to Netlify's hosted blob storage, keyed by your account ID. This enables your rankings to sync across devices. Netlify's privacy policy applies to this storage: <a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">netlify.com/privacy</a>.</li>
+    <li><strong>In Google Firebase Realtime Database</strong> — only when you actively use a multiplayer feature (Watch Together or Live Challenge). See the section below for what is stored and for how long.</li>
   </ul>
+
+  <h2>Multiplayer (Firebase) data</h2>
+  <p>Kessen's multiplayer features (Watch Together and Live Challenge) use Google's Firebase Realtime Database to coordinate state between players. This is only used when you actively start or join a multiplayer session — Firebase is not contacted for solo battling, profile viewing, or any other part of the app.</p>
+  <p>When you create or join a session, the following is written to Firebase:</p>
+  <ul>
+    <li><strong>Your display name</strong> as typed into the session lobby.</li>
+    <li><strong>A randomly-generated player ID</strong> for that session.</li>
+    <li><strong>For Watch Together</strong>: the list of anime each player nominates, the matchups generated from those nominations, and each player's votes per matchup.</li>
+    <li><strong>For Live Challenge</strong>: the list of AniList or MyAnimeList IDs of anime you have watched (used to find matchups you've both seen), the matchups, your picks, and your predictions of your opponent's picks. This is only stored while the session is active.</li>
+  </ul>
+  <p>Data is retained for the duration of the session and is removed when the session ends or expires. We do not store transcripts of completed games on Firebase. Firebase's privacy policy applies to this storage: <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">firebase.google.com/support/privacy</a>.</p>
 
   <h2>Authentication tokens</h2>
   <p>OAuth access tokens from AniList and MyAnimeList are stored only in your browser's <code>localStorage</code>. They are sent to our Netlify Functions solely to verify your identity when reading or writing your saved rankings — they are never logged, shared, or stored on our servers.</p>

@@ -1,0 +1,24 @@
+{
+  "rules": {
+    "collab-sessions": {
+      "$session": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "users": {
+      "$userId": {
+        "state": {
+          ".read": true,
+          ".write": true
+        }
+      }
+    },
+    "live-challenges": {
+      "$session": {
+        ".read": true,
+        ".write": true
+      }
+    }
+  }
+}

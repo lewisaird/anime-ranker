@@ -809,6 +809,12 @@ function startOAuthFlow() {
   const errEl = byId(IDS.authErrorMsg);
   if (errEl) errEl.style.display = 'none';
 
+  // v1.0.109 — clear any stale OAuth state from a previously-abandoned popup
+  // before starting a fresh flow. Stops the previous flow's nonce from being
+  // accidentally accepted if the user opens AniList then MAL then AniList again.
+  sessionStorage.removeItem('mal_oauth_state');
+  sessionStorage.removeItem('mal_code_verifier');
+
   const state = _generateOAuthState();
   sessionStorage.setItem('anilist_oauth_state', state);
 
@@ -911,9 +917,10 @@ window.addEventListener('message', async event => {
   const expected = sessionStorage.getItem('anilist_oauth_state') || '';
   sessionStorage.removeItem('anilist_oauth_state');
   const received = event.data?.state || '';
-  // Legacy: allow through if no state was stored (pre-patch saves mid-flow).
-  const legacyOk = !expected && !received;
-  if (!legacyOk && (!expected || expected !== received)) {
+  // v1.0.106: removed legacy no-state bypass. An attacker-crafted link with no
+  // state could previously log the victim into the attacker's account when
+  // sessionStorage happened to be empty (e.g. tab closed and reopened).
+  if (!expected || expected !== received) {
     console.warn('AniList OAuth state mismatch — refusing token exchange');
     const btn = byId(IDS.authLoginBtn);
     if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
@@ -1094,6 +1101,9 @@ function startMALOAuthFlow() {
   const btn   = byId(IDS.malOauthBtn);
   const errEl = byId(IDS.errorMsg);
   if (errEl) errEl.style.display = 'none';
+
+  // v1.0.109 — clear any stale OAuth state from a previously-abandoned popup.
+  sessionStorage.removeItem('anilist_oauth_state');
 
   const codeVerifier = _generateCodeVerifier();
   sessionStorage.setItem('mal_code_verifier', codeVerifier);
@@ -1422,10 +1432,8 @@ async function _fetchViewer() {
     const expected  = sessionStorage.getItem('mal_oauth_state') || '';
     const received  = state.startsWith('mal:') ? state.slice(4) : '';
     sessionStorage.removeItem('mal_oauth_state');
-    // Legacy: if we never stored a state (pre-patch save) and the incoming
-    // state is the literal 'mal', allow it through so existing flows don't break.
-    const legacyOk = !expected && state === 'mal';
-    if (!legacyOk && (!expected || expected !== received)) {
+    // v1.0.106: removed legacy literal-'mal' bypass.
+    if (!expected || expected !== received) {
       console.warn('MAL OAuth state mismatch — refusing token exchange');
       return;
     }
@@ -1433,9 +1441,8 @@ async function _fetchViewer() {
   } else {
     const expected = sessionStorage.getItem('anilist_oauth_state') || '';
     sessionStorage.removeItem('anilist_oauth_state');
-    // Legacy: allow through if no state was stored (pre-patch saved redirects).
-    const legacyOk = !expected && !state;
-    if (!legacyOk && (!expected || expected !== state)) {
+    // v1.0.106: removed legacy no-state bypass.
+    if (!expected || expected !== state) {
       console.warn('AniList OAuth state mismatch — refusing token exchange');
       return;
     }
@@ -4282,13 +4289,14 @@ function _getRelationNote(media) {
   const relTitle = node.title.english || node.title.romaji;
   const rank = eloRankMap.get(node.id);
 
+  // esc() the AniList title — user-editable on AniList so it could carry HTML.
   if (relationType === 'PREQUEL')
-    return `<div class="rec-relation-note">📺 Sequel to <strong>${relTitle}</strong> — you have it at <strong>#${rank}</strong></div>`;
+    return `<div class="rec-relation-note">📺 Sequel to <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
   if (relationType === 'SEQUEL')
-    return `<div class="rec-relation-note">⏮ Watch this before <strong>${relTitle}</strong> (your <strong>#${rank}</strong>)</div>`;
+    return `<div class="rec-relation-note">⏮ Watch this before <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
   if (relationType === 'PARENT')
-    return `<div class="rec-relation-note">🔗 Part of <strong>${relTitle}</strong> — you have it at <strong>#${rank}</strong></div>`;
-  return `<div class="rec-relation-note">🔗 Related to <strong>${relTitle}</strong> (your <strong>#${rank}</strong>)</div>`;
+    return `<div class="rec-relation-note">🔗 Part of <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
+  return `<div class="rec-relation-note">🔗 Related to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
 }
 
 // ─── REC CARD HTML HELPER ─────────────────────────────────────────────────────
@@ -4309,12 +4317,12 @@ function recCardHtml(media, opts = {}) {
     ? `https://myanimelist.net/anime/${media.idMal}`
     : `https://anilist.co/anime/${media.id}`;
   return `
-    <a class="rec-card" href="${recUrl}" target="_blank"
+    <a class="rec-card" href="${esc(recUrl)}" target="_blank" rel="noopener noreferrer"
        style="${watched ? 'opacity:0.45' : ''}">
-      <img src="${cover}" alt="Cover art for ${esc(title)}" loading="lazy" />
+      <img src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
       <div class="rec-card-body">
-        <div class="rec-card-title">${title}</div>
-        <div class="rec-card-meta">${media.format || ''}${seasonLabel ? ' · ' + seasonLabel : ''}</div>
+        <div class="rec-card-title">${esc(title)}</div>
+        <div class="rec-card-meta">${esc(media.format || '')}${seasonLabel ? ' · ' + esc(seasonLabel) : ''}</div>
         <span class="rec-score-pill">⭐ ${avg}</span>
         ${tasteTag}
         ${relationNote}
@@ -5151,6 +5159,7 @@ let _challengeState = null;
 async function openChallengeMode(username, platform) {
   const modal = byId(IDS.challengeModal);
   modal.style.display = 'flex';
+  pushModalBack('challenge', closeChallengeModal);
   const displayName = username.replace(/ \[MAL\]$/i, '');
   byId(IDS.challengeLoading).style.display = 'block';
   byId(IDS.challengeLoading).innerHTML =
@@ -5385,6 +5394,7 @@ function _challengeShowEnd() {
 function closeChallengeModal() {
   byId(IDS.challengeModal).style.display = 'none';
   _challengeState = null;
+  popModalBack('challenge');
 }
 
 // ─── LIVE CHALLENGE MODE ───────────────────────────────────────────────────────
@@ -5542,6 +5552,16 @@ function _lcGenerateCode() {
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
+// Guard for any user-supplied or storage-derived code before it gets concatenated
+// into a Firebase path. Without this, a malicious or corrupted code could
+// traverse outside the live-challenges/ or collab-sessions/ subtree
+// (Firebase rejects `.`, `$`, `#`, `[`, `]` but treats `/` as the path separator).
+// Same charset as _lcGenerateCode / _collabGenerateCode, with a 4-8 range to
+// accept the 6-char codes we mint plus a small buffer for future tweaks.
+function _isValidSessionCode(code) {
+  return typeof code === 'string' && /^[A-Z0-9]{4,8}$/.test(code);
+}
+
 // Scoring: 1 pt for correctly predicting opponent's pick + 1 bonus pt if
 // both players picked the same show (taste match). Max 2 pts per round.
 function _lcMyScore() {
@@ -5659,19 +5679,28 @@ async function lcShareLink() {
 // The _FIREBASE_READY guard is intentionally absent — we just need to show
 // the modal and pre-fill the code. Firebase readiness is checked when the
 // user actually clicks Join.
-function _lcCheckDeepLink() {
+function _lcCheckDeepLink(retriesLeft = 10) {
   const params = new URLSearchParams(window.location.search);
   const code   = params.get('lc');
-  if (!code || code.length < 4) return; // sanity check only — real codes are 6 chars
+  if (!code || !_isValidSessionCode(code.toUpperCase())) return;
+
+  if (!_FIREBASE_READY) {
+    // v1.0.108 — Firebase SDK loads asynchronously; if the deep-link fires
+    // before _FIREBASE_READY flips, retry for up to ~5 seconds (10 × 500ms)
+    // before giving up. Without this, opening a shared link on a slow network
+    // silently failed and the user saw nothing happen.
+    if (retriesLeft > 0) {
+      showToast('Joining session…', 1000);
+      setTimeout(() => _lcCheckDeepLink(retriesLeft - 1), 500);
+      return;
+    }
+    showToast('⚠️ Could not connect to Live Challenge — check your connection and try again.', 5000);
+    _lcClearDeepLink();
+    return;
+  }
 
   // Clean the URL immediately — we've consumed the param
   _lcClearDeepLink();
-
-  if (!_FIREBASE_READY) {
-    // Firebase SDK didn't load (network issue) — nothing we can do
-    console.warn('Live Challenge deep link: Firebase not ready');
-    return;
-  }
 
   // Open the setup modal and pre-fill the join code
   openLiveChallengeMode();
@@ -5696,6 +5725,7 @@ function lcDismissRejoin() {
 async function lcRejoinSession() {
   const stored = _lcGetStoredSession();
   if (!stored) return;
+  if (!_isValidSessionCode(stored.code)) { _lcClearSession(); return; }
   _initFirebase();
   if (!_firebaseApp) return;
 
@@ -5720,6 +5750,14 @@ async function lcRejoinSession() {
     const myPicks  = players[stored.playerId]?.picks || {};
     const myPreds  = players[stored.playerId]?.predictions || {};
 
+    // v1.0.107 — hydrate hasPicked/hasSubmitted from existing Firebase data so
+    // we don't show a fresh pick panel for a pair the user already voted on.
+    // Without this, rejoining mid-round let the user re-pick a different
+    // value, overwriting their submitted choice in Firebase.
+    const cp = data.currentPair || 0;
+    const alreadyPicked    = myPicks[cp] !== undefined;
+    const alreadySubmitted = alreadyPicked && myPreds[cp] !== undefined;
+
     _lc = {
       mode:               stored.mode,
       isP1:               stored.mode === 'host',
@@ -5734,9 +5772,9 @@ async function lcRejoinSession() {
       predictions:        myPreds,
       opponentPicks:      oppPid ? (players[oppPid]?.picks || {}) : {},
       opponentPredictions: oppPid ? (players[oppPid]?.predictions || {}) : {},
-      hasPicked:          false,        // will be re-derived after pair renders
-      hasSubmitted:       false,
-      currentPair:        data.currentPair || 0,
+      hasPicked:          alreadyPicked,
+      hasSubmitted:       alreadySubmitted,
+      currentPair:        cp,
       unsubscribe:        null,
     };
 
@@ -5765,6 +5803,7 @@ function openLiveChallengeMode() {
   }
   _initFirebase();
   byId(IDS.lcModal).style.display = 'flex';
+  pushModalBack('lc', closeLiveChallengeModal);
   _lcPanel(IDS.lcPanelSetup);
   _lcPrefillSetup();
   _lcCheckRejoinBanner();
@@ -5815,7 +5854,9 @@ async function lcCreateSession() {
   const platformEl = byId(IDS.lcSetupPlatform);
   const usernameEl = byId(IDS.lcSetupUsername);
   const platform   = platformEl?.value || 'anilist';
-  const username   = (usernameEl?.value || '').trim();
+  // 40-char cap: stops unbounded user input from getting written to Firebase
+  // (which broadcasts it to every other connected player on the session).
+  const username   = (usernameEl?.value || '').trim().slice(0, 40);
   if (!username) { usernameEl?.focus(); return; }
 
   const btn = document.querySelector('#lc-panel-setup .btn-primary');
@@ -5874,11 +5915,15 @@ async function lcJoinSession() {
   const usernameEl = byId(IDS.lcSetupUsername);
   const codeEl     = byId(IDS.lcSetupJoinCode);
   const platform   = platformEl?.value || 'anilist';
-  const username   = (usernameEl?.value || '').trim();
+  // 40-char cap (see lcCreateSession for rationale).
+  const username   = (usernameEl?.value || '').trim().slice(0, 40);
   const code       = (codeEl?.value || '').trim().toUpperCase();
 
   if (!username) { usernameEl?.focus(); return; }
-  if (code.length !== 6) { codeEl?.focus(); return; }
+  // Charset + length validation — rejects path-traversal attempts before the
+  // code is concatenated into the Firebase path below.
+  if (!_isValidSessionCode(code)) { codeEl?.focus(); return; }
+  // Note: username is sliced at the start of lcJoinSession (40-char cap).
 
   const btn = document.querySelector('#lc-panel-setup .btn-secondary');
   if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
@@ -5893,6 +5938,13 @@ async function lcJoinSession() {
     const data = snap.val();
     if (!data) throw new Error('Session not found — check the code and try again.');
     if (data.phase !== 'lobby') throw new Error('This session has already started.');
+    // v1.0.109 — cap at 2 players. LC's scoring only mirrors the first
+    // non-host player (`pids.find(id => id !== myPid)`), so silently allowing
+    // a 3rd joiner gave them a game UI but no scoring — confusing for beta
+    // testers sharing codes around.
+    if (Object.keys(data.players || {}).length >= 2) {
+      throw new Error('This session is already full (2 players).');
+    }
 
     const pid      = 'p_' + Math.random().toString(36).slice(2, 10);
     const hostId   = data.hostId;
@@ -5935,8 +5987,21 @@ function liveChallengeJoin()  { lcJoinSession(); }
 function openLiveChallengeJoin() { openLiveChallengeMode(); }
 
 // ── PRESENCE ──────────────────────────────────────────────────────────────────
+// Listens to .info/connected so we re-write connected:true after any transient
+// WebSocket drop (Wi-Fi handover, screen off, push notification, brief tunnel).
+// The previous one-shot onDisconnect()-only setup left the player flagged as
+// disconnected for the rest of the session, giving the opponent a permanent
+// "disconnected" banner even though play had resumed. Mirrors the WT pattern.
 function _lcSetupPresence(ref, pid) {
-  ref.child(`players/${pid}/connected`).onDisconnect().set(false);
+  if (!_firebaseApp) _initFirebase();
+  const connRef = _firebaseApp.database().ref('.info/connected');
+  const handler = snap => {
+    if (!snap.val()) return;
+    ref.child(`players/${pid}/connected`).set(true);
+    ref.child(`players/${pid}/connected`).onDisconnect().set(false);
+  };
+  connRef.on('value', handler);
+  if (_lc) _lc.presenceUnsub = () => connRef.off('value', handler);
 }
 
 // ── LISTENER ──────────────────────────────────────────────────────────────────
@@ -5972,6 +6037,20 @@ function _lcSync(data) {
   // Disconnect banner
   const oppConnected = oppPid ? data.players[oppPid]?.connected !== false : true;
   byId(IDS.lcDisconnectBanner).style.display = (!oppConnected && data.phase === 'playing') ? '' : 'none';
+
+  // v1.0.107 — when opponent has disconnected mid-round, expose host's Next
+  // button so the game can advance without their pick (round scored with no
+  // points for either side). Without this the game freezes on
+  // "Waiting for opponent…" until they reconnect, which can be never.
+  if (!oppConnected && data.phase === 'playing' && _lc.mode === 'host') {
+    const myPick = (_lc.picks || {})[_lc.currentPair];
+    if (myPick) {
+      const nextBtn = byId(IDS.lcNextBtn);
+      if (nextBtn) { nextBtn.style.display = ''; nextBtn.textContent = 'Skip round →'; }
+      const waitMsg = byId(IDS.lcWaitingMsg);
+      if (waitMsg) waitMsg.style.display = 'none';
+    }
+  }
 
   if (data.phase === 'lobby') {
     _lcRenderLobby(data);
@@ -6571,9 +6650,11 @@ function closeLiveChallengeModal() {
   _lcClearDeepLink();
   byId(IDS.lcModal).style.display = 'none';
   if (_lc?._autoNextTimer) { clearTimeout(_lc._autoNextTimer); _lc._autoNextTimer = null; }
+  if (_lc?.presenceUnsub) _lc.presenceUnsub();
   if (_lc?.unsubscribe) _lc.unsubscribe();
   if (_lc?.firebaseRef) _lc.firebaseRef.off();
   _lc = null;
+  popModalBack('lc');
   _startFirebaseSync(); // re-attach ranking sync that lcCreate/Join detached
 }
 
@@ -6744,6 +6825,15 @@ function openCollabMode() {
 //                              Wired to "Done" on the results panel.
 function closeCollabModal() {
   if (_collab?._autoNextTimer) { clearTimeout(_collab._autoNextTimer); _collab._autoNextTimer = null; }
+  if (_collab?._voteAdvanceTimer) { clearTimeout(_collab._voteAdvanceTimer); _collab._voteAdvanceTimer = null; }
+  // v1.0.107 — if host closes mid-round-picker, revert phase to 'lobby' so
+  // guests don't hang on "Host is picking the number of rounds…" forever.
+  // Best-effort write; we don't await it because we want close to be snappy.
+  if (_collab?.isHost && _collab?.firebaseRef) {
+    try { _collab.firebaseRef.child('phase').once('value', s => {
+      if (s.val() === 'selecting-rounds') _collab.firebaseRef.update({ phase: 'lobby' });
+    }); } catch {}
+  }
   if (_collab?.presenceUnsub) _collab.presenceUnsub();
   if (_collab?.unsubscribe)   _collab.unsubscribe();
   byId(IDS.collabModal).style.display = 'none';
@@ -6794,6 +6884,7 @@ function collabDismissRejoin() {
 async function collabRejoinSession() {
   const stored = _collabGetStoredSession();
   if (!stored) return;
+  if (!_isValidSessionCode(stored.code)) { _collabClearSession(); return; }
   _initFirebase();
   if (!_firebaseApp) return;
 
@@ -6873,8 +6964,8 @@ function collabChooseMode(mode) {
 
 // ── SINGLE DEVICE SETUP ───────────────────────────────────────────────────────
 function collabStartSingle() {
-  _collab.p1Name = byId(IDS.collabP1Name).value.trim() || 'Player 1';
-  _collab.p2Name = byId(IDS.collabP2Name).value.trim() || 'Player 2';
+  _collab.p1Name = byId(IDS.collabP1Name).value.trim().slice(0, 40) || 'Player 1';
+  _collab.p2Name = byId(IDS.collabP2Name).value.trim().slice(0, 40) || 'Player 2';
   _collab.currentNominator = 0;
   _collabShowNominatePanel();
 }
@@ -6906,9 +6997,7 @@ async function collabCreateSession() {
   // Wait for the RTDB WebSocket to actually be connected before attempting a
   // write. If the SDK can't establish a socket within 8s the write would just
   // hang for the full 20s timeout below — fail fast with a useful message.
-  console.info('[collab] waiting for Firebase WebSocket…');
   const connected = await _waitForFirebaseConnection(8000);
-  console.info('[collab] WebSocket connected:', connected);
   if (!connected) {
     if (btn) { btn.disabled = false; btn.textContent = 'Create session →'; }
     const cspNote = _firebaseCspViolation ? '\n\nCSP block detected: ' + _firebaseCspViolation : '';
@@ -6919,7 +7008,7 @@ async function collabCreateSession() {
   if (btn) btn.textContent = 'Creating…';
 
   try {
-    const name = byId(IDS.collabMultiName).value.trim() || 'Host';
+    const name = byId(IDS.collabMultiName).value.trim().slice(0, 40) || 'Host';
     const code = _collabGenerateCode();
     _collab.isHost      = true;
     _collab.myName      = name;
@@ -6937,7 +7026,6 @@ async function collabCreateSession() {
     };
 
     const ref = _firebaseApp.database().ref('collab-sessions/' + code);
-    console.info('[collab] writing session', code, '…');
 
     // Race the write against a 20s timeout. The connection check above already
     // confirmed the WebSocket is open, so a hang here points at Security Rules
@@ -6946,7 +7034,6 @@ async function collabCreateSession() {
       setTimeout(() => reject(new Error('The server accepted the connection but the write never completed.\n\nThis usually means Firebase Realtime Database Security Rules are blocking writes to "collab-sessions/" for unauthenticated clients.')), 20000)
     );
     await Promise.race([ref.set(initialData), writeTimeout]);
-    console.info('[collab] session created OK');
     ref.child('createdAt').onDisconnect().remove();
 
     _collab.firebaseRef = ref;
@@ -6993,8 +7080,8 @@ async function collabCreateSession() {
 async function collabJoinSession() {
   if (!_FIREBASE_READY) return;
   const code = (byId(IDS.collabJoinInput).value || '').trim().toUpperCase();
-  const name = byId(IDS.collabMultiName).value.trim() || 'Guest';
-  if (code.length !== 6) return;
+  const name = byId(IDS.collabMultiName).value.trim().slice(0, 40) || 'Guest';
+  if (!_isValidSessionCode(code)) return;
 
   _stopFirebaseSync();
   _initFirebase();
@@ -7317,6 +7404,9 @@ function _collabSyncFromFirebase(data) {
   }
 
   if (data.phase === 'selecting-rounds') {
+    // v1.0.107 — extend host promotion to selecting-rounds. Without this, if
+    // the host closes mid-pick, the session is stuck on this phase forever.
+    _collabMaybePromoteHost(data);
     // Host is on the round picker — guests see a waiting message
     if (!_collab.isHost) {
       const guestStatus = byId(IDS.collabLobbyGuestStatus);
@@ -7363,6 +7453,11 @@ function _collabSyncFromFirebase(data) {
   }
 
   if (data.phase === 'voting') {
+    // v1.0.107 — extend host promotion to voting. Without this, if the host
+    // drops mid-game, only-the-host's logic that pushes battles + writes
+    // phase:'results' never runs, and guests are stuck on the current pair
+    // forever with no recovery.
+    _collabMaybePromoteHost(data);
     _collab.pairs       = data.pairs       || [];
     _collab.currentPair = data.currentPair || 0;
     const votePanel = byId(IDS.collabPanelVote);
@@ -7574,7 +7669,10 @@ function collabAddNomination(title, cover, id, format, episodes) {
   const noms = _collabMyNoms();
   if (noms.length >= 5) return;
   if (noms.some(n => n.title.toLowerCase() === title.toLowerCase())) return;
-  noms.push({ title, cover: cover || '', id: id || null, format: format || null, episodes: episodes || 0 });
+  // 150-char cap on title — long enough for any real anime title, short enough
+  // to stop a malicious/garbage write from bloating Firebase or other clients.
+  const safeTitle = (title || '').slice(0, 150);
+  noms.push({ title: safeTitle, cover: cover || '', id: id || null, format: format || null, episodes: episodes || 0 });
   _collabRenderNominations();
   byId(IDS.collabSearch).value = '';
   byId(IDS.collabSearchResults).innerHTML = '';
@@ -7789,6 +7887,17 @@ function _collabStartVoting() {
   for (const noms of _collab.nominees)
     for (const n of noms)
       if (!seen.has(n.title.toLowerCase())) { seen.add(n.title.toLowerCase()); pool.push(n); }
+
+  // v1.0.107 — need at least 2 unique shows to build a single pair; otherwise
+  // _collabBuildPairs returns [] and voting renders a blank panel with no exit.
+  if (pool.length < 2) {
+    showToast('⚠️ Need at least 2 different shows nominated to start voting.', 4000);
+    // Multi-device: revert phase so guests don't hang
+    if (_collab.mode === 'multi' && _collab.firebaseRef) {
+      _collab.firebaseRef.update({ phase: 'nominating' });
+    }
+    return;
+  }
 
   // Show round picker before voting begins
   _collabShowRoundPicker(pool);
@@ -8017,6 +8126,14 @@ function _collabRenderVotePairMulti(data) {
 
     // Host records battle and advances
     if (_collab.isHost) {
+      // v1.0.107 — guard against duplicate battle pushes when sync re-fires
+      // before the 2.8s timer completes (presence flip, late connected:true,
+      // etc.). Without _lastRecordedPair, every extra sync during the reveal
+      // window pushed another battle for the same idx, double-counting wins
+      // in the final results.
+      if (_collab._lastRecordedPair === idx) return;
+      _collab._lastRecordedPair = idx;
+
       const newBattles = [...(_collab.battles || []), {
         a: pair.a, b: pair.b,
         winner: winner ? winner.title : null,
@@ -8026,7 +8143,15 @@ function _collabRenderVotePairMulti(data) {
       // Reset votes for all players
       const clearedVotes = Object.fromEntries(Object.keys(players).map(pid => [`votes/${pid}`, null]));
 
-      setTimeout(() => {
+      // Track timer id on _collab so closeCollabModal can cancel it. Without
+      // this, if host taps ✕ during the 2.8s reveal animation the callback
+      // fires after _collab=null and throws TypeError on .firebaseRef.update,
+      // leaving the session stuck in 'voting' forever for guests.
+      // Also bail in-callback if _collab was torn down or already advanced.
+      if (_collab._voteAdvanceTimer) clearTimeout(_collab._voteAdvanceTimer);
+      _collab._voteAdvanceTimer = setTimeout(() => {
+        if (!_collab?.firebaseRef) return;
+        _collab._voteAdvanceTimer = null;
         const nextIdx = idx + 1;
         if (nextIdx >= (data.pairs?.length || 0)) {
           _collab.firebaseRef.update({ phase: 'results', results: newBattles });
@@ -8351,7 +8476,7 @@ async function runFriendRecs() {
           const avg   = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
           const mediaId = Number(media.id) || 0;
           return `
-            <a class="rec-card friend-rec-card" href="https://anilist.co/anime/${mediaId}" target="_blank">
+            <a class="rec-card friend-rec-card" href="https://anilist.co/anime/${mediaId}" target="_blank" rel="noopener noreferrer">
               <img src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
               <div class="friend-score-badge">${esc(username.slice(0,8))}: ${esc(friendScore)}</div>
               <div class="rec-card-body">
@@ -8437,7 +8562,7 @@ async function _runFriendRecsMal(username) {
         ${topRecs.map(({ malId, title, cover, format, avg, friendScore }) => {
           const safeId = Number(malId) || 0;
           return `
-          <a class="rec-card friend-rec-card" href="https://myanimelist.net/anime/${safeId}" target="_blank">
+          <a class="rec-card friend-rec-card" href="https://myanimelist.net/anime/${safeId}" target="_blank" rel="noopener noreferrer">
             <img src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
             <div class="friend-score-badge">${esc(username.slice(0,8))}: ${esc(friendScore)}</div>
             <div class="rec-card-body">
@@ -9233,7 +9358,7 @@ function _renderTasteStoryCard() {
       </div>`).join('');
     body.innerHTML = `
       <div class="ts-label">After ${card.battleMilestone} battles</div>
-      <div class="ts-headline ts-archetype" style="color:${card.accent}">${card.headline}</div>
+      <div class="ts-headline ts-archetype" style="color:${esc(card.accent)}">${esc(card.headline)}</div>
       <div class="ts-covers">${top3Html}</div>
       <div class="ts-share-actions">
         <button class="btn-primary" onclick="exportTasteStoryCard()">📸 Save image</button>
@@ -9241,20 +9366,20 @@ function _renderTasteStoryCard() {
       </div>`;
   } else if (card.type === 'champion' && card.cover) {
     body.innerHTML = `
-      <div class="ts-label">${card.label}</div>
+      <div class="ts-label">${esc(card.label)}</div>
       <div class="ts-champion-wrap">
-        <img class="ts-champion-cover" src="${esc(card.cover)}" alt="${esc(card.headline)}" onerror="this.style.display='none'" />
+        <img class="ts-champion-cover" src="${safeUrl(card.cover)}" alt="${esc(card.headline)}" onerror="this.style.display='none'" />
         <div class="ts-champion-info">
-          <div class="ts-headline" style="color:${card.accent}">${esc(card.headline)}</div>
-          <div class="ts-sub">${card.sub}</div>
+          <div class="ts-headline" style="color:${esc(card.accent)}">${esc(card.headline)}</div>
+          <div class="ts-sub">${esc(card.sub)}</div>
         </div>
       </div>
       <button class="ts-profile-link" onclick="closeTasteStory();_openProfileTab()">🎨 See full profile →</button>`;
   } else {
     body.innerHTML = `
-      <div class="ts-label">${card.label}</div>
-      <div class="ts-headline" style="color:${card.accent}">${esc(card.headline)}</div>
-      <div class="ts-sub">${card.sub}</div>
+      <div class="ts-label">${esc(card.label)}</div>
+      <div class="ts-headline" style="color:${esc(card.accent)}">${esc(card.headline)}</div>
+      <div class="ts-sub">${esc(card.sub)}</div>
       <button class="ts-profile-link" onclick="closeTasteStory();_openProfileTab()">🎨 See full profile →</button>`;
   }
 
@@ -10000,7 +10125,7 @@ function renderBattlesTab() {
   byId(IDS.statUpsets).innerHTML = upsets.length
     ? upsets.map(h =>
         `<div class="stat-anime-row">
-          <span><span style="color:#3fb950">${h.winnerTitle}</span> beat ${h.loserTitle}</span>
+          <span><span style="color:#3fb950">${esc(h.winnerTitle)}</span> beat ${esc(h.loserTitle)}</span>
           <span>+${h.eloDiffBefore} ELO gap</span>
         </div>`
       ).join('')
@@ -10115,7 +10240,7 @@ function renderRivalries() {
     const w1 = m.wins[m.idA] || 0;
     const w2 = m.wins[m.idB] || 0;
     return `<div class="rivalry-item">
-      <span class="rivalry-item-names">${n1} <span style="color:#8b949e">vs</span> ${n2}</span>
+      <span class="rivalry-item-names">${esc(n1)} <span style="color:#8b949e">vs</span> ${esc(n2)}</span>
       <span class="rivalry-badge">⚔️ ${w1}–${w2} (${m.total} battles)</span>
     </div>`;
   }).join('');
@@ -10406,7 +10531,7 @@ async function renderGenreStats() {
     chartEl.innerHTML = genres.map(g => {
       const pct = Math.round(((g.avg - minA) / range) * 80 + 20);
       return `<div class="genre-chart-row">
-        <div class="genre-chart-label" title="${g.name}">${g.name}</div>
+        <div class="genre-chart-label" title="${esc(g.name)}">${esc(g.name)}</div>
         <div class="genre-chart-track"><div class="genre-chart-fill" style="width:${pct}%"></div></div>
         <div class="genre-chart-value">${g.avg} <span style="color:#6e7681">(${g.count})</span></div>
       </div>`;
@@ -10437,7 +10562,7 @@ async function renderGenreStats() {
     eraEl.innerHTML = eras.map(e => {
       const pct = Math.round(((e.avg - minA) / range) * 80 + 20);
       return `<div class="genre-chart-row">
-        <div class="genre-chart-label">${e.label}</div>
+        <div class="genre-chart-label">${esc(e.label)}</div>
         <div class="genre-chart-track"><div class="genre-chart-fill era-fill" style="width:${pct}%"></div></div>
         <div class="genre-chart-value">${e.avg} <span style="color:#6e7681">(${e.count})</span></div>
       </div>`;
@@ -11064,9 +11189,9 @@ async function renderTasteProfile(forceRefetch = false) {
       const cards = insights.filter(c => c.type !== 'share' && c.type !== 'archetype');
       insightsEl.innerHTML = cards.map(c => `
         <div class="taste-insight-pill">
-          <span class="taste-insight-label">${c.label}</span>
-          ${c.headline ? `<span class="taste-insight-headline">${c.headline}</span>` : ''}
-          <span class="taste-insight-text">${c.sub}</span>
+          <span class="taste-insight-label">${esc(c.label)}</span>
+          ${c.headline ? `<span class="taste-insight-headline">${esc(c.headline)}</span>` : ''}
+          <span class="taste-insight-text">${esc(c.sub)}</span>
         </div>`).join('');
     }
   } else {
@@ -11974,10 +12099,10 @@ async function _predictorSearch(q) {
       return `<div class="predictor-dropdown-item" data-idx="${i}"
                    onmousedown="predictorPick(${m.id})"
                    onmouseover="predictorHover(${i})">
-        <img src="${cover}" alt="" aria-hidden="true" />
+        <img src="${safeUrl(cover)}" alt="" aria-hidden="true" />
         <div class="predictor-dropdown-item-info">
-          <div class="predictor-dropdown-item-title">${title}</div>
-          <div class="predictor-dropdown-item-meta">${[fmt, year].filter(Boolean).join(' · ')}</div>
+          <div class="predictor-dropdown-item-title">${esc(title)}</div>
+          <div class="predictor-dropdown-item-meta">${esc([fmt, year].filter(Boolean).join(' · '))}</div>
         </div>
       </div>`;
     }).join('');
@@ -12631,7 +12756,7 @@ function _paintTrio(fresh = false) {
               <button class="synopsis-btn"
                       onclick="trioToggleSynopsis(event,${pos})"
                       title="About this show">ℹ About</button>
-              <a class="card-anilist-link" href="${extUrl}" target="_blank"
+              <a class="card-anilist-link" href="${extUrl}" target="_blank" rel="noopener noreferrer"
                  onclick="event.stopPropagation()">↗ ${extLabel}</a>
               <button class="exclude-btn"
                       onclick="trioExcludeAnime(event,${pos})"
@@ -14650,9 +14775,11 @@ function openArchiveConfirm() {
     });
   }
   byId(IDS.archiveConfirmModal).style.display = 'flex';
+  pushModalBack('archiveConfirm', closeArchiveConfirm);
 }
 function closeArchiveConfirm() {
   byId(IDS.archiveConfirmModal).style.display = 'none';
+  popModalBack('archiveConfirm');
 }
 function closeArchiveConfirmOverlay(e) {
   if (e.target === byId(IDS.archiveConfirmModal)) closeArchiveConfirm();
@@ -14825,10 +14952,12 @@ function openNewAnimeConfirm() {
     });
   }
   byId(IDS.newAnimeConfirmModal).style.display = 'flex';
+  pushModalBack('newAnimeConfirm', closeNewAnimeConfirm);
 }
 
 function closeNewAnimeConfirm() {
   byId(IDS.newAnimeConfirmModal).style.display = 'none';
+  popModalBack('newAnimeConfirm');
 }
 
 function closeNewAnimeConfirmOverlay(e) {
@@ -14927,6 +15056,7 @@ function maybeOfferGuestMerge(targetSaveKey, onDone) {
       `Those ${overlap.length} overlapping anime will have their ELO & battle counts combined. Anime only in the guest session will NOT be added — they may no longer be on your list.`;
   }
   byId(IDS.guestMergeModal).style.display = 'flex';
+  pushModalBack('guestMerge', declineGuestMerge);
   return true;
 }
 
@@ -14938,6 +15068,7 @@ function acceptGuestMerge() {
   const ctx = _pendingGuestMergeContext;
   _pendingGuestMergeContext = null;
   byId(IDS.guestMergeModal).style.display = 'none';
+  popModalBack('guestMerge');
   if (!ctx) return;
   try {
     const result = _mergeGuestIntoActiveList();
@@ -14965,6 +15096,7 @@ function declineGuestMerge() {
   const ctx = _pendingGuestMergeContext;
   _pendingGuestMergeContext = null;
   byId(IDS.guestMergeModal).style.display = 'none';
+  popModalBack('guestMerge');
   if (ctx) {
     _markGuestMergeOffered(ctx.targetSaveKey);
     if (typeof ctx.onDone === 'function') ctx.onDone();
