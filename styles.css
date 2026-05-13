@@ -1361,6 +1361,11 @@
       grid-template-columns: 1fr 1fr;
       gap: 16px;
     }
+    /* min-width:0 on the grid children lets the 1fr columns actually shrink to
+       half the container width. Without it, grid items default to min-content
+       sizing, so a long anime title in an expanded studio panel pushes its
+       column wider and clips the negative numbers in the opposite column. */
+    .studio-affinity-grid > * { min-width: 0; }
     @media (max-width: 600px) { .studio-affinity-grid { grid-template-columns: 1fr; } }
 
     .studio-affinity-row {
