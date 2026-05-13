@@ -10708,8 +10708,14 @@ function toggleStudioAnimePanel(panelId, studioName) {
   panel.dataset.loaded = '1';
 
   const rankedIds = byId(IDS.statStudioAffinity)?._rankedIds || [];
+  // Match canonical-to-canonical — the affinity panel shows canonicalised names
+  // (e.g. "Madhouse" rolls in "MADHOUSE" + "Madhouse Inc.") but the raw studios
+  // array on each anime still has the original AniList strings. A literal
+  // includes() check missed every anime under a canonical alias, so a studio
+  // could show "(27) +4" but expand to an empty list. Apply the same canonical
+  // transform on each side and the count matches the panel content.
   const anime = animeList
-    .filter(a => (a.studios || []).includes(studioName))
+    .filter(a => (a.studios || []).some(s => _canonicalStudio(s) === studioName))
     .sort((a, b) => {
       const ra = rankedIds.indexOf(a.id);
       const rb = rankedIds.indexOf(b.id);
