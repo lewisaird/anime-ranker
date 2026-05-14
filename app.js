@@ -1572,26 +1572,26 @@ async function fetchAllAnime(username, seedFromScores = false) {
   // Use status field so custom-named lists are handled correctly.
   // Include Completed, Currently Watching, and Rewatching only — skip Dropped, Paused, Planning.
   const WATCHED_STATUSES = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
-  // Dedupe by media.id — an entry can appear in multiple lists (Completed +
-  // custom lists), and previously each duplicate became a separate row in the
-  // user's library. Use a Map so the first occurrence wins; AniList always
-  // returns the same score/status per entry regardless of which list reference
-  // we hit (the entry record is shared).
-  const dedup = new Map();
-  for (const l of lists) {
-    for (const e of (l.entries ?? [])) {
-      if (!e.media || !WATCHED_STATUSES.has(e.status)) continue;
-      if (!dedup.has(e.media.id)) dedup.set(e.media.id, e);
-    }
-  }
-  const allEntries = [...dedup.values()];
+  const allRaw = lists.flatMap(l => l.entries ?? []).filter(e => WATCHED_STATUSES.has(e.status));
 
   // AniList occasionally returns null media for delisted/removed shows — skip those silently
   // but surface the count to the caller so they can warn the user.
+  // Also dedup by media.id — an entry can appear in multiple lists (Completed
+  // + custom lists), and previously each duplicate became a separate row in
+  // the user's library. AniList returns the same record per reference, so
+  // first occurrence wins lossless.
+  const seenIds = new Set();
+  const allEntries = allRaw.filter(e => {
+    if (!e.media) return false;
+    if (seenIds.has(e.media.id)) return false;
+    seenIds.add(e.media.id);
+    return true;
+  });
+
   // Also filter out AniList-flagged adult titles unless the user has opted in
   // via localStorage (KESSEN_KEYS.settings.allowAdult = '1'). Keeps Play Store IARC Teen.
   const ALLOW_ADULT = localStorage.getItem(KESSEN_KEYS.settings.allowAdult) === '1';
-  const skipped = 0; // null-media entries already excluded by dedup loop
+  const skipped = allRaw.filter(e => !e.media).length;
   const entries = allEntries
     .filter(e => ALLOW_ADULT || !e.media.isAdult);
 
@@ -2184,6 +2184,24 @@ function loadState(username, source = 'anilist') {
       if (a.popularity === undefined) a.popularity = 0;
       if (a.battles    === undefined) a.battles    = _avgBattles; // estimated from average
     });
+    // v1.0.116 — dedup any duplicate-ID entries that snuck in before the
+    // custom-list dedup at fetch time in v1.0.115. Keep the entry with the
+    // most battles (most established), tiebreak by highest ELO. Preserves
+    // animeList order so UI positions stay stable. saveState() isn't called
+    // here — the next regular save picks it up.
+    const _byId = new Map();
+    for (const a of animeList) {
+      const cur = _byId.get(a.id);
+      if (!cur) { _byId.set(a.id, a); continue; }
+      const newer = (a.battles || 0) > (cur.battles || 0)
+        || ((a.battles || 0) === (cur.battles || 0) && (a.elo || 0) > (cur.elo || 0));
+      if (newer) _byId.set(a.id, a);
+    }
+    if (_byId.size < animeList.length) {
+      const removed = animeList.length - _byId.size;
+      animeList = animeList.filter(a => _byId.get(a.id) === a);
+      console.warn('[migrate] removed', removed, 'duplicate anime entries');
+    }
     return true;
   } catch { return false; }
 }
