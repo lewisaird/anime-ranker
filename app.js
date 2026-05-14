@@ -1496,10 +1496,30 @@ function stripHtml(str) {
   return String(str).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function scoreToElo(score) {
-  // Maps AniList 1-10 score to starting ELO: 10→1500, 7→1200, 4→900
-  if (!score || score === 0) return 1200;
-  return Math.max(800, Math.min(1600, 1200 + (score - 7) * 100));
+// Normalise a score from any AniList format to the 1-10 scale that scoreToElo
+// expects. Without this, a user on POINT_100 with scores of 75/100 was treated
+// as if they scored 75/10 — getting clamped to ELO 1600 for almost every show.
+function _normalizeScoreTo10(score, format) {
+  if (!score) return 0;
+  switch (format) {
+    case 'POINT_100':        return score / 10;     // 75/100 → 7.5
+    case 'POINT_10_DECIMAL': return score;          // 7.5/10 → 7.5
+    case 'POINT_10':         return score;          // 7/10   → 7
+    case 'POINT_5':          return score * 2;      // 4/5    → 8
+    case 'POINT_3':          return score * (10/3); // 2/3    → ~6.7
+    default:                 return score;          // unknown — assume 10-pt
+  }
+}
+
+function scoreToElo(score, format = 'POINT_10') {
+  // Maps a user's score to starting ELO. The 1-10 scale anchors: 10→1500,
+  // 7→1200 (neutral median), 4→900. Unscored entries also return 1200 — the
+  // neutral default — which means an unscored show starts at the same place
+  // as a 7. That's intentional: 7 is "fine but unremarkable" and unscored is
+  // "no signal yet"; both sit at the median until battles move them.
+  const score10 = _normalizeScoreTo10(score, format);
+  if (!score10) return 1200;
+  return Math.max(800, Math.min(1600, 1200 + (score10 - 7) * 100));
 }
 
 async function fetchAllAnime(username, seedFromScores = false) {
@@ -1552,20 +1572,35 @@ async function fetchAllAnime(username, seedFromScores = false) {
   // Use status field so custom-named lists are handled correctly.
   // Include Completed, Currently Watching, and Rewatching only — skip Dropped, Paused, Planning.
   const WATCHED_STATUSES = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
-  const allEntries = lists.flatMap(l => l.entries ?? []).filter(e => WATCHED_STATUSES.has(e.status));
+  // Dedupe by media.id — an entry can appear in multiple lists (Completed +
+  // custom lists), and previously each duplicate became a separate row in the
+  // user's library. Use a Map so the first occurrence wins; AniList always
+  // returns the same score/status per entry regardless of which list reference
+  // we hit (the entry record is shared).
+  const dedup = new Map();
+  for (const l of lists) {
+    for (const e of (l.entries ?? [])) {
+      if (!e.media || !WATCHED_STATUSES.has(e.status)) continue;
+      if (!dedup.has(e.media.id)) dedup.set(e.media.id, e);
+    }
+  }
+  const allEntries = [...dedup.values()];
 
   // AniList occasionally returns null media for delisted/removed shows — skip those silently
   // but surface the count to the caller so they can warn the user.
   // Also filter out AniList-flagged adult titles unless the user has opted in
   // via localStorage (KESSEN_KEYS.settings.allowAdult = '1'). Keeps Play Store IARC Teen.
   const ALLOW_ADULT = localStorage.getItem(KESSEN_KEYS.settings.allowAdult) === '1';
-  const skipped = allEntries.filter(e => !e.media).length;
+  const skipped = 0; // null-media entries already excluded by dedup loop
   const entries = allEntries
-    .filter(e => e.media)
     .filter(e => ALLOW_ADULT || !e.media.isAdult);
 
+  // Use the user's actual AniList scoring format when seeding ELO — POINT_100
+  // users score 75/100 etc., which scoreToElo() must normalise before mapping.
+  const scoreFmt = authUser?.scoreFormat || 'POINT_10';
+
   const mapped = entries.map(e => {
-    const startElo = seedFromScores ? scoreToElo(e.score) : 1200;
+    const startElo = seedFromScores ? scoreToElo(e.score, scoreFmt) : 1200;
     const titleEn  = e.media.title.english || e.media.title.romaji;
     const titleRo  = e.media.title.romaji  || e.media.title.english;
     return {
@@ -9997,12 +10032,10 @@ function _checkAchievements() {
   const hasOldSoul = top10.some(a => a.seasonYear && a.seasonYear < 1990);
   _tryUnlock('old-soul', hasOldSoul, '📼 Old Soul');
 
-  // Rival — rivalries in matchupStats (3+ battles, split results)
-  const rivalryCount = Object.values(matchupStats).filter(m =>
-    m.total >= 3 &&
-    Object.keys(m.wins).length >= 2 &&
-    Object.values(m.wins).every(w => w >= 1)
-  ).length;
+  // Rival — franchise-vs-franchise rivalries with 3+ battles + at least one
+  // win each side. Uses the same aggregator as the Stats tab so the trophy
+  // count matches what the user sees.
+  const rivalryCount = _computeFranchiseRivalries().length;
   _tryUnlock('rival-bronze', rivalryCount >= 1, '🤺 Rival (Bronze)');
   _tryUnlock('rival-silver', rivalryCount >= 3, '🤺 Rival (Silver)');
   _tryUnlock('rival-gold',   rivalryCount >= 5, '🤺 Rival (Gold)');
@@ -10194,56 +10227,104 @@ function renderSocialTab() {
 }
 
 // ─── RIVALRY TRACKER ──────────────────────────────────────────────────────────
-function renderRivalries() {
-  // Build from persistent matchupStats (survives the 200-battle history cap).
-  // For legacy saves without matchupStats, fall back to scanning battleHistory.
-  let source = matchupStats;
-  const hasStats = Object.keys(matchupStats).length > 0;
-  if (!hasStats) {
-    // Legacy: rebuild a temporary map from history
-    const tmp = {};
+// v1.0.113 — Rivalries pivoted from same-anime-pair to franchise-vs-franchise.
+// The old version required two specific anime to have battled 3+ times with
+// split results — vanishingly rare under ELO matchmaking, so most users saw an
+// empty section. Franchise-level reframing gives the feature real data: a
+// user who keeps comparing some MHA show against some Demon Slayer show has
+// a real "MHA vs Demon Slayer" rivalry even though the individual matchups
+// differ each time. Stand-alone shows count as a "franchise of one".
+function _computeFranchiseRivalries() {
+  const relMap = _computeFranchiseIds();
+  const fkey   = (id) => {
+    const root = relMap.get(id);
+    return root != null ? `rel:${root}` : `id:${id}`;
+  };
+
+  // Aggregate battle counts per franchise pair. Prefer matchupStats (uncapped)
+  // when available; fall back to battleHistory for legacy saves.
+  const pairs = new Map(); // pairKey → { kA, kB, winsA, winsB, total }
+  const bump = (idA, idB, winsA, winsB) => {
+    const kA = fkey(idA), kB = fkey(idB);
+    if (kA === kB) return; // intra-franchise battles don't count
+    const [pA, pB] = kA < kB ? [kA, kB] : [kB, kA];
+    const [wA, wB] = kA < kB ? [winsA, winsB] : [winsB, winsA];
+    const key = pA + '|' + pB;
+    let p = pairs.get(key);
+    if (!p) { p = { kA: pA, kB: pB, winsA: 0, winsB: 0, total: 0 }; pairs.set(key, p); }
+    p.winsA += wA; p.winsB += wB; p.total += wA + wB;
+  };
+
+  if (Object.keys(matchupStats).length > 0) {
+    Object.entries(matchupStats).forEach(([key, m]) => {
+      const [idAStr, idBStr] = key.split('-');
+      const idA = Number(idAStr), idB = Number(idBStr);
+      bump(idA, idB, m.wins[idA] || 0, m.wins[idB] || 0);
+    });
+  } else {
     battleHistory.forEach(h => {
       const idW = h.winnerId ?? null, idL = h.loserId ?? null;
       if (!idW || !idL) return;
-      const key = [Math.min(idW, idL), Math.max(idW, idL)].join('-');
-      if (!tmp[key]) tmp[key] = {
-        wins: {}, total: 0,
-        titleA: idW < idL ? h.winnerTitle : h.loserTitle,
-        titleB: idW < idL ? h.loserTitle  : h.winnerTitle,
-      };
-      tmp[key].wins[idW] = (tmp[key].wins[idW] || 0) + 1;
-      tmp[key].total++;
+      bump(idW, idL, 1, 0);
     });
-    source = tmp;
   }
 
-  const rivalries = [];
-  Object.entries(source).forEach(([key, m]) => {
-    const [idAStr, idBStr] = key.split('-');
-    const idA = Number(idAStr), idB = Number(idBStr);
-    if (m.total < 3) return;
-    const winCounts = Object.values(m.wins);
-    if (winCounts.length < 2 || !winCounts.every(w => w >= 1)) return; // must be split
-    rivalries.push({ ...m, idA, idB });
+  // Build a display record per franchise: the OLDEST entry (lowest seasonYear)
+  // is used as the franchise's name — almost always the original/season 1
+  // that users recognise. Previously this picked the highest-ELO member,
+  // which made rivalries read as "Attack on Titan Final Season vs ..."
+  // instead of the franchise-level "Attack on Titan vs ...". Tiebreak by ELO
+  // when years are equal or missing.
+  const display = new Map();
+  const count   = new Map();
+  animeList.forEach(a => {
+    const k = fkey(a.id);
+    count.set(k, (count.get(k) || 0) + 1);
+    const cur   = display.get(k);
+    const aYear = a.seasonYear || Infinity;
+    const aElo  = a.elo || 0;
+    if (!cur || aYear < cur.year || (aYear === cur.year && aElo > cur.elo)) {
+      display.set(k, { title: a.title, cover: a.cover, elo: aElo, year: aYear });
+    }
   });
 
+  // Qualify: 3+ total battles AND both sides have at least one win.
+  const out = [];
+  pairs.forEach(p => {
+    if (p.total < 3) return;
+    if (p.winsA === 0 || p.winsB === 0) return;
+    const dA = display.get(p.kA), dB = display.get(p.kB);
+    if (!dA || !dB) return; // franchise no longer in user's list
+    out.push({
+      kA: p.kA, kB: p.kB,
+      titleA: dA.title, titleB: dB.title,
+      countA: count.get(p.kA) || 1,
+      countB: count.get(p.kB) || 1,
+      winsA: p.winsA, winsB: p.winsB, total: p.total,
+    });
+  });
+  return out;
+}
+
+function renderRivalries() {
+  const rivalries = _computeFranchiseRivalries();
   const section = byId(IDS.rivalrySection);
   const list    = byId(IDS.rivalryList);
   if (rivalries.length === 0) { section.style.display = 'none'; return; }
 
   section.style.display = 'block';
-  list.innerHTML = rivalries.sort((a, b) => b.total - a.total).map(m => {
-    const anime1 = animeList.find(a => a.id === m.idA);
-    const anime2 = animeList.find(a => a.id === m.idB);
-    const n1 = anime1?.title ?? m.titleA;
-    const n2 = anime2?.title ?? m.titleB;
-    const w1 = m.wins[m.idA] || 0;
-    const w2 = m.wins[m.idB] || 0;
-    return `<div class="rivalry-item">
-      <span class="rivalry-item-names">${esc(n1)} <span style="color:#8b949e">vs</span> ${esc(n2)}</span>
-      <span class="rivalry-badge">⚔️ ${w1}–${w2} (${m.total} battles)</span>
-    </div>`;
-  }).join('');
+  list.innerHTML = rivalries
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5)
+    .map(r => {
+      // Show franchise size tag only when it's actually a franchise (>1 entry)
+      const tagA = r.countA > 1 ? ` <span style="color:#6e7681;font-size:0.85em">(${r.countA})</span>` : '';
+      const tagB = r.countB > 1 ? ` <span style="color:#6e7681;font-size:0.85em">(${r.countB})</span>` : '';
+      return `<div class="rivalry-item">
+        <span class="rivalry-item-names">${esc(r.titleA)}${tagA} <span style="color:#8b949e">vs</span> ${esc(r.titleB)}${tagB}</span>
+        <span class="rivalry-badge">⚔️ ${r.winsA}–${r.winsB} (${r.total} battle${r.total !== 1 ? 's' : ''})</span>
+      </div>`;
+    }).join('');
 }
 
 // ─── SYNOPSIS TOGGLE ──────────────────────────────────────────────────────────
