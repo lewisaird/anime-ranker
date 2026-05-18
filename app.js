@@ -9048,17 +9048,22 @@ function buildSparkline(history) {
 }
 
 // ─── MILESTONES ───────────────────────────────────────────────────────────────
-const TASTE_STORY_MILESTONES = [50, 100, 150, 200, 300, 400, 500, 600];
+// Fixed milestones every 100 from 200 to 1000 (with extra ones at 50/150 for
+// early engagement). After 1000 we shift to a 200-step cadence so the popup
+// doesn't get spammy once the user has settled in for the long haul. Without
+// the 700/800/900 entries, the previous logic computed `next = 800` at battle
+// 700 and skipped the milestone entirely.
+const TASTE_STORY_MILESTONES = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
 const TASTE_STORY_REPEAT_INTERVAL = 200;
+const TASTE_STORY_REPEAT_FROM     = 1000;
 
 // Returns the milestone value crossed between before and after, or null.
-// Fixed early milestones first, then every TASTE_STORY_REPEAT_INTERVAL after 500.
 function _findTasteStoryMilestone(before, after) {
   const fixed = TASTE_STORY_MILESTONES.find(n => before < n && after >= n);
   if (fixed) return fixed;
-  if (after > 500) {
+  if (after > TASTE_STORY_REPEAT_FROM) {
     const next = Math.ceil((before + 1) / TASTE_STORY_REPEAT_INTERVAL) * TASTE_STORY_REPEAT_INTERVAL;
-    if (next > 500 && next <= after) return next;
+    if (next > TASTE_STORY_REPEAT_FROM && next <= after) return next;
   }
   return null;
 }
@@ -9078,12 +9083,29 @@ function _lastTasteStoryMilestone(count) {
 function _tasteArchetypeIndex(milestone) {
   const fixedIdx = TASTE_STORY_MILESTONES.indexOf(milestone);
   if (fixedIdx !== -1) return fixedIdx;
-  return TASTE_STORY_MILESTONES.length + Math.round((milestone - 500) / TASTE_STORY_REPEAT_INTERVAL) - 1;
+  // Milestones above the fixed list (1000+) get sequential indices from where
+  // the fixed list left off, stepping by the repeat interval.
+  return TASTE_STORY_MILESTONES.length
+       + Math.round((milestone - TASTE_STORY_REPEAT_FROM) / TASTE_STORY_REPEAT_INTERVAL) - 1;
 }
 
 function checkMilestone(before, after) {
   // Taste story — check before the regular milestone so it appears first
-  const tasteHit = _findTasteStoryMilestone(before, after);
+  let tasteHit = _findTasteStoryMilestone(before, after);
+
+  // Catch-up: if no milestone was crossed in this battle but there's an
+  // unseen fixed milestone <= current battle count, show the most recent one.
+  // This handles the case where the milestone list grew between releases and
+  // an existing user passed (e.g.) 700 before it existed — without this they'd
+  // have to wait until 800 to see their next card.
+  if (!tasteHit && after >= TASTE_STORY_MILESTONES[0]) {
+    try {
+      const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
+      const unseen = TASTE_STORY_MILESTONES.filter(n => n <= after && !seen.includes(n));
+      if (unseen.length) tasteHit = unseen[unseen.length - 1];
+    } catch { /* ignore */ }
+  }
+
   if (tasteHit && animeList.length >= 10) {
     try {
       const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
