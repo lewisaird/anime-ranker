@@ -10306,10 +10306,14 @@ function _computeFranchiseRivalries() {
     }
   });
 
-  // Qualify: 3+ total battles AND both sides have at least one win.
+  // Qualify: 2+ total battles AND both sides have at least one win. The
+  // original 3+ threshold was too tight for large libraries — with 600 battles
+  // across 300+ anime, expected franchise-pair count is well below 1 for most
+  // pairs. 2+ with at least one win each side (so a 1-1 split) is the lowest
+  // meaningful signal: same two franchises keep meeting AND neither dominates.
   const out = [];
   pairs.forEach(p => {
-    if (p.total < 3) return;
+    if (p.total < 2) return;
     if (p.winsA === 0 || p.winsB === 0) return;
     const dA = display.get(p.kA), dB = display.get(p.kB);
     if (!dA || !dB) return; // franchise no longer in user's list
