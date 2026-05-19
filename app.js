@@ -2255,11 +2255,22 @@ function expectedScore(ra, rb) {
   return 1 / (1 + Math.pow(10, (rb - ra) / 400));
 }
 
+// Provisional period — anime with fewer than this many prior battles get a
+// 50% larger K-factor so they reach their true rating quickly. Standard
+// chess-ELO practice. Once they pass the threshold, K drops to normal and
+// their rating stabilises, resisting later inflation from Tower runs etc.
+const K_PROVISIONAL          = 48;
+const PROVISIONAL_BATTLES    = 20;
+
 function updateElo(winner, loser) {
+  // Asymmetric K — only the under-experienced side moves faster. Established
+  // anime keep their stable K so beating a newbie doesn't inflate them.
+  const kW = (winner.battles || 0) < PROVISIONAL_BATTLES ? K_PROVISIONAL : K;
+  const kL = (loser.battles  || 0) < PROVISIONAL_BATTLES ? K_PROVISIONAL : K;
   const ea = expectedScore(winner.elo, loser.elo);
   const eb = expectedScore(loser.elo, winner.elo);
-  winner.elo = Math.round(winner.elo + K * (1 - ea));
-  loser.elo  = Math.max(ELO_FLOOR, Math.round(loser.elo + K * (0 - eb)));
+  winner.elo = Math.round(winner.elo + kW * (1 - ea));
+  loser.elo  = Math.max(ELO_FLOOR, Math.round(loser.elo + kL * (0 - eb)));
   winner.wins++;
   loser.losses++;
   winner.comparisons++;
@@ -13343,31 +13354,13 @@ function startTower(championIdx) {
   const modeBtn  = byId(IDS.modeBtn);
   if (modeBtn) { modeBtn.classList.add('active-tower'); modeBtn.textContent = '⚡ Mode: Tower'; }
 
-  // Pre-select 10 opponents: spread across ELO range for variety
-  const pool = animeList
-    .map((a, i) => ({ i, a }))
-    .filter(({ i, a }) =>
-      i !== championIdx &&
-      !excludedIds.has(a.id) &&
-      !hiddenFormats.has(a.format)
-    )
-    .sort((x, y) => y.a.elo - x.a.elo);
-
-  // Pick opponents at 10 evenly-spaced percentile positions
+  // v1.0.120 — opponents are picked lazily per-round in renderTowerRound() so
+  // the matchmaking band can adapt to the champion's current ELO as it shifts
+  // during the run. Previous behaviour pre-selected 10 opponents spread across
+  // the full ELO percentile range, which for a champion near the top of the
+  // list meant most opponents were weaker — every win nudged ELO up, multi-run
+  // Tower farming pushed mediocre anime to #1.
   towerOpponents = [];
-  for (let k = 0; k < TOWER_ROUNDS; k++) {
-    const targetPct = (k + 0.5) / TOWER_ROUNDS;
-    const targetIdx = Math.floor(targetPct * pool.length);
-    // Add slight jitter so it's not perfectly predictable
-    const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(pool.length * 0.08)));
-    const pick = pool[Math.min(targetIdx + jitter, pool.length - 1)];
-    towerOpponents.push(pick.i);
-  }
-  // Shuffle opponents so the order isn't predictable
-  for (let k = towerOpponents.length - 1; k > 0; k--) {
-    const j = Math.floor(Math.random() * (k + 1));
-    [towerOpponents[k], towerOpponents[j]] = [towerOpponents[j], towerOpponents[k]];
-  }
 
   // Update UI for tower mode
   show('battle-screen');
@@ -13383,7 +13376,47 @@ function startTower(championIdx) {
   renderTowerRound();
 }
 
+// Pick the next Tower opponent from a ±200 ELO band around the champion's
+// CURRENT ELO. Expands the band if there aren't enough candidates. Random
+// sample from the band so repeat Tower runs aren't predictable. Excludes
+// anime already used in this run.
+function _pickNextTowerOpponent(champIdx) {
+  const champion = animeList[champIdx];
+  const usedIds  = new Set(towerOpponents
+    .filter(idx => idx != null)
+    .map(idx => animeList[idx]?.id));
+
+  for (const bandWidth of [200, 350, 600, Infinity]) {
+    const candidates = [];
+    for (let i = 0; i < animeList.length; i++) {
+      if (i === champIdx) continue;
+      const a = animeList[i];
+      if (!a || excludedIds.has(a.id) || hiddenFormats.has(a.format)) continue;
+      if (usedIds.has(a.id)) continue;
+      if (Math.abs((a.elo || 1200) - (champion.elo || 1200)) > bandWidth) continue;
+      candidates.push(i);
+    }
+    if (candidates.length) {
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+  }
+  return -1; // shouldn't happen unless library is tiny
+}
+
 function renderTowerRound() {
+  // Lazy-pick this round's opponent based on the champion's current ELO so
+  // matchmaking adapts as the champion gains/loses rating during the run.
+  if (towerOpponents[towerRound] == null) {
+    const oppIdx = _pickNextTowerOpponent(towerChampIdx);
+    if (oppIdx < 0) {
+      // Library exhausted — end the run early
+      showToast('⚠️ Not enough opponents left for Tower — ending run.', 4000);
+      endTower();
+      return;
+    }
+    towerOpponents[towerRound] = oppIdx;
+  }
+
   const pct = (towerRound / TOWER_ROUNDS) * 100;
   byId(IDS.towerProgressBar).style.width = pct + '%';
   byId(IDS.towerStatus).textContent =
