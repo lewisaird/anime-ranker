@@ -14707,7 +14707,10 @@ function _ncStopSync() {
 // unread entry of the same type so the count stays fresh. finish_prompt is
 // deduplicated per anime ID.
 function _ncAdd(type, msg, data = {}) {
-  if (type === 'new_anime' || type === 'removed_anime') {
+  // removed_anime stays single-entry (replaces existing). new_anime is now
+  // allowed multiple entries — _refreshListBanners clears stale ones itself
+  // before adding fresh ones, so we don't need to dedupe here.
+  if (type === 'removed_anime') {
     const idx = _notifCentre.findIndex(n => n.type === type);
     if (idx >= 0) {
       _notifCentre[idx] = { ..._notifCentre[idx], msg, data, timestamp: Date.now(), read: false };
@@ -14718,6 +14721,14 @@ function _ncAdd(type, msg, data = {}) {
   }
   if (type === 'finish_prompt' && data.animeId) {
     if (_notifCentre.some(n => n.type === 'finish_prompt' && n.data?.animeId === data.animeId)) return;
+  }
+  // Dedup new_anime entries by anime id so the same show isn't queued twice
+  // (e.g. two consecutive syncs before the user acts).
+  if (type === 'new_anime' && data.anime?.length === 1) {
+    const id = data.anime[0].id;
+    if (_notifCentre.some(n => n.type === 'new_anime'
+                            && n.data?.anime?.length === 1
+                            && n.data.anime[0]?.id === id)) return;
   }
   _notifCentre.unshift({
     id: `nc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -14754,11 +14765,50 @@ function _ncIcon(type) {
 function _ncActionBtn(n) {
   if (n.type === 'finish_prompt')
     return `<button class="nc-action-btn" onclick="ncActionFinishTower('${n.id}')">⚡ Battle in Tower</button>`;
-  if (n.type === 'new_anime')
-    return `<button class="nc-action-btn" onclick="ncActionAddAnime('${n.id}')">➕ Add to rankings</button>`;
+  if (n.type === 'new_anime') {
+    // Single-anime entries get an extra "Add & Tower" button so users can add
+    // and immediately stress-test a freshly-completed film/short without
+    // hunting for it in the rankings first. Bulk grouped entries (>=5) keep
+    // just the review-modal button.
+    const single = n.data?.anime?.length === 1;
+    const addBtn = `<button class="nc-action-btn" onclick="ncActionAddAnime('${n.id}')">➕ Add to rankings</button>`;
+    const towerBtn = single
+      ? `<button class="nc-action-btn" onclick="ncActionAddAndTower('${n.id}')">⚡ Add &amp; Tower</button>`
+      : '';
+    return addBtn + towerBtn;
+  }
   if (n.type === 'removed_anime')
     return `<button class="nc-action-btn" onclick="ncActionReviewRemoved('${n.id}')">📋 Review</button>`;
   return '';
+}
+
+// v1.0.121 — adds the new anime to animeList with smart-ELO seeding, then
+// immediately starts a Tower run with it as champion. Used from the bell
+// when the entry represents a single new anime (most useful for films/OVAs
+// that bypass the CURRENT→COMPLETED finish prompt).
+function ncActionAddAndTower(id) {
+  const notif = _notifCentre.find(n => n.id === id);
+  const newAnime = notif?.data?.anime?.[0];
+  if (!newAnime) return;
+  // If somehow already in the list, just start Tower against the existing one
+  const existingIdx = animeList.findIndex(a => a.id === newAnime.id);
+  let championIdx;
+  if (existingIdx >= 0) {
+    championIdx = existingIdx;
+  } else {
+    const { elo } = _calcSmartElo(newAnime);
+    newAnime.elo = elo;
+    newAnime.eloHistory = [elo];
+    animeList.push(newAnime);
+    _pendingNewAnime = _pendingNewAnime.filter(a => a.id !== newAnime.id);
+    championIdx = animeList.length - 1;
+    saveState();
+  }
+  ncDismiss(id);
+  closeNotifCentre();
+  // If no more pending new anime, drop the banner
+  if (!_pendingNewAnime.length) byId(IDS.newAnimeBanner)?.classList.remove('active');
+  startTower(championIdx);
 }
 
 function _ncRenderList() {
@@ -14922,12 +14972,33 @@ function _refreshListBanners(sourceName) {
     const newText = `🆕 ${_pendingNewAnime.length} new anime on your ${sourceName} — not yet in rankings`;
     if (newMsg) newMsg.textContent = newText;
     newBanner?.classList.add('active');
-    // Save to Notification Centre so it survives a banner dismiss
-    _ncAdd('new_anime',
-      `${_pendingNewAnime.length} new anime found on your ${sourceName} — not yet in rankings`,
-      { anime: _pendingNewAnime.slice() });
+    // v1.0.121 — threshold-based bell entries. Clear any stale new_anime
+    // entries first so we always reflect the current pending list, then either
+    // create individual per-anime entries (with an Add & Tower button each)
+    // for small deltas, or a single grouped entry for larger bulk syncs.
+    _notifCentre = _notifCentre.filter(n => n.type !== 'new_anime');
+    if (_pendingNewAnime.length < 5) {
+      // Per-anime entries — each gets a Tower button so films / OVAs / etc.
+      // that bypass the CURRENT→COMPLETED transition still get a prompt.
+      _pendingNewAnime.forEach(a => {
+        _ncAdd('new_anime',
+          `${a.title} added on your ${sourceName} — not yet in rankings`,
+          { anime: [a] });
+      });
+    } else {
+      // Bulk: one grouped notification to avoid flooding the bell.
+      _ncAdd('new_anime',
+        `${_pendingNewAnime.length} new anime found on your ${sourceName} — not yet in rankings`,
+        { anime: _pendingNewAnime.slice() });
+    }
+    _ncSave();
+    _ncUpdateBell();
   } else {
     newBanner?.classList.remove('active');
+    // No pending new anime — drop any leftover bell entries from prior syncs.
+    const before = _notifCentre.length;
+    _notifCentre = _notifCentre.filter(n => n.type !== 'new_anime');
+    if (_notifCentre.length !== before) { _ncSave(); _ncUpdateBell(); }
   }
 
   // Safety cap: if somehow >60% of the ranked list appears "removed", the
