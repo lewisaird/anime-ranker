@@ -341,8 +341,16 @@ let nextPairOverride = null; // [idxA, idxB] — used once after an undo to rest
 let battleHistory   = [];    // [{winnerTitle, loserTitle, winnerEloAfter, loserEloAfter, eloSwing}]
 const MAX_HISTORY   = 1000;
 let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
-let hiddenFormats   = new Set(); // formats hidden from battles AND rankings (e.g. 'OVA', 'ONA')
-let hiddenEpRanges  = new Set(); // episode-length buckets hidden from rankings
+// v1.0.123 — filter scope split. Beta testers reported that hiding a format
+// on Rankings also hid it from the battle pool (and vice-versa), making the
+// "rank everything but only battle TV series" use case impossible. Each
+// filter UI now writes to its own scope:
+//   - Battle "≡ Filter" popover  → hiddenFormatsBattle  / hiddenEpRangesBattle
+//   - Rankings format / length   → hiddenFormatsRanking / hiddenEpRangesRanking
+let hiddenFormatsBattle   = new Set(); // formats hidden from the battle pool only
+let hiddenFormatsRanking  = new Set(); // formats hidden from the Rankings list only
+let hiddenEpRangesBattle  = new Set(); // episode-length buckets hidden from battles
+let hiddenEpRangesRanking = new Set(); // episode-length buckets hidden from Rankings
 let _pendingNewAnime    = [];    // anime on AniList not yet in rankings (new anime detection)
 let _pendingRemovedAnime = [];   // anime in rankings but no longer on the external list (§5.2.7)
 let _finishPromptQueue  = [];   // queue of {id, title, cover, detectedAt} for post-finish Tower prompts
@@ -609,8 +617,10 @@ function _clearRankingState() {
   currentB          = null;
   battleHistory     = [];
   excludedIds       = new Set();
-  hiddenFormats     = new Set();
-  hiddenEpRanges    = new Set();
+  hiddenFormatsBattle     = new Set();
+  hiddenFormatsRanking    = new Set();
+  hiddenEpRangesBattle    = new Set();
+  hiddenEpRangesRanking   = new Set();
   saveKey           = '';
   prevState         = null;
   undoStack         = [];
@@ -1590,10 +1600,16 @@ async function fetchAllAnime(username, seedFromScores = false) {
 
   // Also filter out AniList-flagged adult titles unless the user has opted in
   // via localStorage (KESSEN_KEYS.settings.allowAdult = '1'). Keeps Play Store IARC Teen.
+  // v1.0.133 — Drop format=MUSIC at import. Music videos (Yonezu's Paprika,
+  // Vocaloid MVs, anime OPs/EDs that AniList catalogues as standalone entries)
+  // aren't really anime in the ranking sense — a 2-minute MV can't be
+  // meaningfully ELO-paired against a film, and identical titles like Paprika
+  // (Satoshi Kon film) vs Paprika (Foorin song) collide in franchise grouping.
   const ALLOW_ADULT = localStorage.getItem(KESSEN_KEYS.settings.allowAdult) === '1';
   const skipped = allRaw.filter(e => !e.media).length;
   const entries = allEntries
-    .filter(e => ALLOW_ADULT || !e.media.isAdult);
+    .filter(e => ALLOW_ADULT || !e.media.isAdult)
+    .filter(e => e.media.format !== 'MUSIC');
 
   // Use the user's actual AniList scoring format when seeding ELO — POINT_100
   // users score 75/100 etc., which scoreToElo() must normalise before mapping.
@@ -1641,24 +1657,72 @@ function _currentOwnerTag() {
   return null; // guest / username-only — can't reliably disambiguate
 }
 
+// v1.0.137 — Toast-throttling flag so very-large-library users don't get
+// pummelled with quota notifications on every saveState() call (which fires
+// after every battle, sort, filter change, etc.).
+let _quotaWarnedThisSession = false;
+
 function saveState() {
   if (!saveKey) return;
   if (_saveCollision) return; // another user's data lives at this key — don't clobber
   const owner = _currentOwnerTag();
-  localStorage.setItem(saveKey, JSON.stringify({
-    animeList, battleCount, currentA, currentB, battleHistory,
-    excludedIds: [...excludedIds],
-    hiddenFormats:  [...hiddenFormats],
-    hiddenEpRanges: [...hiddenEpRanges],
-    rankingView,
-    franchiseMode,
-    currentSort,
-    sortAsc,
-    achievements,
-    comparedFriends: [...comparedFriends],
-    matchupStats,
-    _owner: owner, // { source, id } or null — used to detect collisions on next load
-  }));
+
+  // Build either a full payload (with the entire animeList) or a slim payload
+  // that drops the heavy re-fetchable fields. The slim fallback exists for
+  // users with very large libraries (the original report came from a 6500-
+  // anime user named "Honda") where the full JSON blows past the ~5-10 MB
+  // localStorage quota. The in-memory animeList still holds the full data;
+  // only the persisted copy is trimmed.
+  const buildPayload = (slim) => {
+    const list = slim
+      ? animeList.map(a => {
+          // eslint-disable-next-line no-unused-vars
+          const { description, tags, relations, studios, genres, ...core } = a;
+          return core;
+        })
+      : animeList;
+    return JSON.stringify({
+      animeList: list, battleCount, currentA, currentB, battleHistory,
+      excludedIds: [...excludedIds],
+      hiddenFormatsBattle:   [...hiddenFormatsBattle],
+      hiddenFormatsRanking:  [...hiddenFormatsRanking],
+      hiddenEpRangesBattle:  [...hiddenEpRangesBattle],
+      hiddenEpRangesRanking: [...hiddenEpRangesRanking],
+      rankingView,
+      franchiseMode,
+      currentSort,
+      sortAsc,
+      achievements,
+      comparedFriends: [...comparedFriends],
+      matchupStats,
+      _owner: owner, // { source, id } or null — used to detect collisions on next load
+    });
+  };
+
+  try {
+    localStorage.setItem(saveKey, buildPayload(false));
+  } catch (e) {
+    // QuotaExceededError reports differently across browsers — name, message
+    // pattern, or legacy numeric codes (22 in modern, 1014 in old Firefox).
+    const isQuota = e?.name === 'QuotaExceededError'
+                 || /quota/i.test(e?.message || '')
+                 || e?.code === 22 || e?.code === 1014;
+    if (!isQuota) throw e;
+    console.warn('[saveState] localStorage quota exceeded; falling back to slim payload');
+    try {
+      localStorage.setItem(saveKey, buildPayload(true));
+      if (!_quotaWarnedThisSession && typeof showToast === 'function') {
+        showToast('Your library is too large for the local cache — extra metadata is kept in cloud sync only.', 6000);
+        _quotaWarnedThisSession = true;
+      }
+    } catch (e2) {
+      console.error('[saveState] slim payload still over quota:', e2);
+      if (!_quotaWarnedThisSession && typeof showToast === 'function') {
+        showToast('Local cache full. Cloud sync still active — progress persists across devices.', 6000);
+        _quotaWarnedThisSession = true;
+      }
+    }
+  }
   scheduleCloudSave();
 }
 
@@ -1853,8 +1917,10 @@ async function _doCloudSave() {
       currentB,
       battleHistory,
       excludedIds:    [...excludedIds],
-      hiddenFormats:  [...hiddenFormats],
-      hiddenEpRanges: [...hiddenEpRanges],
+      hiddenFormatsBattle:   [...hiddenFormatsBattle],
+      hiddenFormatsRanking:  [...hiddenFormatsRanking],
+      hiddenEpRangesBattle:  [...hiddenEpRangesBattle],
+      hiddenEpRangesRanking: [...hiddenEpRangesRanking],
       rankingView,
       currentSort,
       sortAsc,
@@ -1938,8 +2004,13 @@ function _applyCloudSaveToMemory(cloud) {
   currentB       = cloud.currentB       ?? null;
   battleHistory  = cloud.battleHistory  ?? [];
   excludedIds    = new Set(cloud.excludedIds    ?? []);
-  hiddenFormats  = new Set(cloud.hiddenFormats  ?? []);
-  hiddenEpRanges = new Set(cloud.hiddenEpRanges ?? []);
+  // v1.0.123 — see loadState for the rationale on this fallback chain.
+  const _cloudLegacyFmt = cloud.hiddenFormats;
+  const _cloudLegacyEp  = cloud.hiddenEpRanges;
+  hiddenFormatsBattle   = new Set(cloud.hiddenFormatsBattle   ?? _cloudLegacyFmt ?? []);
+  hiddenFormatsRanking  = new Set(cloud.hiddenFormatsRanking  ?? cloud.hiddenFormatsBattle  ?? _cloudLegacyFmt ?? []);
+  hiddenEpRangesBattle  = new Set(cloud.hiddenEpRangesBattle  ?? _cloudLegacyEp  ?? []);
+  hiddenEpRangesRanking = new Set(cloud.hiddenEpRangesRanking ?? cloud.hiddenEpRangesBattle ?? _cloudLegacyEp  ?? []);
   rankingView    = cloud.rankingView    ?? 'grid';
   franchiseMode  = cloud.franchiseMode  ?? false;
   currentSort    = cloud.currentSort    ?? 'elo';
@@ -2160,8 +2231,20 @@ function loadState(username, source = 'anilist') {
     currentB      = s.currentB      ?? null;
     battleHistory = s.battleHistory ?? [];
     excludedIds   = new Set(s.excludedIds ?? []);
-    hiddenFormats  = new Set(s.hiddenFormats  ?? []);
-    hiddenEpRanges = new Set(s.hiddenEpRanges ?? []);
+    // v1.0.123 migration. Pre-split saves stored a single shared set; fall
+    // back chain ensures both scopes get populated from whichever previous
+    // field is present:
+    //   - hiddenFormatsBattle   (v1.0.122 single-source, also used by v1.0.123 going forward)
+    //   - hiddenFormats         (pre-v1.0.122 legacy field name)
+    // Without falling back to hiddenFormatsBattle, users upgrading from
+    // v1.0.122 would see their Ranking-scope set wiped — their filters
+    // would "stop working" on the Rankings tab until they re-applied them.
+    const legacyFormats  = s.hiddenFormats;
+    const legacyEpRanges = s.hiddenEpRanges;
+    hiddenFormatsBattle   = new Set(s.hiddenFormatsBattle   ?? legacyFormats  ?? []);
+    hiddenFormatsRanking  = new Set(s.hiddenFormatsRanking  ?? s.hiddenFormatsBattle  ?? legacyFormats  ?? []);
+    hiddenEpRangesBattle  = new Set(s.hiddenEpRangesBattle  ?? legacyEpRanges ?? []);
+    hiddenEpRangesRanking = new Set(s.hiddenEpRangesRanking ?? s.hiddenEpRangesBattle ?? legacyEpRanges ?? []);
     rankingView    = s.rankingView  ?? 'grid';
     franchiseMode  = s.franchiseMode ?? false;
     currentSort    = s.currentSort  ?? 'elo';
@@ -2201,6 +2284,16 @@ function loadState(username, source = 'anilist') {
       const removed = animeList.length - _byId.size;
       animeList = animeList.filter(a => _byId.get(a.id) === a);
       console.warn('[migrate] removed', removed, 'duplicate anime entries');
+    }
+    // v1.0.133 — drop any MUSIC-format entries already in the save. The
+    // import paths now filter MUSIC out at fetch time, but existing users
+    // already have music videos (Paprika, etc.) in their saved state. Strip
+    // them on load so a single refresh clears the clutter without forcing a
+    // full re-sync. saveState() picks the change up on next write.
+    const _beforeMusic = animeList.length;
+    animeList = animeList.filter(a => a.format !== 'MUSIC');
+    if (animeList.length < _beforeMusic) {
+      console.warn('[migrate] removed', _beforeMusic - animeList.length, 'MUSIC-format entries');
     }
     return true;
   } catch { return false; }
@@ -2291,7 +2384,7 @@ function pickOpponents() {
 
   // weight: 0 for excluded, lower for fuzzy, higher for fewer comparisons
   const weights = animeList.map(a => {
-    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return 0;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
@@ -2742,8 +2835,8 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     ${streakBadge(anime)}
   `;
   if (showFuzzyOnly && !anime.fuzzy)                             card.style.display = 'none';
-  if (hiddenFormats.has(anime.format))                           card.style.display = 'none';
-  if (hiddenEpRanges.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
+  if (hiddenFormatsRanking.has(anime.format))                           card.style.display = 'none';
+  if (hiddenEpRangesRanking.has(epRange(anime.episodes, anime.format))) card.style.display = 'none';
   if (excludedIds.has(anime.id))                                 card.style.display = 'none';
   return card;
 }
@@ -2753,20 +2846,146 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
 // e.g. "Attack on Titan Season 2" → "Attack on Titan"
 //      "My Hero Academia 2nd Season" → "My Hero Academia"
 //      "Sword Art Online: Alicization" → "Sword Art Online"
+
+// v1.0.130 — Umbrella franchise aliases. Brand families where sub-series share
+// a name prefix but use completely different casts and no story relations
+// (Love Live! Sunshine!! / Superstar!! / Nijigasaki, Pretty Cure's annual
+// reboots, FLCL Alternative/Progressive/Grunge/Shoegaze). The title-pattern
+// chain can't bridge them — the stems diverge after the prefix — and AniList
+// rarely links sub-series with no character overlap via the relations graph.
+// Matching titles short-circuit _franchiseBaseName and collapse to the canon
+// brand name, so the franchise view shows them as one group.
+//
+// Add sparingly — a too-broad pattern silently folds unrelated anime together.
+const FRANCHISE_ALIASES = Object.freeze([
+  // μ's, Aqours, Liella!, Nijigasaki, Hasunosora, plus the Movies
+  { pattern: /^love\s*live!/i,        canon: 'Love Live!' },
+  // Pretty Cure / Precure — marker can appear anywhere in the title
+  // ("Heartcatch Precure!", "Yes! Pretty Cure 5", "Hirogaru Sky! Precure")
+  { pattern: /\bpre(tty\s*)?cure\b/i, canon: 'Pretty Cure' },
+  // FLCL — Alternative + Progressive are stripped by the suffix list, but
+  // Grunge / Shoegaze aren't (too franchise-specific to generalise), so an
+  // umbrella alias handles every sub-series uniformly.
+  { pattern: /^flcl\b/i,              canon: 'FLCL' },
+  // Gundam — UC (Mobile Suit, Zeta, ZZ, Unicorn, Hathaway), alternate timelines
+  // (G Gundam, Wing, SEED, 00, Iron-Blooded Orphans, Witch from Mercury), and
+  // sub-series (Build Fighters, SD Gundam, Reconguista in G). \bgundam\b is a
+  // safe marker — no major non-Gundam anime contains "Gundam" as a word.
+  // "Mobile Police Patlabor" stays separate (doesn't match this pattern).
+  { pattern: /\bgundam\b/i,           canon: 'Gundam' },
+  // Milky — Milky☆Highway (original) and Milky☆Subway (sequel), confirmed
+  // by the user as related. The ☆ symbol is distinctive enough that this
+  // prefix won't false-match other "Milky" prefixes.
+  { pattern: /^milky☆/i,              canon: 'Milky' },
+  // SSSS.Universe — SSSS.GRIDMAN, SSSS.DYNAZENON, SSSS.GRIDMAN UNIVERSE.
+  // The period gets stripped in _franchiseKey so "ssssdynazenon" and
+  // "ssssgridman" aren't prefixes of each other.
+  { pattern: /^ssss\./i,              canon: 'SSSS.' },
+  // Zeonic — in-universe Gundam arms manufacturer; promotional shorts like
+  // "Zeonic Toyota Special Movie" are Gundam-affiliated even when the title
+  // doesn't contain the word "Gundam".
+  { pattern: /\bzeonic\b/i,           canon: 'Gundam' },
+  // .hack// — distinctive prefix shared by Sign, Roots, G.U., G.U. Returner,
+  // Quantum, Versus, Liminality, The Movie, etc. Different sub-series use
+  // different casts so AniList relations only partially link them.
+  { pattern: /^\.hack\/\//i,          canon: '.hack//' },
+  // Saiyuki — Minekura's modern manga adaptation: Saiyuki (2000 TV), Reload
+  // (2003), Gunlock (2004), Requiem (2001 movie), Reload Blast (2017). Uses
+  // single-u "Saiyuki" in English, distinct from Toei's double-u "Saiyuuki"
+  // (1960 Alakazam the Great, 1999 OVA, Doraemon: Parallel Saiyuuki). The \b
+  // requires a non-word boundary after "Saiyuki" so "Saiyuuki" (where u
+  // follows k without a boundary) does NOT match.
+  { pattern: /^saiyuki\b/i,           canon: 'Saiyuki' },
+]);
+
+function _franchiseAlias(title) {
+  if (!title) return null;
+  for (const { pattern, canon } of FRANCHISE_ALIASES) {
+    if (pattern.test(title)) return canon;
+  }
+  return null;
+}
+
+// Strings that are NOT legitimate franchise canons. Two categories:
+//
+// 1. v1.0.136 — generic short stop-words the strip chain over-produces
+//    ("The Return" → "The" via the Returns spinoff strip; "The Movie" alone
+//    → "The" via the Movie strip). Bucketing every title that degenerates
+//    to "the" together would create a junk franchise.
+//
+// 2. v1.0.141 — anthology series banners. Toei's "Sekai Meisaku Douwa"
+//    (World Masterpiece Fairy Tales) prefixes every entry's romaji title:
+//    "Sekai Meisaku Douwa: Aladdin to Mahou no Lamp", "...Hakuchou no
+//    Mizuumi", "...Mori wa Ikiteiru", etc. The colon-strip correctly removes
+//    the subtitle but leaves "Sekai Meisaku Douwa" as the shared canon, so
+//    every fairy tale collapses onto Aladdin. These banners are umbrella
+//    brands, not franchises — each entry is a standalone adaptation.
+//    Same shape for Aoi Bungaku Series, Animated Classics of Japanese
+//    Literature, and Manga Nippon Mukashibanashi.
+//
+// When _franchiseBaseName reduces a title to one of these strings, revert
+// to the original so the canon doesn't collide with other titles that strip
+// to the same string.
+const _GENERIC_BASES = new Set([
+  // Stop-words from over-aggressive suffix strips
+  'the', 'movie', 'special', 'first', 'last',
+  // Anthology series banners — each entry is standalone
+  'sekai meisaku douwa', 'world masterpiece fairy tales',
+  'sekai meisaku gekijou', 'world masterpiece theater',
+  'aoi bungaku', 'aoi bungaku series',
+  'animated classics of japanese literature',
+  'manga nippon mukashibanashi', 'folk tales from japan',
+  // v1.0.144 — Japanese source-name words shared by many unrelated adaptations
+  // across decades. "Saiyuuki" (Journey to the West) shows up as the romaji of
+  // Alakazam (1960 Toei film), a 1999 OVA, Saiyuki Reload (2003), Doraemon's
+  // Nobita no Parallel Saiyuuki (1988), etc. The English titles are distinct;
+  // grouping on the shared romaji incorrectly fuses them.
+  'saiyuuki',
+]);
+
 function _franchiseBaseName(title) {
-  return title
+  // Umbrella alias short-circuit — known brand families (Love Live!, Pretty
+  // Cure, FLCL) where the title-pattern chain and relations graph both fall
+  // short. Returns the canonical brand name verbatim.
+  const alias = _franchiseAlias(title);
+  if (alias) return alias;
+  const stripped = title
     // Strip parenthetical format/year qualifiers e.g. "(TV)", "(2019)", "(Movie)"
     .replace(/\s*\([^)]*\)\s*$/, '')
-    // Strip -Japanese Subtitle- wrappers (e.g. "Demon Slayer -Kimetsu no Yaiba-")
-    .replace(/\s*-[^-\s][^-]*-/g, '')
+    // Strip -Japanese Subtitle- wrappers (e.g. "Demon Slayer -Kimetsu no Yaiba-").
+    // v1.0.131 — require whitespace BEFORE the leading dash so internal hyphens
+    // in titles like "Yu-Gi-Oh!", "Re-Kan!", "B-Project" stay intact. Without
+    // this guard the regex was eating "-Gi-" out of "Yu-Gi-Oh!" → "YuOh!".
+    .replace(/\s+-[^-\s][^-]*-/g, '')
+    // v1.0.131 — strip trailing " - subtitle" pattern.
+    // Required for titles like "M.D. Geist 2 - Death Force" → "M.D. Geist 2"
+    // and "MD Geist - The Most Dangerous Ever" → "MD Geist". Single-dash
+    // separators aren't caught by the paired-dash regex above. Requires
+    // surrounding whitespace so internal hyphens like "Yu-Gi-Oh!" and
+    // "Re-Kan!" stay intact.
+    .replace(/\s+-\s+.+$/, '')
     // Strip "tri." franchise label (e.g. "Digimon Adventure tri. Chapter 1")
     .replace(/\s+tri\.?\s*(Chapter.*)?$/i, '')
     // Strip "Chapter N" markers (e.g. "Digimon Adventure tri. Chapter 1: Reunion")
     .replace(/\s+Chapter\s*[\d]+.*$/i, '')
-    // Strip all-caps subtitle word + colon (e.g. "SPY x FAMILY CODE: White" → "SPY x FAMILY")
-    .replace(/\s+[A-Z]{2,}:.*$/, '')
-    // Strip everything from colon onwards (e.g. ": Kimetsu no Yaiba", ": The Final Season")
-    .replace(/\s*:.*$/, '')
+    // Strip all-caps subtitle word + colon (e.g. "SPY x FAMILY CODE: White" → "SPY x FAMILY").
+    // v1.0.129 — require ≥2 words to REMAIN before the all-caps subtitle word, so
+    // titles like "GOLDEN BOY: Sasurai no Obenkyou Yarou" (a 2-word ALLCAPS title +
+    // romaji subtitle) don't get over-stripped to just "GOLDEN" — which would then
+    // fuzzy-match any other "Golden ___" anime via the prefix suffix-lookup and
+    // pull unrelated franchises together (originally surfaced as Golden Time being
+    // dragged into the GOLDEN BOY group).
+    .replace(/^(.+?\s+.+?)\s+[A-Z]{2,}:\s+.*$/, '$1')
+    // Strip everything from a subtitle-separator colon onwards.
+    // v1.0.127 — requires whitespace AFTER the colon so titles like "Re:Zero"
+    // (where the colon is part of the actual name, not a separator) aren't
+    // mangled into just "Re". "Sword Art Online: Alicization" still strips
+    // because the colon is followed by a space.
+    // v1.0.135 — also requires at least 3 chars BEFORE the colon so titles
+    // like "Re: Cutie Honey" don't collapse to just "Re" and become a 2-char
+    // franchise canon that swallows other unrelated short-prefix titles.
+    // AKB48 / DTB and similar 3-char franchise initials still strip correctly.
+    .replace(/^(.{3,}?)\s*:\s+.*$/, '$1')
     // Strip OVA/Special/Recap suffixes (e.g. "Baccano! Specials", "Series Name OVA")
     .replace(/[!\s]+(Specials?|OVAs?|ONAs?|Recaps?|Extra|Encore)$/i, s => s.startsWith('!') ? '!' : '')
     // Normalise trailing ! count so "Show!" and "Show!!" match
@@ -2781,24 +3000,49 @@ function _franchiseBaseName(title) {
     // Strip bare "Season" with nothing after
     .replace(/\s+Season\s*$/i, '')
     // Strip trailing Roman numerals (II, III etc.) but NOT single I or X
-    // to avoid mangling titles like "To Be Hero X" or "Danmachi I"
-    .replace(/\s+(II|III|IV|VI|VII|VIII|IX|XI|XII|XX?)$/i, '')
-    .replace(/[\s×✕✗]+[\d×✕✗]+$/, '')
+    // to avoid mangling titles like "To Be Hero X", "Samurai X", "Gundam X",
+    // or "Danmachi I". v1.0.135 — was "XX?" which actually matched single X
+    // (the optional makes the second X optional, so "X" alone matched).
+    // Changed to literal "XX" so single X stays intact.
+    .replace(/\s+(II|III|IV|VI|VII|VIII|IX|XI|XII|XX)$/i, '')
+    // Strip trailing × / ✕ / ✗ cross-product sequel markers (e.g. "Anime ×2").
+    // v1.0.135 — limit digit count to 1-2 to match the year safeguard on the
+    // plain trailing-digit regex below ("Pupa 2019" was being eaten here too).
+    .replace(/[\s×✕✗]+[\d×✕✗]{1,2}$/, '')
     // Strip "On the Side" spinoff marker (e.g. "Is it Wrong...? On the Side")
     .replace(/[?!]?\s+On\s+the\s+Side[?!]?$/i, '')
-    // Strip common spin-off/sequel single-word suffixes
-    .replace(/\s+(Twin|Twins|Origins?|Returns?|Revenge|Reborn|Reload|Revolution|More|Plus|Ultra|Beyond|Kai|Heroes)$/i, '')
-    // Strip trailing standalone numbers
-    .replace(/\s+\d+$/, '')
+    // Strip common spin-off/sequel single-word suffixes.
+    // v1.0.128 — added "Alternative" and "Progressive" so FLCL/FLCL Alternative/
+    // FLCL Progressive group together (the fuzzy suffix lookup can't help here
+    // because "FLCL" is below the 6-char threshold that prevents short-word
+    // false positives). Also correctly collapses "Muv-Luv Alternative" → "Muv-Luv"
+    // and any "X Progressive" soft-reboots into the parent franchise.
+    .replace(/\s+(Twin|Twins|Origins?|Returns?|Revenge|Reborn|Reload|Revolution|More|Plus|Ultra|Beyond|Kai|Heroes|Alternative|Progressive)$/i, '')
+    // Strip trailing standalone numbers used as sequel indicators ("Bakemonogatari 1",
+    // "Macross 7", "Death Note 2"). v1.0.135 — limited to 1-2 digits so 4-digit
+    // years used to disambiguate remakes ("Pupa 2019" vs the 2014 original)
+    // aren't treated as sequel numbers and collapsed onto the original.
+    .replace(/\s+\d{1,2}$/, '')
     // Strip #N / #N.N version markers (e.g. "BURN THE WITCH #0.8")
     .replace(/\s+#[\d.]+$/, '')
     // Normalise trailing ? after all sequel markers removed
     .replace(/\?+$/, '')
     .trim();
+  // v1.0.136 — generic-base safety net. If the strip chain reduced the title
+  // to a generic stop-word ("The", "Movie", etc.), revert to the original so
+  // the canon doesn't collide with every other title that strips to the same
+  // word. Original-title key collisions still work for real franchises whose
+  // *unstripped* title happens to be that word (vanishingly rare).
+  return _GENERIC_BASES.has(stripped.toLowerCase()) ? title : stripped;
 }
 
 function _franchiseKey(title) {
-  return _franchiseBaseName(title).toLowerCase();
+  // v1.0.131 — strip periods so initials match their dotless variant.
+  // "M.D. Geist" ↔ "MD Geist", "Dr. Stone" ↔ "Dr Stone", etc. The dot is
+  // purely a punctuation convention in initials; without normalising it,
+  // entries with and without periods land in separate franchise groups
+  // even though they're the same series.
+  return _franchiseBaseName(title).toLowerCase().replace(/\./g, '');
 }
 
 // Fallback lookup: checks whether `key` shares a word-boundary prefix or
@@ -2807,19 +3051,39 @@ function _franchiseKey(title) {
 // Prefix match — "great pretender" is a prefix of "great pretender razbliuto"
 // Suffix match — "evangelion" is a suffix of "neon genesis evangelion"
 //
-// Requires the shared portion to be at least 6 characters to avoid false
-// positives on short common words.
+// Three thresholds:
+//  - Both keys must be ≥6 chars to participate at all (avoids false matches
+//    on short common words like "the", "one").
+//  - For SUFFIX matches specifically, the shorter of the two keys must be
+//    ≥10 chars. Suffix matches are riskier because many unrelated titles end
+//    with a common word that happens to be another anime — without the
+//    higher threshold, "Princess Mononoke" suffix-matches "Mononoke" (8) and
+//    pulls Studio Ghibli's film into the 2007 supernatural mystery series.
+//  - For PREFIX matches, the shorter of the two keys must be ≥8 chars.
+//    v1.0.135 — was 6, but that caused "Samurai" (7) to prefix-match
+//    "Samurai Champloo", "Samurai Flamenco", "Samurai Noodles" (all unrelated
+//    shows), and "Promise" (7) to fuse with "Promise Neverland". 8 chars
+//    still allows "Hellsing" (8) ↔ "Hellsing Ultimate" to work via the prefix
+//    path; shorter stems like "Naruto" / "Bleach" / "Trigun" rely on the
+//    AniList relations graph to bridge their sequels.
 function _franchiseSuffixLookup(key, keyMap) {
   if (!key || key.length < 6) return null;
+  const SUFFIX_MIN = 10;
+  const PREFIX_MIN = 8;
   for (const [existingKey, existingCanon] of keyMap) {
     if (existingKey.length < 6) continue;
     // Suffix: "Evangelion" ↔ "Neon Genesis Evangelion"
-    if (existingKey.endsWith(' ' + key) || key.endsWith(' ' + existingKey)) {
-      return existingCanon;
+    if (Math.min(key.length, existingKey.length) >= SUFFIX_MIN) {
+      if (existingKey.endsWith(' ' + key) || key.endsWith(' ' + existingKey)) {
+        return existingCanon;
+      }
     }
-    // Prefix: "Great Pretender" ↔ "Great Pretender razbliuto"
-    if (key.startsWith(existingKey + ' ') || existingKey.startsWith(key + ' ')) {
-      return existingCanon;
+    // Prefix: "Great Pretender" ↔ "Great Pretender razbliuto",
+    //        "Hellsing" ↔ "Hellsing Ultimate"
+    if (Math.min(key.length, existingKey.length) >= PREFIX_MIN) {
+      if (key.startsWith(existingKey + ' ') || existingKey.startsWith(key + ' ')) {
+        return existingCanon;
+      }
     }
   }
   return null;
@@ -2841,11 +3105,43 @@ function _buildFranchiseGroups(sorted) {
   // title-pattern grouper below.
   const relMap = _computeFranchiseIds();
 
+  // v1.0.139 — crossover detector. Titles like "Queen's Blade Rebellion VS
+  // Hagure Yuusha no Estetica" bridge two franchises by design — AniList
+  // tags them as SIDE_STORY to both parents, so the relations graph silently
+  // merges the OVA into whichever parent is processed first (and pulls the
+  // other parent in by transitivity). The right answer is to treat crossovers
+  // as standalone groups so neither parent absorbs them and they aren't a
+  // bridge across unrelated universes.
+  const _CROSSOVER_RE = /\s+(VS|vs|×|✕|✗)\.?\s+/;
+  const isCrossover = a => _CROSSOVER_RE.test(a.titleEn || a.title || '')
+                        || _CROSSOVER_RE.test(a.titleRo || '');
+
   for (const a of sorted) {
     const enRaw = a.titleEn || a.title || '';
     const roRaw = a.titleRo || a.title || '';
     const enKey = _franchiseKey(enRaw);
     const roKey = _franchiseKey(roRaw);
+    // v1.0.144 — Skip roKey-based lookup/registration when roKey is a blacklisted
+    // generic string (anthology banner or shared Japanese source-name like
+    // "Saiyuuki" = Journey to the West). In those cases the English title is the
+    // distinctive signal; sharing the romaji with a 1960 Toei film shouldn't
+    // bridge a 2003 anime to it. When the roKey == enKey (anime stored only in
+    // its Japanese name with no English translation), useRoKey stays false
+    // because the registration is already covered by enKey.
+    const useRoKey = roKey !== enKey && !_GENERIC_BASES.has(roKey);
+
+    // Crossovers bypass both relations-graph and fuzzy lookup. Each gets its
+    // own canon (its enKey), so it lands in a one-member group named after
+    // the full crossover title.
+    if (isCrossover(a)) {
+      const canon = enKey;
+      if (!groups.has(canon)) {
+        const displayRaw = preferRomaji ? (a.titleRo || a.title || '') : enRaw;
+        groups.set(canon, { name: _franchiseBaseName(displayRaw) || _franchiseBaseName(enRaw), members: [] });
+      }
+      groups.get(canon).members.push(a);
+      continue;
+    }
 
     // Prefer the relations-graph canonical root when available — it groups
     // entries the title heuristic can't possibly catch. Fall back to the
@@ -2853,26 +3149,48 @@ function _buildFranchiseGroups(sorted) {
     let canon;
     const relRoot = relMap.get(a.id);
     if (relRoot != null) {
-      canon = 'rel:' + relRoot;
+      // v1.0.126 — also check the title-pattern keyMap BEFORE creating a new
+      // relations group. If a sibling (e.g. "Seven Deadly Sins" with no
+      // relations data) created a title-pattern group first, joining it keeps
+      // the franchise together. And register our title keys so later
+      // non-enriched siblings find this group too.
+      // This catches the partial-enrichment case where AniList didn't return
+      // relations for one of two siblings — without this, "The Seven Deadly
+      // Sins" + "The Seven Deadly Sins: Revival of the Commandments" landed
+      // in separate groups whenever one was enriched and the other wasn't.
+      canon = keyMap.get(enKey) || (useRoKey ? keyMap.get(roKey) : null) || ('rel:' + relRoot);
+      if (!keyMap.has(enKey)) keyMap.set(enKey, canon);
+      if (useRoKey && !keyMap.has(roKey)) keyMap.set(roKey, canon);
     } else {
       // For "SpinoffName: FranchiseName" patterns (e.g. "Sword Oratoria: Is it Wrong…"),
       // also try the part after the colon as a franchise key so it joins the right group.
-      const enAfterColon = enRaw.includes(':') ? _franchiseKey(enRaw.replace(/^[^:]+:\s*/, '')) : null;
-      const roAfterColon = roRaw.includes(':') ? _franchiseKey(roRaw.replace(/^[^:]+:\s*/, '')) : null;
+      // v1.0.134 — require the after-colon key to be ≥10 chars before using it.
+      // _franchiseBaseName strips trailing "Movie", "Season", etc., which can
+      // reduce after-colon strings to generic phrases ("Pokémon: The First Movie"
+      // becomes "the first") that then prefix-match unrelated titles ("THE FIRST
+      // SLAM DUNK") via the fuzzy lookup. Distinctive franchise names
+      // ("Hangyaku no Lelouch", "Alicization", "Is It Wrong...") are all well
+      // above this threshold.
+      const _AFTER_COLON_MIN = 10;
+      let enAfterColon = enRaw.includes(':') ? _franchiseKey(enRaw.replace(/^[^:]+:\s*/, '')) : null;
+      let roAfterColon = roRaw.includes(':') ? _franchiseKey(roRaw.replace(/^[^:]+:\s*/, '')) : null;
+      if (enAfterColon && enAfterColon.length < _AFTER_COLON_MIN) enAfterColon = null;
+      if (roAfterColon && roAfterColon.length < _AFTER_COLON_MIN) roAfterColon = null;
 
       // Check if any key already has a group
-      canon = keyMap.get(enKey) || keyMap.get(roKey)
+      canon = keyMap.get(enKey)
+           || (useRoKey ? keyMap.get(roKey) : null)
            || (enAfterColon && keyMap.get(enAfterColon))
            || (roAfterColon && keyMap.get(roAfterColon))
            || _franchiseSuffixLookup(enKey, keyMap)
-           || _franchiseSuffixLookup(roKey, keyMap)
+           || (useRoKey ? _franchiseSuffixLookup(roKey, keyMap) : null)
            || enKey;
 
       // Register all key variants so future anime with any title variant find
       // this group. Only matters for the title-pattern fallback path; relations
       // groups don't need title-key registration.
       keyMap.set(enKey, canon);
-      if (roKey !== enKey) keyMap.set(roKey, canon);
+      if (useRoKey) keyMap.set(roKey, canon);
       if (enAfterColon && enAfterColon !== enKey) keyMap.set(enAfterColon, canon);
       if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) keyMap.set(roAfterColon, canon);
     }
@@ -2884,6 +3202,24 @@ function _buildFranchiseGroups(sorted) {
     }
 
     groups.get(canon).members.push(a);
+  }
+
+  // v1.0.127 — second-pass merge by normalised group name. Catches the edge
+  // case where the relations graph and title-pattern paths produced different
+  // canon keys but both groups ended up with the same display name (e.g.
+  // "Sword Art Online" + "Sword Art Online" from a partial-enrichment state).
+  // Merging by normalised display name is safe because two genuinely different
+  // franchises wouldn't normally normalise to the same name.
+  const byNameKey = new Map();
+  for (const [canon, group] of groups) {
+    const nameKey = _franchiseKey(group.name);
+    const existing = byNameKey.get(nameKey);
+    if (existing) {
+      existing.members.push(...group.members);
+      groups.delete(canon);
+    } else {
+      byNameKey.set(nameKey, group);
+    }
   }
 
   const result = [];
@@ -2904,6 +3240,22 @@ function _buildFranchiseGroups(sorted) {
       ? Math.round(scoredMembers.reduce((s, a) => s + a.globalScore, 0) / scoredMembers.length) : 0;
     if (group.members.length === 1) {
       group.name = displayTitle(group.members[0]);
+    } else {
+      // v1.0.140 — re-derive the franchise name from the most popular member
+      // rather than whichever entry happened to be processed first. AniList
+      // popularity is a strong "mainline vs spinoff" signal — Akame ga Kill!
+      // TV swamps AkaKill! Theater (the parody short), Madoka Magica TV
+      // swamps the recap movies, etc. Aliased franchises (Gundam, FLCL,
+      // Pokemon) preserve their canon name because _franchiseBaseName
+      // short-circuits to the alias regardless of input.
+      const mainline = group.members.slice().sort((a, b) =>
+        (b.popularity || 0) - (a.popularity || 0) || (b.elo || 0) - (a.elo || 0)
+      )[0];
+      const mainlineRaw = preferRomaji
+        ? (mainline.titleRo || mainline.title || '')
+        : (mainline.titleEn || mainline.title || '');
+      const cleanName = _franchiseBaseName(mainlineRaw);
+      if (cleanName) group.name = cleanName;
     }
     // Coherence — how consistently the user ranks entries within this franchise.
     // Only meaningful for franchises with 2+ entries.
@@ -3188,11 +3540,12 @@ function toggleFranchiseExpand(el) {
 
 // Returns the sorted list with format/ep-range/excluded filters applied —
 // used as input to franchise grouping so hidden anime are excluded from groups.
+// This drives the Rankings tab's franchise-view, so use the Ranking scope.
 function _franchiseSortedList() {
   return getSortedList().filter(a =>
     !excludedIds.has(a.id) &&
-    !hiddenFormats.has(a.format) &&
-    !hiddenEpRanges.has(epRange(a.episodes, a.format)) &&
+    !hiddenFormatsRanking.has(a.format) &&
+    !hiddenEpRangesRanking.has(epRange(a.episodes, a.format)) &&
     (!showFuzzyOnly || a.fuzzy)
   );
 }
@@ -3390,8 +3743,8 @@ function _filterFranchise() {
   const memberPasses = (a) => {
     if (!a) return false;
     if (excludedIds.has(a.id))                              return false;
-    if (hiddenFormats.has(a.format))                        return false;
-    if (hiddenEpRanges.has(epRange(a.episodes, a.format)))  return false;
+    if (hiddenFormatsRanking.has(a.format))                        return false;
+    if (hiddenEpRangesRanking.has(epRange(a.episodes, a.format)))  return false;
     if (showFuzzyOnly && !a.fuzzy)                          return false;
     return true;
   };
@@ -3692,8 +4045,10 @@ function downloadBackup() {
     currentB,
     battleHistory,
     excludedIds:    [...excludedIds],
-    hiddenFormats:  [...hiddenFormats],
-    hiddenEpRanges: [...hiddenEpRanges],
+    hiddenFormatsBattle:   [...hiddenFormatsBattle],
+    hiddenFormatsRanking:  [...hiddenFormatsRanking],
+    hiddenEpRangesBattle:  [...hiddenEpRangesBattle],
+    hiddenEpRangesRanking: [...hiddenEpRangesRanking],
     rankingView,
     franchiseMode,
     currentSort,
@@ -3760,8 +4115,10 @@ async function importBackup(event) {
       currentB:       payload.currentB       ?? null,
       battleHistory:  payload.battleHistory  ?? [],
       excludedIds:    payload.excludedIds    ?? [],
-      hiddenFormats:  payload.hiddenFormats  ?? [],
-      hiddenEpRanges: payload.hiddenEpRanges ?? [],
+      hiddenFormatsBattle:   payload.hiddenFormatsBattle   ?? payload.hiddenFormats   ?? [],
+      hiddenFormatsRanking:  payload.hiddenFormatsRanking  ?? payload.hiddenFormatsBattle  ?? payload.hiddenFormats  ?? [],
+      hiddenEpRangesBattle:  payload.hiddenEpRangesBattle  ?? payload.hiddenEpRanges  ?? [],
+      hiddenEpRangesRanking: payload.hiddenEpRangesRanking ?? payload.hiddenEpRangesBattle ?? payload.hiddenEpRanges ?? [],
       rankingView:    payload.rankingView    ?? 'grid',
       currentSort:    payload.currentSort    ?? 'elo',
       sortAsc:        payload.sortAsc        ?? false,
@@ -4108,6 +4465,9 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
 
   animeList = entries
     .filter(e => mediaMap[e.malId])
+    // v1.0.133 — mirror the AniList-import MUSIC filter so MAL users don't
+    // pick up music-video entries either.
+    .filter(e => mediaMap[e.malId].format !== 'MUSIC')
     .map(e => {
       const m = mediaMap[e.malId];
       const userScore = scoreMap.get(e.malId) || 0;
@@ -8939,7 +9299,7 @@ async function startGuestMode() {
 function pickOneOpponent(keepIdx) {
   const n = animeList.length;
   const weights = animeList.map(a => {
-    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return 0;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
@@ -9103,17 +9463,24 @@ function _tasteArchetypeIndex(milestone) {
 function checkMilestone(before, after) {
   // Taste story — check before the regular milestone so it appears first
   let tasteHit = _findTasteStoryMilestone(before, after);
+  let extraSeen = [];
 
   // Catch-up: if no milestone was crossed in this battle but there's an
-  // unseen fixed milestone <= current battle count, show the most recent one.
-  // This handles the case where the milestone list grew between releases and
-  // an existing user passed (e.g.) 700 before it existed — without this they'd
-  // have to wait until 800 to see their next card.
+  // unseen fixed milestone <= current battle count, show the most recent one
+  // and silently mark all OLDER unseen milestones as seen at the same time.
+  //
+  // v1.0.122 — the older version walked unseen entries one-per-battle, which
+  // produced a Wrapped popup every battle for users with historical gaps in
+  // their seen list (e.g. someone past battle 1000 who never saw 700/900).
+  // Now: one popup, everything older marked silently, done.
   if (!tasteHit && after >= TASTE_STORY_MILESTONES[0]) {
     try {
       const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
       const unseen = TASTE_STORY_MILESTONES.filter(n => n <= after && !seen.includes(n));
-      if (unseen.length) tasteHit = unseen[unseen.length - 1];
+      if (unseen.length) {
+        tasteHit   = unseen[unseen.length - 1];   // show only the latest
+        extraSeen  = unseen.slice(0, -1);          // mark the rest silently
+      }
     } catch { /* ignore */ }
   }
 
@@ -9121,8 +9488,8 @@ function checkMilestone(before, after) {
     try {
       const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
       if (!seen.includes(tasteHit)) {
-        seen.push(tasteHit);
-        localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(seen));
+        const updated = Array.from(new Set([...seen, tasteHit, ...extraSeen]));
+        localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(updated));
         setTimeout(() => showTasteStory(tasteHit), 400);
         return; // don't show regular milestone on same battle
       }
@@ -10616,8 +10983,8 @@ function filterRankings() {
     const epRng   = card.dataset.epRange || 'unknown';
     const show = (!q || title.includes(q))
       && (!showFuzzyOnly || isFuzzy)
-      && !hiddenFormats.has(fmt)
-      && !hiddenEpRanges.has(epRng)
+      && !hiddenFormatsRanking.has(fmt)
+      && !hiddenEpRangesRanking.has(epRng)
       && !excludedIds.has(animeId);
     card.style.display = show ? '' : 'none';
   });
@@ -10788,9 +11155,10 @@ function renderStudioAffinity() {
   const top    = studios.slice(0, 6);
   const bottom = [...studios].reverse().slice(0, 6);
 
-  // Build a ranked index once so each panel can show #rank quickly
+  // Build a ranked index once so each panel can show #rank quickly. Stats
+  // reflect the user's Rankings view, so apply the Ranking-scope filter.
   const rankedIds = animeList
-    .filter(a => !hiddenFormats.has(a.format))
+    .filter(a => !hiddenFormatsRanking.has(a.format))
     .sort((a, b) => b.elo - a.elo)
     .map(a => a.id);
 
@@ -10982,10 +11350,18 @@ function _needsTasteEnrichment() {
 function _computeFranchiseIds() {
   const inList = new Set(animeList.map(a => a.id));
   const parent = new Map();
+  // v1.0.139 — exclude crossover OVAs ("X VS Y" titles) from the union-find.
+  // AniList marks them as SIDE_STORY to both participating franchises, so
+  // including them would unite two unrelated franchises through the
+  // crossover's relations. _buildFranchiseGroups handles them separately as
+  // standalone one-member groups.
+  const _CROSSOVER_RE = /\s+(VS|vs|×|✕|✗)\.?\s+/;
+  const isCrossover = a => _CROSSOVER_RE.test(a.titleEn || a.title || '')
+                        || _CROSSOVER_RE.test(a.titleRo || '');
   // Only seed items that have relations data — others fall through to the
   // title-pattern grouper.
   for (const a of animeList) {
-    if (Array.isArray(a.relations)) parent.set(a.id, a.id);
+    if (Array.isArray(a.relations) && !isCrossover(a)) parent.set(a.id, a.id);
   }
   const find = (id) => {
     let r = id;
@@ -12048,29 +12424,32 @@ function toggleFuzzyFilter() {
   else filterRankings();
 }
 
-function toggleFormat(fmt) {
-  if (hiddenFormats.has(fmt)) {
-    hiddenFormats.delete(fmt);
-  } else {
-    hiddenFormats.add(fmt);
-  }
-  // Sync all format button appearances and the filter-btn highlight in one pass
+// scope: 'battle' (battle-screen filter popover) or 'ranking' (rankings tab
+// format row). Defaults to 'ranking' for backward-compat with any caller that
+// didn't get updated.
+function toggleFormat(fmt, scope = 'ranking') {
+  const set = scope === 'battle' ? hiddenFormatsBattle : hiddenFormatsRanking;
+  if (set.has(fmt)) set.delete(fmt);
+  else              set.add(fmt);
   syncFormatButtons();
   saveState();
-  renderRankingList();
-  filterRankings();
 
-  // If the battle screen is active, immediately swap out any card whose format
-  // is now filtered — don't wait for the user to make a pick
+  if (scope === 'ranking') {
+    renderRankingList();
+    filterRankings();
+    return; // ranking-scope filter has no effect on the battle pool
+  }
+
+  // Battle-scope: immediately swap out any card whose format is now filtered.
   const battleVisible = byId(IDS.battleScreen)?.style.display !== 'none';
   if (!battleVisible || towerMode) return;
 
   if (trioMode) {
-    const hasFiltered = currentTrio.some(idx => hiddenFormats.has(animeList[idx]?.format));
+    const hasFiltered = currentTrio.some(idx => hiddenFormatsBattle.has(animeList[idx]?.format));
     if (hasFiltered) renderTrio();
   } else {
-    const aFiltered = currentA != null && hiddenFormats.has(animeList[currentA]?.format);
-    const bFiltered = currentB != null && hiddenFormats.has(animeList[currentB]?.format);
+    const aFiltered = currentA != null && hiddenFormatsBattle.has(animeList[currentA]?.format);
+    const bFiltered = currentB != null && hiddenFormatsBattle.has(animeList[currentB]?.format);
     if (aFiltered || bFiltered) renderBattle();
   }
 }
@@ -12085,23 +12464,23 @@ function toggleMobileFilters() {
 }
 
 function syncFormatButtons() {
-  // Sync rankings tab buttons
+  // Sync rankings-tab buttons (these write/read the Ranking-scope set)
   document.querySelectorAll('.format-btn').forEach(b => {
     if (!b.dataset.format) return;
-    const isHidden = hiddenFormats.has(b.dataset.format);
+    const isHidden = hiddenFormatsRanking.has(b.dataset.format);
     b.classList.toggle('active',     !isHidden);
     b.classList.toggle('hidden-fmt',  isHidden);
   });
-  // Sync battle screen filter popover buttons
+  // Sync battle-screen filter popover buttons (Battle-scope set)
   document.querySelectorAll('.filter-fmt-btn').forEach(b => {
     if (!b.dataset.format) return;
-    const isHidden = hiddenFormats.has(b.dataset.format);
+    const isHidden = hiddenFormatsBattle.has(b.dataset.format);
     b.classList.toggle('active',    !isHidden);
     b.classList.toggle('hidden-fmt', isHidden);
   });
-  // Highlight the filter button if any format is hidden
+  // Highlight the battle-screen filter button if any battle-scope format is hidden
   const filterBtn = document.getElementById('filter-btn');
-  if (filterBtn) filterBtn.classList.toggle('has-filter', hiddenFormats.size > 0);
+  if (filterBtn) filterBtn.classList.toggle('has-filter', hiddenFormatsBattle.size > 0);
 }
 
 // ─── EPISODE RANGE FILTER ────────────────────────────────────────────────────
@@ -12114,11 +12493,12 @@ function epRange(episodes, format) {
   return 'vlong';
 }
 
+// Episode-length filter only has a Rankings-tab UI today, so always Ranking-scope.
 function toggleEpRange(range) {
-  if (hiddenEpRanges.has(range)) {
-    hiddenEpRanges.delete(range);
+  if (hiddenEpRangesRanking.has(range)) {
+    hiddenEpRangesRanking.delete(range);
   } else {
-    hiddenEpRanges.add(range);
+    hiddenEpRangesRanking.add(range);
   }
   syncEpRangeButtons();
   saveState();
@@ -12127,7 +12507,7 @@ function toggleEpRange(range) {
 
 function syncEpRangeButtons() {
   document.querySelectorAll('[data-ep]').forEach(b => {
-    const isHidden = hiddenEpRanges.has(b.dataset.ep);
+    const isHidden = hiddenEpRangesRanking.has(b.dataset.ep);
     b.classList.toggle('active',     !isHidden);
     b.classList.toggle('hidden-fmt',  isHidden);
   });
@@ -12787,7 +13167,7 @@ function pickTrio() {
   const pool    = [];
   const weights = [];
   animeList.forEach((a, i) => {
-    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return;
     pool.push(i);
     const base = 1 / ((a.comparisons || 0) + 1);
     weights.push(a.fuzzy ? base * 0.1 : base);
@@ -12971,7 +13351,7 @@ function trioExcludeAnime(event, pos) {
   const candidates = [];
   const weights    = [];
   animeList.forEach((a, i) => {
-    if (excludedIds.has(a.id) || hiddenFormats.has(a.format)) return;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return;
     if (keepIndices.has(i)) return;
     candidates.push(i);
     const base = 1 / ((a.comparisons || 0) + 1);
@@ -13250,7 +13630,7 @@ function pickSettlePair() {
     .map((a, i) => ({ i, a }))
     .filter(({ a }) =>
       !excludedIds.has(a.id) &&
-      !hiddenFormats.has(a.format) &&
+      !hiddenFormatsBattle.has(a.format) &&
       (a.battles || 0) < TARGET_BATTLES_PER_ANIME
     );
 
@@ -13320,7 +13700,7 @@ function populateTowerList(q) {
     .map((a, i) => ({ i, a }))
     .filter(({ a }) =>
       !excludedIds.has(a.id) &&
-      !hiddenFormats.has(a.format) &&
+      !hiddenFormatsBattle.has(a.format) &&
       (!q || displayTitle(a).toLowerCase().includes(q))
     )
     .sort((x, y) => y.a.elo - x.a.elo);
@@ -13391,7 +13771,7 @@ function _pickNextTowerOpponent(champIdx) {
     for (let i = 0; i < animeList.length; i++) {
       if (i === champIdx) continue;
       const a = animeList[i];
-      if (!a || excludedIds.has(a.id) || hiddenFormats.has(a.format)) continue;
+      if (!a || excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) continue;
       if (usedIds.has(a.id)) continue;
       if (Math.abs((a.elo || 1200) - (champion.elo || 1200)) > bandWidth) continue;
       candidates.push(i);
@@ -13545,8 +13925,8 @@ function renderRankingTable() {
     const conf    = confidenceLabel(anime.battles || 0);
     const hidden = (q && !title.toLowerCase().includes(q)) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
-                   hiddenFormats.has(fmt) ||
-                   hiddenEpRanges.has(epRange(anime.episodes, fmt)) ||
+                   hiddenFormatsRanking.has(fmt) ||
+                   hiddenEpRangesRanking.has(epRange(anime.episodes, fmt)) ||
                    excludedIds.has(anime.id);
     if (hidden) return;
     const wr      = (anime.wins + anime.losses) > 0
@@ -15579,8 +15959,10 @@ window.addEventListener('beforeunload', () => {
   const session = {
     saveKey, animeList, battleCount, currentA, currentB, battleHistory,
     excludedIds:     [...excludedIds],
-    hiddenFormats:   [...hiddenFormats],
-    hiddenEpRanges:  [...hiddenEpRanges],
+    hiddenFormatsBattle:    [...hiddenFormatsBattle],
+    hiddenFormatsRanking:   [...hiddenFormatsRanking],
+    hiddenEpRangesBattle:   [...hiddenEpRangesBattle],
+    hiddenEpRangesRanking:  [...hiddenEpRangesRanking],
     rankingView, currentSort, sortAsc,
     achievements,
     comparedFriends: [...comparedFriends],

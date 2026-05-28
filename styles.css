@@ -2727,6 +2727,19 @@
       max-height: 80px; overflow-y: auto; margin-bottom: 12px;
       border-left: 2px solid var(--border-default); padding-left: 10px;
     }
+    /* v1.0.142 — When the description column is hosting the franchise member
+       list, the 80px synopsis-preview cap clamps it to one visible member.
+       v1.0.143 — original fix removed the cap entirely, which let very large
+       franchises (Attack on Titan, 9+ entries) overflow the modal-box's
+       bottom border. Now use 60vh so 5-7 members fit on a typical Mac
+       laptop viewport (~720-900px tall), with internal scroll for anything
+       larger. */
+    .modal-description:has(.franchise-detail-members) {
+      max-height: 60vh;
+      overflow-y: auto;
+      border-left: none;
+      padding-left: 0;
+    }
 
     /* LOGIN CARDS */
     .login-cards {

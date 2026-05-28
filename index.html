@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.121" />
+  <meta name="version" content="1.0.145" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -873,14 +873,14 @@
         <div id="filter-popover" role="menu" aria-labelledby="filter-btn">
           <div class="filter-popover-title">Battle pool formats</div>
           <div class="filter-format-grid">
-            <button type="button" class="filter-fmt-btn active" data-format="TV"       onclick="toggleFormat('TV')">TV</button>
-            <button type="button" class="filter-fmt-btn active" data-format="MOVIE"    onclick="toggleFormat('MOVIE')">Movie</button>
-            <button type="button" class="filter-fmt-btn active" data-format="OVA"      onclick="toggleFormat('OVA')">OVA</button>
-            <button type="button" class="filter-fmt-btn active" data-format="ONA"      onclick="toggleFormat('ONA')">ONA</button>
-            <button type="button" class="filter-fmt-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT')">Short</button>
-            <button type="button" class="filter-fmt-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL')">Special</button>
+            <button type="button" class="filter-fmt-btn active" data-format="TV"       onclick="toggleFormat('TV', 'battle')">TV</button>
+            <button type="button" class="filter-fmt-btn active" data-format="MOVIE"    onclick="toggleFormat('MOVIE', 'battle')">Movie</button>
+            <button type="button" class="filter-fmt-btn active" data-format="OVA"      onclick="toggleFormat('OVA', 'battle')">OVA</button>
+            <button type="button" class="filter-fmt-btn active" data-format="ONA"      onclick="toggleFormat('ONA', 'battle')">ONA</button>
+            <button type="button" class="filter-fmt-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT', 'battle')">Short</button>
+            <button type="button" class="filter-fmt-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL', 'battle')">Special</button>
           </div>
-          <p class="filter-popover-hint">Hidden formats are excluded from battles and rankings.</p>
+          <p class="filter-popover-hint">Hidden formats are excluded from the battle pool only — your Rankings still show them.</p>
         </div>
       </div>
     </div>
