@@ -15,6 +15,16 @@
       --accent-green-dark:#238636;
       --accent-red:       #f85149;
       --accent-amber:     #e3a000;
+      /* v1.0.147 — `--accent-primary` was referenced 18 times across
+         .collab-* and .challenge-* rules (Watch Together + Live Challenge)
+         but never declared. Browsers silently fell back to the property's
+         initial value (transparent / currentColor / canvastext), making
+         focus rings and accent buttons invisible. Alias it to the existing
+         brand accent. Same alias in body.light-mode below. */
+      --accent-primary:   var(--accent-blue);
+      /* `--border-color` referenced by .social-play-card rules — alias to
+         the standard border so the cards actually have a visible edge. */
+      --border-color:     var(--border-default);
       /* Tells browsers to render native form controls (select, scrollbar,
          checkbox, date picker) in dark theme. Without this, macOS Chrome
          renders <select> in light-mode regardless of CSS color values —
@@ -38,10 +48,27 @@
       --accent-green-dark:#1a7f37;
       --accent-red:       #cf222e;
       --accent-amber:     #9a6700;
+      --accent-primary:   var(--accent-blue);
+      --border-color:     var(--border-default);
       color-scheme: light;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* v1.0.147 — Honour OS-level reduced-motion preference. Vestibular-
+       sensitive users (and battery-saver / data-saver modes on many
+       platforms) ask the system to suppress motion; spinner, fade-ins,
+       hover transforms, sync-pulse, taste-spin all keep playing without
+       this. The !important guards against transition shorthand overrides
+       deeper in the cascade. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
 
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
@@ -1055,6 +1082,18 @@
     .franchise-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .franchise-elo { font-size: 0.78rem; color: var(--text-secondary); }
     .franchise-count { font-size: 0.75rem; color: var(--accent-blue); background: #1a2d4d; border-radius: 10px; padding: 1px 7px; }
+    /* v1.0.165 — Fuzzy-member count pill on franchise cards. Same shape as
+       .franchise-count but amber so users skimming the rankings can
+       immediately spot franchises with uncertain entries. Margin-left keeps
+       it from butting against the "X entries" pill that always precedes it. */
+    .franchise-fuzzy-count {
+      font-size: 0.75rem;
+      color: var(--accent-amber);
+      background: #2d1b00;
+      border-radius: 10px;
+      padding: 1px 7px;
+      margin-left: 6px;
+    }
     .franchise-coherence { font-size: 0.72rem; font-weight: 600; border-radius: 10px; padding: 1px 7px; }
     .coherence-consistent { color: #3fb950; background: rgba(63,185,80,0.12); }
     .coherence-mixed      { color: #e3a000; background: rgba(227,160,0,0.12); }
@@ -1304,6 +1343,80 @@
       padding: 2px 8px;
       border-radius: 20px;
     }
+    /* v1.0.164 — Amber fuzzy outline is reserved for individual member rows
+       inside the franchise detail modal, where it pinpoints which member
+       of a multi-entry franchise is flagged. The Rankings page itself no
+       longer outlines cards (per beta-tester feedback that the outline on
+       a whole franchise card mis-implied the entire group was uncertain).
+       On the Rankings page, fuzzy is communicated by the inline pill in
+       the badge row; in the anime detail modal, by the .modal-fuzzy-notice
+       banner. Earlier .rank-card.is-fuzzy rule removed. */
+    .franchise-detail-member.is-fuzzy {
+      border-color: var(--accent-amber);
+      box-shadow: 0 0 0 1px var(--accent-amber);
+    }
+    /* v1.0.167 — same treatment for the inline expand list on Rankings */
+    .franchise-member.is-fuzzy {
+      border-color: var(--accent-amber);
+      box-shadow: 0 0 0 1px var(--accent-amber);
+      border-radius: 4px;
+    }
+    /* v1.0.167 — amber outline on fuzzy rows in the franchise table expand
+       (list-view collapsable) AND on flat list-view rows when not in franchise
+       mode. Uses box-shadow inset so the line follows the row's content area
+       instead of overlapping neighbouring rows. */
+    tr.franchise-table-member.is-fuzzy td,
+    tr.ranking-table-row.is-fuzzy td {
+      box-shadow: inset 0 1px 0 var(--accent-amber),
+                  inset 0 -1px 0 var(--accent-amber);
+    }
+    tr.franchise-table-member.is-fuzzy td:first-child,
+    tr.ranking-table-row.is-fuzzy td:first-child {
+      box-shadow: inset 1px 1px 0 var(--accent-amber),
+                  inset 1px -1px 0 var(--accent-amber);
+    }
+    tr.franchise-table-member.is-fuzzy td:last-child,
+    tr.ranking-table-row.is-fuzzy td:last-child {
+      box-shadow: inset -1px 1px 0 var(--accent-amber),
+                  inset -1px -1px 0 var(--accent-amber);
+    }
+    .member-fuzzy-tag {
+      display: inline-block;
+      margin-left: 4px;
+      font-size: 0.85em;
+      vertical-align: baseline;
+      filter: saturate(1.2);
+    }
+    /* Fuzzy notice inside the detail modal — explicit affordance so the
+       user can see "this is flagged" without parsing the small pill that
+       lives in the rank-card badge row. */
+    .modal-fuzzy-notice {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #2d1b00;
+      border: 1px solid var(--accent-amber);
+      color: var(--accent-amber);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .modal-fuzzy-notice .icon { font-size: 1.1rem; flex-shrink: 0; }
+    .modal-fuzzy-notice .text { flex: 1; }
+    .modal-fuzzy-notice button {
+      flex-shrink: 0;
+      background: var(--accent-amber);
+      color: #1a1100;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .modal-fuzzy-notice button:hover { filter: brightness(1.1); }
     .streak-badge {
       display: inline-flex;
       align-items: center;
@@ -1746,6 +1859,13 @@
       position: relative;
       display: flex;
       gap: 20px;
+      /* v1.0.146 — cap the modal box at viewport so franchise-detail content
+         (members list + sparkline + recent battles) all stay inside the
+         rounded card. Without this cap, multi-entry franchises like AoT (9+
+         members) made the box outgrow the viewport on Mac laptops and the
+         sparkline / battles appeared to break out of the bottom border. */
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
     }
     .modal-close {
       position: absolute;
@@ -2729,16 +2849,24 @@
     }
     /* v1.0.142 — When the description column is hosting the franchise member
        list, the 80px synopsis-preview cap clamps it to one visible member.
-       v1.0.143 — original fix removed the cap entirely, which let very large
-       franchises (Attack on Titan, 9+ entries) overflow the modal-box's
-       bottom border. Now use 60vh so 5-7 members fit on a typical Mac
-       laptop viewport (~720-900px tall), with internal scroll for anything
-       larger. */
+       v1.0.146 — the parent .modal-box now caps itself at viewport height
+       with internal scrolling, so the description column doesn't need its
+       own cap. Members flow naturally and the whole modal-box scrolls if
+       the combined content (description + sparkline + recent battles)
+       exceeds the viewport. */
     .modal-description:has(.franchise-detail-members) {
-      max-height: 60vh;
-      overflow-y: auto;
+      max-height: none;
+      overflow-y: visible;
       border-left: none;
       padding-left: 0;
+    }
+    /* v1.0.146 — keep the cover image visible while the modal-box scrolls
+       its content. Without sticky positioning the cover scrolls up off
+       screen alongside the members, leaving the franchise stats orphaned. */
+    #modal-cover {
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
     }
 
     /* LOGIN CARDS */
@@ -3807,7 +3935,13 @@
       .fuzzy-btn,
       .synopsis-btn,
       .card-anilist-link,
-      .exclude-btn {
+      .exclude-btn,
+      /* v1.0.147 — newer surfaces missed by the original list */
+      .notification-bell,
+      .franchise-expand-btn,
+      .review-banner button,
+      .sync-banner button,
+      .new-anime-banner button {
         min-height: 44px;
         min-width:  44px;
         display: inline-flex;
@@ -3847,7 +3981,10 @@
   /* ── Toast notification ───────────────────────────────────────────────── */
   #toast {
     position: fixed;
-    bottom: 28px;
+    /* v1.0.147 — bottom respects the Android nav bar / iOS home indicator
+       (env(safe-area-inset-bottom)). Previously toasts slid under the
+       gesture bar on touch devices. */
+    bottom: calc(28px + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%) translateY(12px);
     background: var(--bg-tertiary);
@@ -3860,7 +3997,13 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.18s ease, transform 0.18s ease;
-    white-space: nowrap;
+    /* v1.0.147 — was `white-space: nowrap`, which made long messages (the
+       slim-cache fallback notice, sync-error explanations) overflow a 360px
+       Android viewport horizontally. Wrap and cap width instead. */
+    white-space: normal;
+    max-width: calc(100vw - 32px);
+    text-align: center;
+    line-height: 1.4;
   }
   #toast.show {
     opacity: 1;

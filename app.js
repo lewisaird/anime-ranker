@@ -3552,20 +3552,35 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   // v1.0.165 — fuzzy-member count badge. Renders alongside the entries
   // count when at least one member is flagged so users can spot
   // franchises with uncertain entries without opening each one.
+  // v1.0.167 — single-member franchises also show the regular "Fuzzy" pill
+  // (same as a flat rank card) so toggling franchise mode doesn't change how
+  // a single-anime franchise's fuzzy state looks.
   const fuzzyCount = group.members.filter(a => a.fuzzy).length;
-  const fuzzyCountBadge = fuzzyCount > 0
+  const fuzzyCountBadge = (!isSingle && fuzzyCount > 0)
     ? `<span class="franchise-fuzzy-count" title="${fuzzyCount} entr${fuzzyCount === 1 ? 'y is' : 'ies are'} flagged as fuzzy — click in to see which.">〰️ ${fuzzyCount} fuzzy</span>`
+    : '';
+  const singleFuzzyPill = (isSingle && group.members[0]?.fuzzy)
+    ? '<span class="fuzzy-tag" title="Fuzzy — you flagged this as not remembered well enough to judge fairly. It appears less often until you’ve refreshed your memory.">〰️ Fuzzy</span>'
     : '';
   const conf = confidenceLabel(group.totalBattles || 0);
   const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
+  // v1.0.167 — fuzzy members in the inline expand list get the same amber
+  // outline + "〰️ Fuzzy" pill as a flat rank card. Helps pinpoint which
+  // entry needs revisiting without opening the detail panel.
   const membersHtml = !isSingle ? `
     <div class="franchise-members" style="display:none">
-      ${group.members.map(a => `
-        <div class="franchise-member" onclick="showAnimeDetail(${a.id})">
+      ${group.members.map(a => {
+        const fuzzyCls  = a.fuzzy ? ' is-fuzzy' : '';
+        const fuzzyPill = a.fuzzy
+          ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
+          : '';
+        return `
+        <div class="franchise-member${fuzzyCls}" onclick="showAnimeDetail(${a.id})">
           <img src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
-          <span class="franchise-member-title">${esc(a.titleEn || a.title)}</span>
+          <span class="franchise-member-title">${esc(a.titleEn || a.title)}${fuzzyPill}</span>
           <span class="franchise-member-elo">${a.elo}</span>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>` : '';
 
   const coh = _coherenceLabel(group);
@@ -3595,6 +3610,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
       ${countBadge || fuzzyCountBadge ? `<div class="franchise-grid-meta">${countBadge}${fuzzyCountBadge}</div>` : ''}
       <div class="rank-elo">ELO ${group.bestElo}</div>
       <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
+      ${singleFuzzyPill}
       ${cohBadge}
       ${!isSingle ? `<button class="franchise-expand-btn" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))">▸ See all entries</button>` : ''}
       ${membersHtml}
@@ -3611,6 +3627,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
             <span class="franchise-elo">${wrStr} WR · ${group.totalBattles} battles</span>
             ${countBadge}
             ${fuzzyCountBadge}
+            ${singleFuzzyPill}
             ${cohBadge}
           </div>
         </div>
@@ -3768,11 +3785,18 @@ function toggleFranchiseExpand(el) {
 // used as input to franchise grouping so hidden anime are excluded from groups.
 // This drives the Rankings tab's franchise-view, so use the Ranking scope.
 function _franchiseSortedList() {
+  // v1.0.167 — `showFuzzyOnly` deliberately NOT applied here. If we strip
+  // non-fuzzy anime before grouping, multi-member franchises with one fuzzy
+  // member degenerate to a single-member group (wrong name, broken click
+  // handler, miscomputed eloRank — because eloRank is calculated against the
+  // filtered set). The fuzzy-only predicate is instead applied at the display
+  // layer by _filterFranchise(), which hides any group whose visible-member
+  // count drops to zero. Same pattern as how the format / episode-length /
+  // excluded filters are handled in franchise mode.
   return getSortedList().filter(a =>
     !excludedIds.has(a.id) &&
     !hiddenFormatsRanking.has(a.format) &&
-    !hiddenEpRangesRanking.has(epRange(a.episodes, a.format)) &&
-    (!showFuzzyOnly || a.fuzzy)
+    !hiddenEpRangesRanking.has(epRange(a.episodes, a.format))
   );
 }
 
@@ -14167,7 +14191,11 @@ function renderRankingTable() {
     const wr      = (anime.wins + anime.losses) > 0
       ? Math.round(anime.wins / (anime.wins + anime.losses) * 100) + '%' : '–';
     const sb      = streakBadge(anime);
-    _vsTableData.push({ anime, displayIdx: i + 1, title, tier, conf, wr, sb });
+    // v1.0.167 — anchor rank to ELO position (matches grid view + franchise
+    // table). Previously this used the current-sort position, so sorting by
+    // Title swapped #312 → #260 even though the anime hadn't moved in ELO.
+    const displayIdx = (eloRankMap.get(anime.id) ?? i) + 1;
+    _vsTableData.push({ anime, displayIdx, title, tier, conf, wr, sb });
   });
 
   // Attach scroll listener (idempotent — overwrites previous)
@@ -14206,10 +14234,15 @@ function _vsRenderTableSlice() {
 
   for (let i = firstIdx; i < lastIdx; i++) {
     const { anime, displayIdx, title, tier, conf, wr, sb } = _vsTableData[i];
-    html += `<tr>
+    // v1.0.167 — "〰️ Fuzzy" pill + amber row outline on flagged anime, same
+    // visual treatment as the franchise expand views and the grid card pill.
+    const fuzzyPill = anime.fuzzy
+      ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
+      : '';
+    html += `<tr class="ranking-table-row${anime.fuzzy ? ' is-fuzzy' : ''}">
       <td class="tbl-rank">${displayIdx}</td>
       <td><img class="tbl-cover" src="${anime.cover}" alt="" aria-hidden="true" loading="lazy" /></td>
-      <td class="tbl-title" onclick="showAnimeDetail(${anime.id})">${title}${sb ? ' ' + sb : ''}</td>
+      <td class="tbl-title" onclick="showAnimeDetail(${anime.id})">${title}${fuzzyPill}${sb ? ' ' + sb : ''}</td>
       <td>${anime.elo}</td>
       <td>${wr}</td>
       <td>${anime.battles || 0}</td>
@@ -14272,10 +14305,15 @@ function renderFranchiseTable() {
           ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
         const conf = confidenceLabel(a.battles || 0);
         const memberTier = getTier(sorted.indexOf(a), sorted.length);
-        html += `<tr class="franchise-table-member" data-member-gid="${gid}" style="display:none" onclick="showAnimeDetail(${a.id})">
+        // v1.0.167 — "〰️ Fuzzy" pill next to fuzzy member titles in the
+        // franchise table expand, matching the grid expand + rank cards.
+        const fuzzyPill = a.fuzzy
+          ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
+          : '';
+        html += `<tr class="franchise-table-member${a.fuzzy ? ' is-fuzzy' : ''}" data-member-gid="${gid}" style="display:none" onclick="showAnimeDetail(${a.id})">
           <td></td>
           <td><img class="tbl-cover" src="${esc(a.cover || '')}" alt="" loading="lazy" /></td>
-          <td class="tbl-title" style="padding-left:24px">${esc(a.titleEn || a.title)}</td>
+          <td class="tbl-title" style="padding-left:24px">${esc(a.titleEn || a.title)}${fuzzyPill}</td>
           <td>${a.elo}</td>
           <td>${wr}</td>
           <td>${a.battles || 0}</td>
