@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.145" />
+  <meta name="version" content="1.0.166" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -272,9 +272,9 @@
         <button class="btn-primary" style="width:100%" onclick="collabCreateSession()">Create session →</button>
       </div>
       <div id="collab-multi-join" style="display:none;margin-top:16px">
-        <input id="collab-join-input" class="collab-name-input" placeholder="Enter 6-character code"
+        <input id="collab-join-input" class="collab-name-input" placeholder="Enter 7-character code"
                style="width:100%;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1.1rem"
-               maxlength="6" onkeydown="if(event.key==='Enter')collabJoinSession()" />
+               maxlength="7" onkeydown="if(event.key==='Enter')collabJoinSession()" />
         <button class="btn-primary" style="width:100%;margin-top:10px" onclick="collabJoinSession()">Join →</button>
       </div>
     </div>
@@ -490,9 +490,9 @@
       </div>
       <div style="display:flex;gap:8px">
         <input id="lc-setup-join-code" class="collab-name-input"
-               placeholder="6-character code"
+               placeholder="7-character code"
                style="flex:1;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1rem"
-               maxlength="6" onkeydown="if(event.key==='Enter')lcJoinSession()" />
+               maxlength="7" onkeydown="if(event.key==='Enter')lcJoinSession()" />
         <button class="btn-secondary" onclick="lcJoinSession()">Join →</button>
       </div>
     </div>
@@ -811,7 +811,7 @@
           <div id="ep-meta-a"></div>
           <button type="button" class="card-more-chip" data-side="0" onclick="toggleCardActions(event,0)" aria-expanded="false" aria-controls="card-actions-0">⋯ More</button>
           <div class="card-actions" id="card-actions-0">
-            <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">🌫 Fuzzy</button>
+            <button class="fuzzy-btn" id="fuzzy-a" onclick="flagFuzzy(event,0)" title="I don't remember this well enough">〰️ Fuzzy</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,0)" title="About this show">ℹ About</button>
             <a class="card-anilist-link" id="anilist-a" href="#" target="_blank" onclick="event.stopPropagation()">↗ AniList</a>
             <button class="exclude-btn" onclick="excludeAnime(event,0)" title="Remove from ranking pool permanently">✗ Not seen</button>
@@ -828,7 +828,7 @@
           <div id="ep-meta-b"></div>
           <button type="button" class="card-more-chip" data-side="1" onclick="toggleCardActions(event,1)" aria-expanded="false" aria-controls="card-actions-1">⋯ More</button>
           <div class="card-actions" id="card-actions-1">
-            <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">🌫 Fuzzy</button>
+            <button class="fuzzy-btn" id="fuzzy-b" onclick="flagFuzzy(event,1)" title="I don't remember this well enough">〰️ Fuzzy</button>
             <button class="synopsis-btn" onclick="toggleSynopsis(event,1)" title="About this show">ℹ About</button>
             <a class="card-anilist-link" id="anilist-b" href="#" target="_blank" onclick="event.stopPropagation()">↗ AniList</a>
             <button class="exclude-btn" onclick="excludeAnime(event,1)" title="Remove from ranking pool permanently">✗ Not seen</button>
@@ -947,7 +947,7 @@
         <button class="sort-btn"        data-sort="tier"       data-label="Tier"         onclick="setSort('tier')">Tier</button>
         <button class="sort-btn"        data-sort="confidence" data-label="Confidence"   onclick="setSort('confidence')">Confidence</button>
         <div id="ranking-controls-right">
-          <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">🌫 Fuzzy only</button>
+          <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">〰️ Fuzzy only</button>
           <button class="view-btn" id="franchise-btn" onclick="toggleFranchiseMode()" title="Group sequels and seasons together" aria-pressed="false">⛓ Franchise</button>
           <div id="view-toggle-wrap">
             <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view" aria-label="Grid view" aria-pressed="true">⊞</button>
@@ -1418,7 +1418,7 @@
         </div>
 
         <div class="help-section">
-          <h4>🌫 Fuzzy &amp; ✗ Not Seen</h4>
+          <h4>〰️ Fuzzy &amp; ✗ Not Seen</h4>
           <p><strong>Fuzzy</strong> — can't judge an anime fairly because you don't remember it well? Mark it fuzzy and it'll appear far less often until you've refreshed your memory.<br>
           <strong>Not Seen</strong> — removes the anime from your ranking pool entirely. Re-add it any time from the Excluded section at the bottom of Rankings.</p>
         </div>
@@ -1535,10 +1535,23 @@
           <div class="modal-stat"><span class="val" id="modal-winrate-val">–</span><label>Win Rate</label></div>
         </div>
         <div id="modal-confidence-wrap" style="margin-bottom:12px"></div>
+        <div id="modal-fuzzy-notice" class="modal-fuzzy-notice" style="display:none">
+          <span class="icon">〰️</span>
+          <span class="text">
+            <strong>Fuzzy</strong> — you flagged this as not remembered well enough to judge fairly.
+            It appears less often in battles until you've refreshed your memory.
+          </span>
+          <button onclick="unflagFuzzy()">Remove flag</button>
+        </div>
         <div id="modal-description" class="modal-description" style="display:none"></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
           <a id="modal-anilist-btn" class="modal-anilist-btn" href="#" target="_blank" style="margin-bottom:0">View on AniList ↗</a>
-          <button id="modal-unfuzzy-btn" style="display:none" onclick="unflagFuzzy()">🌫 Remove Fuzzy Flag</button>
+          <!-- v1.0.161 — Legacy small "Remove Fuzzy Flag" button kept hidden
+               (display:none persistent). The full-width fuzzy notice above
+               carries both the explanation and the remove action now. The
+               button stays in the DOM so unflagFuzzy() and the IDS reference
+               continue to resolve until the cleanup pass that drops them. -->
+          <button id="modal-unfuzzy-btn" style="display:none" onclick="unflagFuzzy()">〰️ Remove Fuzzy Flag</button>
         </div>
         <div id="modal-sparkline-wrap" class="sparkline-wrap" style="display:none">
           <h4>ELO History</h4>

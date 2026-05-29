@@ -112,6 +112,7 @@ const IDS = Object.freeze({
   modalSparklineWrap:     'modal-sparkline-wrap',
   modalTitle:             'modal-title',
   modalUnfuzzyBtn:        'modal-unfuzzy-btn',
+  modalFuzzyNotice:       'modal-fuzzy-notice',
   modalWinrateVal:        'modal-winrate-val',
   modalWins:              'modal-wins',
   modeBtn:                'mode-btn',
@@ -317,6 +318,39 @@ const IDS = Object.freeze({
   viewListBtn:            'view-list-btn',
   warmStartChk:           'warm-start-chk',
   welcomeModal:           'welcome-modal',
+  // v1.0.154 — stragglers picked up by the v146 review. Added so the
+  // remaining literal-string getElementById call sites can move under
+  // the same byId-with-registry-key discipline.
+  collabConfirmBtn:       'collab-confirm-btn',
+  collabModeMultiBtn:     'collab-mode-multi-btn',
+  collabMultiCreate:      'collab-multi-create',
+  collabMultiJoin:        'collab-multi-join',
+  collabMultiNote:        'collab-multi-note',
+  collabP2ReadyBtn:       'collab-p2-ready-btn',
+  collabRejoinBanner:     'collab-rejoin-banner',
+  collabRejoinDesc:       'collab-rejoin-desc',
+  collabTiebreakBtn:      'collab-tiebreak-btn',
+  collabVoteSub:          'collab-vote-sub',
+  collabVoteWho:          'collab-vote-who',
+  collapsibleFilters:     'collapsible-filters',
+  discoverMoodGrid:       'discover-mood-grid',
+  filterBtn:              'filter-btn',
+  filterPopover:          'filter-popover',
+  franchiseBtn:           'franchise-btn',
+  historyCount:           'history-count',
+  lcHistoryList:          'lc-history-list',
+  lcHistoryListLobby:     'lc-history-list-lobby',
+  mobileFilterToggle:     'mobile-filter-toggle',
+  moodsSection:           'moods-section',
+  newBadgeTaste:          'new-badge-taste',
+  recsTabMoods:           'recs-tab-moods',
+  socialChallengeInput:   'social-challenge-input',
+  socialCompareInput:     'social-compare-input',
+  tasteDrift:             'taste-drift',
+  tasteEvolution:         'taste-evolution',
+  tasteIdentityCard:      'taste-identity-card',
+  tasteIdentityInsights:  'taste-identity-insights',
+  themeToggleBtn:         'theme-toggle-btn',
 });
 
 // Shorthand for document.getElementById — paired with IDS.* to make a typo in
@@ -334,7 +368,9 @@ let battleCount  = 0;
 let currentA     = null;
 let currentB     = null;
 let saveKey      = '';
-let prevState       = null;  // kept for back-compat (skipBattle still uses this directly)
+// v1.0.154 — removed `prevState` (was claimed to be needed by skipBattle but
+// skipBattle only ever called _pushUndoSnapshot, never read prevState).
+// All 5 stale writes (clear paths + push-snapshot sites) also removed.
 let undoStack       = [];    // stack of up to MAX_UNDO_DEPTH snapshots (most recent last)
 const MAX_UNDO_DEPTH = 5;
 let nextPairOverride = null; // [idxA, idxB] — used once after an undo to restore the original "next" pair
@@ -497,6 +533,14 @@ const KESSEN_KEYS = {
     // already been shown (accepted or declined). Prevents repeat pestering.
     guestMergeDismissed: 'kessen.ui.guestMergeDismissed',
     tasteStorySeen:      'kessen.ui.tasteStorySeen', // JSON array of battle counts already shown
+    // v1.0.154 — was set/read inline as 'kessen.ui.theme'. Brought into the
+    // registry alongside the other UI prefs.
+    theme:               'kessen.ui.theme',
+    // v1.0.154 — was a module-level _NEW_BADGE_TASTE_KEY const. Pulled
+    // into the registry for discoverability. Literal preserved so existing
+    // saves don't lose the seen-milestone marker (no migration entry exists
+    // for the legacy underscore form).
+    tasteNewBadgeMilestone: 'kessen_taste_badge_milestone',
   },
   settings: {
     allowAdult:  'kessen.settings.allowAdult',
@@ -515,6 +559,14 @@ const KESSEN_KEYS = {
     // Notification Centre — persisted list of {id, type, msg, timestamp, read, data}
     // Keyed per user so switching accounts shows the right notifications.
     notifCentre: (key) => `kessen.data.notifCentre.${key || 'guest'}`,
+    // v1.0.154 — Live Challenge battle-history records (was a module-level
+    // _LC_HISTORY_KEY const). Used to recap recent matches in the LC modal.
+    // Literal preserved as 'kessen_lc_history' so existing user history
+    // doesn't disappear — no migration entry exists for the legacy form.
+    lcHistory:         'kessen_lc_history',
+    // v1.0.154 — Taste profile snapshots (was a module-level KESSEN_KEYS.data.tasteSnapshots
+    // const). Global rather than per-user so re-imports don't lose history.
+    tasteSnapshots:    'kessen.data.tasteSnapshots',
   },
   _migrationFlagV1: 'kessen.meta.migratedV1',
 };
@@ -611,6 +663,11 @@ function loadAuthFromStorage() {
 // Extracted so we can do in-place resets (no location.reload flash) from
 // resetAll / deleteAllData / logout without re-flowing boot code.
 function _clearRankingState() {
+  // v1.0.148 — flush any pending local saveState before we wipe the state,
+  // otherwise a fast logout-after-battle loses that battle's ELO update.
+  // flushSaveState() is a no-op if no timer is pending.
+  flushSaveState();
+
   animeList         = [];
   battleCount       = 0;
   currentA          = null;
@@ -622,7 +679,6 @@ function _clearRankingState() {
   hiddenEpRangesBattle    = new Set();
   hiddenEpRangesRanking   = new Set();
   saveKey           = '';
-  prevState         = null;
   undoStack         = [];
   achievements      = {};
   comparedFriends   = new Set();
@@ -1401,11 +1457,7 @@ async function _fetchViewer() {
       mediaListOptions { scoreFormat }
     }
   }`;
-  const res = await fetch('https://graphql.anilist.co', {
-    method: 'POST',
-    headers: anilistHeaders(),
-    body: JSON.stringify({ query })
-  });
+  const res = await _anilistFetch({ query });
   const data = await res.json();
   return data?.data?.Viewer ?? null;
 }
@@ -1662,7 +1714,33 @@ function _currentOwnerTag() {
 // after every battle, sort, filter change, etc.).
 let _quotaWarnedThisSession = false;
 
+// v1.0.148 — Debounce the localStorage write. Every battle, sort, filter
+// toggle, tower round called saveState() synchronously, and at 6500 anime
+// the JSON.stringify alone is ~80-200ms of main-thread block. Click 50
+// battles fast and you're looking at multi-second jank on serialization.
+// The debounce coalesces bursty calls into a single write 400ms after the
+// last one. flushSaveState() is a synchronous safety valve for beforeunload
+// and explicit logout paths so an in-flight debounce never loses progress.
+let _saveStateTimer = null;
+const SAVE_STATE_DEBOUNCE_MS = 400;
+
 function saveState() {
+  if (_saveStateTimer) clearTimeout(_saveStateTimer);
+  _saveStateTimer = setTimeout(() => {
+    _saveStateTimer = null;
+    _saveStateNow();
+  }, SAVE_STATE_DEBOUNCE_MS);
+}
+
+function flushSaveState() {
+  if (_saveStateTimer) {
+    clearTimeout(_saveStateTimer);
+    _saveStateTimer = null;
+    _saveStateNow();
+  }
+}
+
+function _saveStateNow() {
   if (!saveKey) return;
   if (_saveCollision) return; // another user's data lives at this key — don't clobber
   const owner = _currentOwnerTag();
@@ -1682,6 +1760,11 @@ function saveState() {
         })
       : animeList;
     return JSON.stringify({
+      // v1.0.154 — stamp a schema version so loadState can gate future
+      // migrations cleanly. Bump _schema whenever the on-disk shape
+      // changes; older saves load with _schema absent (treated as 0) and
+      // the migration block in loadState fills in defaults.
+      _schema: 4,
       animeList: list, battleCount, currentA, currentB, battleHistory,
       excludedIds: [...excludedIds],
       hiddenFormatsBattle:   [...hiddenFormatsBattle],
@@ -2163,11 +2246,7 @@ async function refreshAnimeMetadata() {
             }
           }
         }`;
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { ids: chunk } })
-      });
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
       const json = await res.json();
       const mediaList = json?.data?.Page?.media ?? [];
       mediaList.forEach(m => { metaMap[m.id] = m; });
@@ -2470,11 +2549,7 @@ async function _migrateMalIds() {
           media(id_in: $ids, type: ANIME) { id idMal }
         }
       }`;
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ query, variables: { ids: chunk } }),
-      });
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
       const data = await res.json();
       (data?.data?.Page?.media ?? []).forEach(m => { if (m.idMal) idMalMap[m.id] = m.idMal; });
       if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 250));
@@ -2550,11 +2625,11 @@ function renderPair(ia, ib) {
   // state ("Fuzzy") — two different things on the same button.
   const fuzzyBtnA = byId(IDS.fuzzyA);
   fuzzyBtnA.classList.toggle('active', !!a.fuzzy);
-  fuzzyBtnA.textContent = "🌫 Fuzzy";
+  fuzzyBtnA.textContent = "〰️ Fuzzy";
 
   const fuzzyBtnB = byId(IDS.fuzzyB);
   fuzzyBtnB.classList.toggle('active', !!b.fuzzy);
-  fuzzyBtnB.textContent = "🌫 Fuzzy";
+  fuzzyBtnB.textContent = "〰️ Fuzzy";
 
   // Synopsis panels — reset, scroll back to top, and pre-fill content
   const synA = byId(IDS.synopsisA);
@@ -2671,7 +2746,6 @@ function pickWinner(side) {
 function _pushUndoSnapshot(snap) {
   undoStack.push(snap);
   if (undoStack.length > MAX_UNDO_DEPTH) undoStack.shift(); // evict oldest
-  prevState = undoStack[undoStack.length - 1]; // keep prevState in sync for any legacy reads
   _updateUndoBtn();
 }
 
@@ -2738,7 +2812,6 @@ function undoLast() {
     saveState();
   }
 
-  prevState = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
   _updateUndoBtn();
 }
 
@@ -2805,6 +2878,11 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const tier = getTier(eloRank, totalLen);
 
   const card = document.createElement('div');
+  // v1.0.164 — Rank cards don't carry the amber outline any more. The fuzzy
+  // state is communicated by the small inline pill below and the in-modal
+  // notice when the user clicks through. The amber affordance is reserved
+  // for the franchise-detail member rows, where it pinpoints exactly which
+  // entry in a franchise is flagged.
   card.className = 'rank-card';
   card.dataset.format  = anime.format || 'TV';
   card.dataset.epRange = epRange(anime.episodes, anime.format);
@@ -2813,7 +2891,10 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   card.dataset.animeId = anime.id;
   card.style.cursor = 'pointer';
   card.title = 'Click for details';
-  card.addEventListener('click', () => showAnimeDetail(anime.id));
+  // v1.0.153 — Click is delegated on #ranking-list (see _installRankingListClickDelegate)
+  // instead of being attached per card. At 6500 anime that's 6499 fewer closures +
+  // listeners (substantial memory + GC savings on long sessions). The handler
+  // reads dataset.animeId which is already set above.
   const sortExtra = currentSort === 'winrate'
     ? `<div class="rank-elo">${(a => (a.wins+a.losses)>0 ? Math.round(a.wins/(a.wins+a.losses)*100)+'% WR' : '–')(anime)}</div>`
     : currentSort === 'battles' ? `<div class="rank-elo">${anime.battles || 0} battles</div>`
@@ -2831,7 +2912,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     ${_statusBadge(anime.status)}
     ${sortExtra}
     <span class="confidence ${conf.cls}" title="${conf.title}">${conf.dot} ${conf.label}</span>
-    ${anime.fuzzy ? '<span class="fuzzy-tag" title="Fuzzy \u2014 you flagged this as not remembered well enough to judge fairly. It appears less often until you\u2019ve refreshed your memory.">&#x1F32B; Fuzzy</span>' : ''}
+    ${anime.fuzzy ? '<span class="fuzzy-tag" title="Fuzzy \u2014 you flagged this as not remembered well enough to judge fairly. It appears less often until you\u2019ve refreshed your memory.">〰️ Fuzzy</span>' : ''}
     ${streakBadge(anime)}
   `;
   if (showFuzzyOnly && !anime.fuzzy)                             card.style.display = 'none';
@@ -2896,6 +2977,44 @@ const FRANCHISE_ALIASES = Object.freeze([
   // requires a non-word boundary after "Saiyuki" so "Saiyuuki" (where u
   // follows k without a boundary) does NOT match.
   { pattern: /^saiyuki\b/i,           canon: 'Saiyuki' },
+  // v1.0.149 — additional umbrella aliases predicted by the v146 review.
+  // Each shares a brand prefix but has a stem that's either too short for
+  // the 8-char prefix-match threshold or whose sub-series share no clean
+  // title stem with the original.
+
+  // Macross — Frontier, Delta, Zero, Plus, 7, II, Dynamite 7, Flashback 2012,
+  // Do You Remember Love. Stem "Macross" (7 chars) sits below PREFIX_MIN.
+  { pattern: /\bmacross\b/i,          canon: 'Macross' },
+  // Lupin III — Roman-strip reduces "Lupin III" → "Lupin" (5 chars), below
+  // PREFIX_MIN. Covers Cagliostro, Castle of Cagliostro, Part 1-6,
+  // The First, Goemon's Blood Spray, etc. Excludes Lupinranger (different
+  // tokusatsu franchise) via word boundary.
+  { pattern: /^lupin\s+(?:iii|the\s+third|3rd|3)\b/i, canon: 'Lupin III' },
+  // Slayers — Next, Try, Premium, Revolution, Evolution-R, NEXT Movie,
+  // Great. None of Next/Try are in the spinoff strip list and "slayers"
+  // is 7 chars so prefix-match would have needed loosening.
+  { pattern: /^slayers\b/i,           canon: 'Slayers' },
+  // Saint Seiya — Hades, Omega, Soul of Gold, Legend of Sanctuary, Knights
+  // of the Zodiac (English dub title shares zero stem). The two-token alias
+  // catches both Japanese-derived and English-dub naming.
+  { pattern: /^saint\s+seiya\b|^knights\s+of\s+the\s+zodiac\b/i, canon: 'Saint Seiya' },
+  // Yu-Gi-Oh! family — GX, 5D's, ZEXAL, ARC-V, VRAINS, SEVENS, GO RUSH!!.
+  // Hyphenated brand is fragile under the dash regex; the literal here is
+  // tolerant of capital variation but anchored at start.
+  { pattern: /^yu-?gi-?oh!?/i,        canon: 'Yu-Gi-Oh!' },
+  // iDOLM@STER — Cinderella Girls, Million Live, SideM, Shiny Colors, Xenoglossia.
+  // Multiple capitalisation conventions in the wild; the brand uses @ or A.
+  { pattern: /^(?:the\s+)?idolm[a@]ster\b/i, canon: 'The iDOLM@STER' },
+  // Detective Conan — long-running umbrella with English ("Case Closed"),
+  // Japanese ("Meitantei Conan", "Detective Conan"). The conan films share
+  // none of the same prefix structures so an explicit alias collapses the lot.
+  { pattern: /\b(?:meitantei\s+conan|detective\s+conan|case\s+closed)\b/i, canon: 'Detective Conan' },
+  // Aikatsu! — Stars, Friends, Planet, On Parade, 10th Story. The exclamation
+  // mark is part of the brand; \b after handles "Aikatsu!", "Aikatsu Stars!".
+  { pattern: /^aikatsu/i,             canon: 'Aikatsu!' },
+  // Tenchi Muyou! / Tenchi Muyo — Universe, in Tokyo, in Love, Geminar,
+  // GXP. Brand uses two conventional romanisations.
+  { pattern: /^tenchi\s+muyou?/i,     canon: 'Tenchi Muyou!' },
 ]);
 
 function _franchiseAlias(title) {
@@ -3004,7 +3123,10 @@ function _franchiseBaseName(title) {
     // or "Danmachi I". v1.0.135 — was "XX?" which actually matched single X
     // (the optional makes the second X optional, so "X" alone matched).
     // Changed to literal "XX" so single X stays intact.
-    .replace(/\s+(II|III|IV|VI|VII|VIII|IX|XI|XII|XX)$/i, '')
+    // v1.0.149 — added XIII-XIX so "Final Fantasy XIV", "Devil Survivor 2:
+    // The Animation - Episode XIII", and similar long-running franchises
+    // strip cleanly.
+    .replace(/\s+(II|III|IV|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)$/i, '')
     // Strip trailing × / ✕ / ✗ cross-product sequel markers (e.g. "Anime ×2").
     // v1.0.135 — limit digit count to 1-2 to match the year safeguard on the
     // plain trailing-digit regex below ("Pupa 2019" was being eaten here too).
@@ -3066,27 +3188,101 @@ function _franchiseKey(title) {
 //    still allows "Hellsing" (8) ↔ "Hellsing Ultimate" to work via the prefix
 //    path; shorter stems like "Naruto" / "Bleach" / "Trigun" rely on the
 //    AniList relations graph to bridge their sequels.
-function _franchiseSuffixLookup(key, keyMap) {
+//
+// v1.0.149 — Indexed candidate lookup. The previous implementation iterated
+// the entire keyMap on every call (called once per anime, so O(n²) overall).
+// At 6500 anime that's ~42M string operations, the dominant cost in the
+// Rankings render path. Indexes by first/last word reduce per-call candidate
+// count from n to typically 1-5 (only keys that share the first or last word
+// can match — both prefix and suffix conditions require shared boundary
+// words by construction). Behaviour-preserving: same suffix-before-prefix
+// preference per candidate, same insertion-order iteration via Set semantics.
+function _franchiseSuffixLookup(key, keyMap, indexes) {
   if (!key || key.length < 6) return null;
   const SUFFIX_MIN = 10;
   const PREFIX_MIN = 8;
-  for (const [existingKey, existingCanon] of keyMap) {
+
+  const tokens = key.split(' ');
+  const firstWord = tokens[0];
+  const lastWord = tokens[tokens.length - 1];
+
+  // Collect candidates that share the first OR last word. A Set keeps
+  // insertion order, which matches the keyMap's registration order so the
+  // first-match-wins behaviour is preserved across the optimisation.
+  const candidates = new Set();
+  if (indexes) {
+    const byFirst = indexes.byFirstWord.get(firstWord);
+    if (byFirst) for (const k of byFirst) candidates.add(k);
+    const byLast = indexes.byLastWord.get(lastWord);
+    if (byLast) for (const k of byLast) candidates.add(k);
+  } else {
+    // Backwards-compatible fallback when indexes weren't supplied (test
+    // harnesses, etc.). Iterate the whole keyMap.
+    for (const k of keyMap.keys()) candidates.add(k);
+  }
+
+  for (const existingKey of candidates) {
     if (existingKey.length < 6) continue;
     // Suffix: "Evangelion" ↔ "Neon Genesis Evangelion"
     if (Math.min(key.length, existingKey.length) >= SUFFIX_MIN) {
       if (existingKey.endsWith(' ' + key) || key.endsWith(' ' + existingKey)) {
-        return existingCanon;
+        return keyMap.get(existingKey);
       }
     }
     // Prefix: "Great Pretender" ↔ "Great Pretender razbliuto",
     //        "Hellsing" ↔ "Hellsing Ultimate"
     if (Math.min(key.length, existingKey.length) >= PREFIX_MIN) {
       if (key.startsWith(existingKey + ' ') || existingKey.startsWith(key + ' ')) {
-        return existingCanon;
+        return keyMap.get(existingKey);
       }
     }
   }
   return null;
+}
+
+// v1.0.149 — Index helper that mirrors keyMap by first/last word. Each
+// _registerKey call O(1); _franchiseSuffixLookup then iterates only the
+// matching candidates rather than every entry.
+function _newFranchiseIndexes() {
+  return { byFirstWord: new Map(), byLastWord: new Map() };
+}
+
+// v1.0.149 — Crossover detector promoted to module scope (was duplicated in
+// _buildFranchiseGroups and _computeFranchiseIds). Capture-group form so we
+// can check the SIDES of the marker — "Hunter × Hunter" has identical
+// sides which is stylisation, not a crossover, and shouldn't trip this.
+// "Queen's Blade Rebellion VS Hagure Yuusha no Estetica" has differing
+// sides, so it IS a crossover and gets its own canon.
+const _CROSSOVER_RE_FRANCHISE = /^(.+?)\s+(?:VS|vs|×|✕|✗)\.?\s+(.+)$/;
+function _isCrossoverTitle(title) {
+  if (!title) return false;
+  // v1.0.150 — strip trailing parenthetical qualifiers ("(2011)", "(TV)",
+  // "(Movie)") before checking. AniList uses these to disambiguate remakes
+  // and that's how "Hunter × Hunter (2011)" gets stored — same stylisation,
+  // not a crossover with "2011".
+  const cleaned = title.replace(/\s*\([^)]*\)\s*$/, '');
+  const m = _CROSSOVER_RE_FRANCHISE.exec(cleaned);
+  if (!m) return false;
+  const left  = m[1].trim().toLowerCase();
+  const right = m[2].trim().toLowerCase();
+  if (!left || !right) return false;
+  return left !== right;
+}
+function _isCrossoverAnime(a) {
+  return _isCrossoverTitle(a.titleEn || a.title || '')
+      || _isCrossoverTitle(a.titleRo || '');
+}
+function _indexFranchiseKey(indexes, key) {
+  if (!key) return;
+  const tokens = key.split(' ');
+  const firstWord = tokens[0];
+  const lastWord = tokens[tokens.length - 1];
+  let s = indexes.byFirstWord.get(firstWord);
+  if (!s) { s = new Set(); indexes.byFirstWord.set(firstWord, s); }
+  s.add(key);
+  s = indexes.byLastWord.get(lastWord);
+  if (!s) { s = new Set(); indexes.byLastWord.set(lastWord, s); }
+  s.add(key);
 }
 
 // Build franchise groups from the current animeList.
@@ -3097,6 +3293,9 @@ function _buildFranchiseGroups(sorted) {
   // was created under the English title, and vice-versa.
   const keyMap = new Map();
   const groups = new Map(); // canonical key → { name, members }
+  // v1.0.149 — indexes that mirror keyMap by first/last word so the suffix
+  // lookup can skip 99% of unrelated keys.
+  const indexes = _newFranchiseIndexes();
 
   // Relations-graph component map (AniList SEQUEL/PREQUEL/SIDE_STORY/etc).
   // For anime that have relations data, this catches franchises where the
@@ -3112,9 +3311,7 @@ function _buildFranchiseGroups(sorted) {
   // other parent in by transitivity). The right answer is to treat crossovers
   // as standalone groups so neither parent absorbs them and they aren't a
   // bridge across unrelated universes.
-  const _CROSSOVER_RE = /\s+(VS|vs|×|✕|✗)\.?\s+/;
-  const isCrossover = a => _CROSSOVER_RE.test(a.titleEn || a.title || '')
-                        || _CROSSOVER_RE.test(a.titleRo || '');
+  const isCrossover = _isCrossoverAnime;
 
   for (const a of sorted) {
     const enRaw = a.titleEn || a.title || '';
@@ -3159,8 +3356,8 @@ function _buildFranchiseGroups(sorted) {
       // Sins" + "The Seven Deadly Sins: Revival of the Commandments" landed
       // in separate groups whenever one was enriched and the other wasn't.
       canon = keyMap.get(enKey) || (useRoKey ? keyMap.get(roKey) : null) || ('rel:' + relRoot);
-      if (!keyMap.has(enKey)) keyMap.set(enKey, canon);
-      if (useRoKey && !keyMap.has(roKey)) keyMap.set(roKey, canon);
+      if (!keyMap.has(enKey)) { keyMap.set(enKey, canon); _indexFranchiseKey(indexes, enKey); }
+      if (useRoKey && !keyMap.has(roKey)) { keyMap.set(roKey, canon); _indexFranchiseKey(indexes, roKey); }
     } else {
       // For "SpinoffName: FranchiseName" patterns (e.g. "Sword Oratoria: Is it Wrong…"),
       // also try the part after the colon as a franchise key so it joins the right group.
@@ -3182,17 +3379,18 @@ function _buildFranchiseGroups(sorted) {
            || (useRoKey ? keyMap.get(roKey) : null)
            || (enAfterColon && keyMap.get(enAfterColon))
            || (roAfterColon && keyMap.get(roAfterColon))
-           || _franchiseSuffixLookup(enKey, keyMap)
-           || (useRoKey ? _franchiseSuffixLookup(roKey, keyMap) : null)
+           || _franchiseSuffixLookup(enKey, keyMap, indexes)
+           || (useRoKey ? _franchiseSuffixLookup(roKey, keyMap, indexes) : null)
            || enKey;
 
       // Register all key variants so future anime with any title variant find
       // this group. Only matters for the title-pattern fallback path; relations
       // groups don't need title-key registration.
       keyMap.set(enKey, canon);
-      if (useRoKey) keyMap.set(roKey, canon);
-      if (enAfterColon && enAfterColon !== enKey) keyMap.set(enAfterColon, canon);
-      if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) keyMap.set(roAfterColon, canon);
+      _indexFranchiseKey(indexes, enKey);
+      if (useRoKey) { keyMap.set(roKey, canon); _indexFranchiseKey(indexes, roKey); }
+      if (enAfterColon && enAfterColon !== enKey) { keyMap.set(enAfterColon, canon); _indexFranchiseKey(indexes, enAfterColon); }
+      if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) { keyMap.set(roAfterColon, canon); _indexFranchiseKey(indexes, roAfterColon); }
     }
 
     if (!groups.has(canon)) {
@@ -3302,7 +3500,7 @@ function _buildFranchiseGroups(sorted) {
 
 function toggleFranchiseMode() {
   franchiseMode = !franchiseMode;
-  const btn = document.getElementById('franchise-btn');
+  const btn = byId(IDS.franchiseBtn);
   if (btn) {
     btn.classList.toggle('active', franchiseMode);
     btn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
@@ -3332,8 +3530,12 @@ function _applyRankingViewState() {
 
 function _buildFranchiseCard(group, rank, totalGroups) {
   const isSingle = group.members.length === 1;
+  // v1.0.164 — Franchise cards (single-member or otherwise) no longer carry
+  // the amber outline. Outline only appears on member rows inside the
+  // franchise detail modal so users can pinpoint which entry is flagged.
   const card = document.createElement('div');
-  card.className = 'rank-card franchise-group' + (isSingle ? ' franchise-single' : '');
+  card.className = 'rank-card franchise-group'
+                 + (isSingle ? ' franchise-single' : '');
   card.dataset.franchiseName = group.name;
   // Stash member IDs so _filterFranchise can apply per-member filters
   // (format / episode-length / excluded / fuzzy-only) without rebuilding the
@@ -3347,6 +3549,13 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   const tierColor = tierColors[tier] || '#8b949e';
   const tierBadge = `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">${tier}</span>`;
   const countBadge = !isSingle ? `<span class="franchise-count">${group.members.length} entries</span>` : '';
+  // v1.0.165 — fuzzy-member count badge. Renders alongside the entries
+  // count when at least one member is flagged so users can spot
+  // franchises with uncertain entries without opening each one.
+  const fuzzyCount = group.members.filter(a => a.fuzzy).length;
+  const fuzzyCountBadge = fuzzyCount > 0
+    ? `<span class="franchise-fuzzy-count" title="${fuzzyCount} entr${fuzzyCount === 1 ? 'y is' : 'ies are'} flagged as fuzzy — click in to see which.">〰️ ${fuzzyCount} fuzzy</span>`
+    : '';
   const conf = confidenceLabel(group.totalBattles || 0);
   const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
   const membersHtml = !isSingle ? `
@@ -3371,12 +3580,19 @@ function _buildFranchiseCard(group, rank, totalGroups) {
       if (!e.target.closest('.franchise-expand-btn') && !e.target.closest('.franchise-members'))
         showFranchiseDetail(group.name);
     });
+    // v1.0.162 — Show the ELO-based rank in the #N badge, mirroring how flat
+    // rank cards display their position (they ignore the current sort order
+    // and always show ELO position). Previously the badge used `rank + 1`
+    // which is the position in the currently-sorted list, so sorting a
+    // franchise view by title made #1 become whichever franchise was
+    // alphabetically first — confusing to anyone tracking their ELO ranks.
+    const displayRank = (group.eloRank ?? rank) + 1;
     card.innerHTML = `
-      <span class="rank-number">#${rank + 1}</span>
+      <span class="rank-number">#${displayRank}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
       <img src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
-      ${countBadge ? `<div class="franchise-grid-meta">${countBadge}</div>` : ''}
+      ${countBadge || fuzzyCountBadge ? `<div class="franchise-grid-meta">${countBadge}${fuzzyCountBadge}</div>` : ''}
       <div class="rank-elo">ELO ${group.bestElo}</div>
       <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
       ${cohBadge}
@@ -3394,6 +3610,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
             <span class="franchise-elo">ELO ${group.bestElo}</span>
             <span class="franchise-elo">${wrStr} WR · ${group.totalBattles} battles</span>
             ${countBadge}
+            ${fuzzyCountBadge}
             ${cohBadge}
           </div>
         </div>
@@ -3423,10 +3640,16 @@ function showFranchiseDetail(groupName) {
     );
     const wr = (a.wins + a.losses) > 0
       ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
-    return `<div class="franchise-detail-member" onclick="closeDetailModal();showAnimeDetail(${a.id})">
+    // v1.0.163 — Mark each member row as is-fuzzy if that specific entry
+    // is flagged. Combined with the rule below, this gives the fuzzy entry
+    // an amber outline inside the franchise detail modal so it's
+    // immediately clear which member is uncertain (the whole franchise
+    // doesn't carry the outline any more — only the affected entry).
+    const fuzzyCls = a.fuzzy ? ' is-fuzzy' : '';
+    return `<div class="franchise-detail-member${fuzzyCls}" onclick="closeDetailModal();showAnimeDetail(${a.id})">
       <img src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
-        <div class="franchise-detail-member-title">${esc(displayTitle(a))}</div>
+        <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
         <div class="franchise-detail-member-stats">
           <span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>
           <span>ELO ${a.elo}</span>
@@ -3464,6 +3687,9 @@ function showFranchiseDetail(groupName) {
   byId(IDS.modalGenres).style.display = 'none';
   byId(IDS.modalAnilistBtn).style.display = 'none';
   byId(IDS.modalUnfuzzyBtn).style.display = 'none';
+  // v1.0.161 — fuzzy notice is per-anime; hide on franchise-level modal.
+  const fuzzyNoticeEl = byId(IDS.modalFuzzyNotice);
+  if (fuzzyNoticeEl) fuzzyNoticeEl.style.display = 'none';
 
   // Sparkline — average ELO history across all members that have one.
   // Each history is resampled to a common length so they can be averaged point-by-point.
@@ -3550,10 +3776,27 @@ function _franchiseSortedList() {
   );
 }
 
+// v1.0.153 — Delegated click handler for grid rank cards. Replaces the
+// per-card addEventListener that used to attach 6500 closures + listeners
+// on large libraries. Installed once and idempotently — the flag stays
+// across re-renders since the parent #ranking-list is not destroyed.
+function _installRankingListClickDelegate() {
+  const list = byId(IDS.rankingList);
+  if (!list || list._clickDelegated) return;
+  list.addEventListener('click', e => {
+    const card = e.target.closest('.rank-card');
+    if (!card || card.classList.contains('franchise-group')) return;
+    const id = parseInt(card.dataset.animeId, 10);
+    if (id) showAnimeDetail(id);
+  });
+  list._clickDelegated = true;
+}
+
 function renderRankingList() {
   const gen = ++_renderGen;
   const list = byId(IDS.rankingList);
   list.innerHTML = '';
+  _installRankingListClickDelegate();
 
   if (franchiseMode) {
     ++_renderGen; // invalidate any pending non-franchise renderChunk callbacks
@@ -3574,7 +3817,11 @@ function renderRankingList() {
   const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
   const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i]));
 
-  const CHUNK = 60;
+  // v1.0.153 — bump chunk size at scale to reduce idle-callback round-trips.
+  // The browser is fast enough to inject 200 cards per frame; the previous
+  // 60-per-frame meant a 6500-anime library needed ~108 schedule cycles
+  // before the grid was complete.
+  const CHUNK = sorted.length > 1500 ? 200 : 60;
   function renderChunk(start) {
     if (_renderGen !== gen) return; // newer render started — abort
     const frag = document.createDocumentFragment();
@@ -3583,10 +3830,16 @@ function renderRankingList() {
       frag.appendChild(_buildRankCard(sorted[i], i, eloRankMap, sorted.length));
     }
     list.appendChild(frag);
-    filterRankings(); // re-apply search + format filters after each batch
     if (end < sorted.length) {
       const schedule = window.requestIdleCallback || (fn => setTimeout(fn, 0));
       schedule(() => renderChunk(end));
+    } else {
+      // v1.0.153 — run filterRankings ONCE after all chunks are in the DOM,
+      // instead of per chunk. Previously this was O(n²) during initial
+      // render — each chunk added rows then re-walked every existing card
+      // to re-apply filters. At 6500 entries with chunk=60 that was ~108
+      // calls × growing cardinality = millions of style writes.
+      filterRankings();
     }
   }
   renderChunk(0);
@@ -3613,7 +3866,7 @@ function showResults() {
   _loadViewPrefs();
   byId(IDS.viewGridBtn)?.classList.toggle('active', rankingView === 'grid');
   byId(IDS.viewListBtn)?.classList.toggle('active', rankingView === 'list');
-  const franchiseBtn = document.getElementById('franchise-btn');
+  const franchiseBtn = byId(IDS.franchiseBtn);
   if (franchiseBtn) {
     franchiseBtn.classList.toggle('active', franchiseMode);
     franchiseBtn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
@@ -3705,7 +3958,7 @@ function toggleHistory() { switchResultsTab('battles'); }
 
 function renderHistory() {
   const list = byId(IDS.historyList);
-  const countEl = document.getElementById('history-count');
+  const countEl = byId(IDS.historyCount);
   if (countEl) countEl.textContent = battleHistory.length > 0
     ? `${battleHistory.length} battle${battleHistory.length !== 1 ? 's' : ''} recorded (most recent first)`
     : '';
@@ -4165,7 +4418,7 @@ function resetAll() {
       if (saveKey) localStorage.removeItem(saveKey);
       // Clear taste snapshots, milestone seen-state, and saved comparisons
       // so taste profile, taste story, and social tab start completely fresh.
-      localStorage.removeItem(TASTE_SNAPSHOT_KEY);
+      localStorage.removeItem(KESSEN_KEYS.data.tasteSnapshots);
       localStorage.removeItem(KESSEN_KEYS.ui.tasteStorySeen);
       localStorage.removeItem(KESSEN_KEYS.data.savedComparisons);
       localStorage.removeItem(KESSEN_KEYS.data.finishPrompts);
@@ -4547,14 +4800,14 @@ function setRecsTab(tab, fromMood = false) {
   byId(IDS.recsTabForyou).classList.toggle('active', tab === 'foryou');
   byId(IDS.recsTabSeasonal).classList.toggle('active', tab === 'seasonal');
   byId(IDS.recsTabPredict).classList.toggle('active', tab === 'predict');
-  document.getElementById('recs-tab-moods')?.classList.toggle('active', tab === 'moods');
+  byId(IDS.recsTabMoods)?.classList.toggle('active', tab === 'moods');
 
   const isPredict = tab === 'predict';
   const isMoods   = tab === 'moods';
   const sub        = byId(IDS.recsSubText);
   const grid       = byId(IDS.recsGrid);
   const predictSec = byId(IDS.predictorSection);
-  const moodsSec   = document.getElementById('moods-section');
+  const moodsSec   = byId(IDS.moodsSection);
   const refreshBtn = byId(IDS.discoverRefreshBtn);
 
   if (sub)        sub.style.display        = (isPredict || isMoods) ? 'none' : '';
@@ -4565,7 +4818,7 @@ function setRecsTab(tab, fromMood = false) {
 
   if (isMoods) {
     // Populate the discover mood grid
-    const discoverMoodGrid = document.getElementById('discover-mood-grid');
+    const discoverMoodGrid = byId(IDS.discoverMoodGrid);
     if (discoverMoodGrid) _paintTasteMoods(discoverMoodGrid);
     return;
   }
@@ -4639,11 +4892,7 @@ async function fetchRecommendationsForYou() {
   for (let rank = 0; rank < seeds.length; rank++) {
     const anime = seeds[rank];
     try {
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { id: anime.id } })
-      });
+      const res = await _anilistFetch({ query, variables: { id: anime.id } });
       const json = await res.json();
       const nodes = json?.data?.Media?.recommendations?.nodes ?? [];
       const recs = [];
@@ -4684,10 +4933,7 @@ async function _fetchRecRelations(ids) {
       }
     }`;
   try {
-    const res  = await fetch('https://graphql.anilist.co', {
-      method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { ids } })
-    });
+    const res  = await _anilistFetch({ query, variables: { ids } });
     const json = await res.json();
     (json?.data?.Page?.media ?? []).forEach(m => _recRelationsCache.set(m.id, m.relations));
   } catch { /* relations are decorative — silently skip */ }
@@ -4769,11 +5015,7 @@ async function _fetchHighlyRatedUnseen(ownIds) {
       }
     }`;
   try {
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query })
-    });
+    const res = await _anilistFetch({ query });
     const json = await res.json();
     return (json?.data?.Page?.media ?? [])
       .filter(m => !ownIds.has(m.id))
@@ -4815,10 +5057,7 @@ async function fetchGenreDeepDive() {
       }
     }`;
   try {
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { genre: topGenre } })
-    });
+    const res = await _anilistFetch({ query, variables: { genre: topGenre } });
     const json = await res.json();
     if (json.errors) throw new Error(json.errors[0].message);
     const items = (json?.data?.Page?.media ?? [])
@@ -4847,10 +5086,7 @@ async function fetchHiddenGems() {
       }
     }`;
   try {
-    const r1 = await fetch('https://graphql.anilist.co', {
-      method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query: candidateQuery })
-    });
+    const r1 = await _anilistFetch({ query: candidateQuery });
     const j1 = await r1.json();
     if (j1.errors) throw new Error(j1.errors[0].message);
     const candidates = (j1?.data?.Page?.media ?? []).filter(m => !ownIds.has(m.id));
@@ -4873,10 +5109,7 @@ async function fetchHiddenGems() {
         }
       }`;
     await new Promise(r => setTimeout(r, 600)); // small gap to avoid rate limit
-    const r2 = await fetch('https://graphql.anilist.co', {
-      method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query: relQuery, variables: { ids } })
-    });
+    const r2 = await _anilistFetch({ query: relQuery, variables: { ids } });
     const j2 = await r2.json();
     // Build a set of IDs that are sequels to popular franchises
     const franchiseIds = new Set();
@@ -4926,11 +5159,7 @@ async function fetchSeasonalRecommendations() {
       }`;
     let items = [];
     try {
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { season: s, year: y } })
-      });
+      const res = await _anilistFetch({ query, variables: { season: s, year: y } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
       if (json.errors) throw new Error(json.errors[0].message);
@@ -5160,11 +5389,7 @@ async function _fetchFriendList(username) {
   let data;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { username } }),
-      });
+      const res = await _anilistFetch({ query, variables: { username } });
       if (res.status === 429) {
         if (attempt === 2) throw new Error('AniList rate limit — please wait a moment and try again.');
         await new Promise(r => setTimeout(r, retryDelays[attempt]));
@@ -5608,10 +5833,7 @@ async function openChallengeMode(username, platform) {
             lists { entries { score status media { id } } }
           }
         }`;
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST', headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { username } })
-      });
+      const res = await _anilistFetch({ query, variables: { username } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (data.errors) throw new Error(data.errors[0].message);
@@ -5839,11 +6061,7 @@ async function _lcFetchUserWatchedIds(username, platform) {
           lists { entries { media { id } } }
         }
       }`;
-    const res  = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ query, variables: { username } }),
-    });
+    const res  = await _anilistFetch({ query, variables: { username } });
     if (!res.ok) throw new Error('AniList returned HTTP ' + res.status);
     const json = await res.json();
     if (json.errors) throw new Error(json.errors[0]?.message || 'AniList error');
@@ -5890,11 +6108,7 @@ async function _lcFetchUserWatchedIds(username, platform) {
     for (let i = 0; i < malIdArr.length; i += 50) {
       const chunk = malIdArr.slice(i, i + 50);
       const q = `query ($ids: [Int]) { Page(perPage: 50) { media(idMal_in: $ids, type: ANIME) { id } } }`;
-      const r = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ query: q, variables: { ids: chunk } }),
-      });
+      const r = await _anilistFetch({ query: q, variables: { ids: chunk } });
       if (!r.ok) throw new Error(`AniList returned an error (HTTP ${r.status}) while converting MAL IDs.`);
       const j = await r.json();
       (j?.data?.Page?.media ?? []).forEach(m => anilistIds.push(m.id));
@@ -5926,11 +6140,7 @@ async function _lcFetchAnimeMetadata(ids) {
   const sample = [...ids].sort(() => Math.random() - 0.5).slice(0, 100);
   for (let i = 0; i < sample.length; i += 50) {
     const chunk = sample.slice(i, i + 50);
-    const res  = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ query: q, variables: { ids: chunk } }),
-    });
+    const res  = await _anilistFetch({ query: q, variables: { ids: chunk } });
     const json = await res.json();
     (json?.data?.Page?.media ?? []).forEach(m => results.push({
       id:       m.id,
@@ -5971,9 +6181,32 @@ function _lcPanel(id) {
   if (target) target.style.display = '';
 }
 
+// v1.0.152 — Use crypto.getRandomValues for session codes. Math.random is
+// non-cryptographic and fingerprintable from a few observed codes; an
+// attacker who saw a handful of session codes could predict future ones
+// or enumerate the space. crypto.getRandomValues yields cryptographically
+// random bytes. Bumped length from 6 → 7 chars to raise the keyspace
+// from 32^6 (~10^9) to 32^7 (~3×10^10) without making codes painful to
+// share verbally. _isValidSessionCode's [4,8] range already accepts this.
+function _generateSessionCode(len = 7) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, omits I/O/0/1
+  const buf = new Uint8Array(len);
+  // crypto.getRandomValues is on globalThis in modern browsers + workers.
+  // Fall back to Math.random only if crypto is absent (very old contexts).
+  if (globalThis.crypto && globalThis.crypto.getRandomValues) {
+    globalThis.crypto.getRandomValues(buf);
+  } else {
+    for (let i = 0; i < len; i++) buf[i] = Math.floor(Math.random() * 256);
+  }
+  // Mask each byte to charset size via bitwise AND (32 = 2^5, so & 31 is
+  // exactly modulo with no bias — important for crypto-clean output).
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[buf[i] & 31];
+  return out;
+}
+
 function _lcGenerateCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return _generateSessionCode();
 }
 
 // Guard for any user-supplied or storage-derived code before it gets concatenated
@@ -6925,7 +7158,10 @@ function _lcShowResults() {
 // ── CHALLENGE HISTORY ─────────────────────────────────────────────────────────
 // Saves the completed game to Firebase under the user's personal path so they
 // can browse past results. Both players write their own copy independently.
-const _LC_HISTORY_KEY = 'kessen_lc_history';
+// v1.0.154 — storage key now lives in KESSEN_KEYS.data.lcHistory; was a
+// module-level const here ('kessen_lc_history'). The migration in
+// _migrateLocalStorageV1 already mapped the legacy literal so existing
+// users' history carries forward.
 const _LC_HISTORY_MAX = 20;
 
 function _lcSaveHistory() {
@@ -6950,10 +7186,10 @@ function _lcSaveHistory() {
   };
 
   try {
-    const history = JSON.parse(localStorage.getItem(_LC_HISTORY_KEY) || '[]');
+    const history = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.lcHistory) || '[]');
     history.unshift(record);
     if (history.length > _LC_HISTORY_MAX) history.length = _LC_HISTORY_MAX;
-    localStorage.setItem(_LC_HISTORY_KEY, JSON.stringify(history));
+    localStorage.setItem(KESSEN_KEYS.data.lcHistory, JSON.stringify(history));
   } catch (err) {
     console.warn('Could not save challenge history:', err.message);
   }
@@ -6962,13 +7198,13 @@ function _lcSaveHistory() {
 // Render challenge history into all lc-history elements on screen.
 function _lcLoadHistory() {
   const targets = [
-    document.getElementById('lc-history-list'),
-    document.getElementById('lc-history-list-lobby'),
+    byId(IDS.lcHistoryList),
+    byId(IDS.lcHistoryListLobby),
   ].filter(Boolean);
   if (!targets.length) return;
 
   try {
-    const records = JSON.parse(localStorage.getItem(_LC_HISTORY_KEY) || '[]').slice(0, 10);
+    const records = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.lcHistory) || '[]').slice(0, 10);
     const html = records.length
       ? records.map(r => {
           const outcome  = r.outcome === 'win' ? '🏆' : r.outcome === 'draw' ? '🤝' : '💀';
@@ -7222,8 +7458,8 @@ function openCollabMode() {
   _collabPanel(IDS.collabPanelMode);
   pushModalBack('collab', closeCollabModal);
 
-  const multiBtn  = document.getElementById('collab-mode-multi-btn');
-  const multiNote = document.getElementById('collab-multi-note');
+  const multiBtn  = byId(IDS.collabModeMultiBtn);
+  const multiNote = byId(IDS.collabMultiNote);
   if (multiBtn)  multiBtn.style.display  = _FIREBASE_READY ? '' : 'none';
   if (multiNote) multiNote.style.display = _FIREBASE_READY ? 'none' : '';
 
@@ -7292,16 +7528,16 @@ function _collabSetupPresence(ref, pid) {
 function _collabCheckRejoinBanner() {
   if (!_FIREBASE_READY) return;
   const stored = _collabGetStoredSession();
-  const banner = document.getElementById('collab-rejoin-banner');
+  const banner = byId(IDS.collabRejoinBanner);
   if (!stored || !banner) return;
-  document.getElementById('collab-rejoin-desc').textContent =
+  byId(IDS.collabRejoinDesc).textContent =
     `Session ${stored.code} · playing as ${stored.name}`;
   banner.style.display = '';
 }
 
 function collabDismissRejoin() {
   _collabClearSession();
-  const banner = document.getElementById('collab-rejoin-banner');
+  const banner = byId(IDS.collabRejoinBanner);
   if (banner) banner.style.display = 'none';
 }
 
@@ -7323,7 +7559,7 @@ async function collabRejoinSession() {
       // Session gone or player no longer in it
       _collabClearSession();
       if (btn) { btn.disabled = false; btn.textContent = 'Rejoin'; }
-      document.getElementById('collab-rejoin-desc').textContent =
+      byId(IDS.collabRejoinDesc).textContent =
         'Session has ended — please start a new one.';
       return;
     }
@@ -7396,13 +7632,13 @@ function collabStartSingle() {
 
 // ── MULTI DEVICE SETUP ────────────────────────────────────────────────────────
 function collabMultiShowRole(role) {
-  document.getElementById('collab-multi-create').style.display = role === 'host'  ? 'block' : 'none';
-  document.getElementById('collab-multi-join').style.display   = role === 'guest' ? 'block' : 'none';
+  byId(IDS.collabMultiCreate).style.display = role === 'host'  ? 'block' : 'none';
+  byId(IDS.collabMultiJoin).style.display   = role === 'guest' ? 'block' : 'none';
 }
 
 async function collabCreateSession() {
   if (!_FIREBASE_READY) return;
-  const btn = document.getElementById('collab-multi-create')?.querySelector('button');
+  const btn = byId(IDS.collabMultiCreate)?.querySelector('button');
   if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
 
   // Stop the autosync listener so its 'value' callback can't fire mid-write.
@@ -7564,8 +7800,8 @@ async function collabJoinSession() {
 }
 
 function _collabGenerateCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  // v1.0.152 — delegates to crypto-backed helper above.
+  return _generateSessionCode();
 }
 
 function _collabListenToSession(ref) {
@@ -7644,11 +7880,7 @@ async function _collabFetchSeasonSingle() {
           }
         }
       }`;
-    const res  = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { season, year } }),
-    });
+    const res  = await _anilistFetch({ query, variables: { season, year } });
     if (!res.ok) throw new Error('AniList returned HTTP ' + res.status);
     const json = await res.json();
     if (json.errors) throw new Error(json.errors[0].message);
@@ -7716,11 +7948,7 @@ async function collabHostStartThisSeason() {
           }
         }
       }`;
-    const res  = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { season, year } }),
-    });
+    const res  = await _anilistFetch({ query, variables: { season, year } });
     if (!res.ok) throw new Error('AniList returned HTTP ' + res.status);
     const json = await res.json();
     if (json.errors) throw new Error(json.errors[0].message);
@@ -8017,11 +8245,7 @@ function collabSearch() {
         }
       }`;
     try {
-      const resp = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query: gqlQuery, variables: { search: raw } }),
-      });
+      const resp = await _anilistFetch({ query: gqlQuery, variables: { search: raw } });
       if (seq !== _collabSearchSeq) return;
       const json  = await resp.json();
       const items = json?.data?.Page?.media ?? [];
@@ -8145,7 +8369,7 @@ function collabConfirmNominations() {
     // Multi: mark self ready in Firebase
     const pid = _collab.myPlayerId;
     _collab.firebaseRef.update({ [`players/${pid}/ready`]: true, [`players/${pid}/nominations`]: noms });
-    const btn = document.getElementById('collab-confirm-btn');
+    const btn = byId(IDS.collabConfirmBtn);
     if (btn) { btn.disabled = true; btn.textContent = `⏳ Waiting for others…`; }
   }
 }
@@ -8338,8 +8562,8 @@ function _collabRenderVotePair() {
   byId(IDS.collabVoteProgress).textContent = `Match ${_collab.currentPair + 1} of ${total}`;
   byId(IDS.collabVoteReveal).style.display = 'none';
   byId(IDS.collabVoteNextBtn).style.display = 'none';
-  document.getElementById('collab-tiebreak-btn').style.display  = 'none';
-  document.getElementById('collab-p2-ready-btn').style.display  = 'none';
+  byId(IDS.collabTiebreakBtn).style.display  = 'none';
+  byId(IDS.collabP2ReadyBtn).style.display  = 'none';
   _collabSetVoteHeading('p1');
   _collabRenderVoteCards(pair);
 }
@@ -8347,8 +8571,8 @@ function _collabRenderVotePair() {
 function _collabSetVoteHeading(who) {
   const name  = who === 'p1' ? _collab.p1Name : _collab.p2Name;
   const other = who === 'p1' ? _collab.p2Name : _collab.p1Name;
-  document.getElementById('collab-vote-who').textContent = `${name} — tap your pick`;
-  document.getElementById('collab-vote-sub').textContent = `(${other}, don't look yet!)`;
+  byId(IDS.collabVoteWho).textContent = `${name} — tap your pick`;
+  byId(IDS.collabVoteSub).textContent = `(${other}, don't look yet!)`;
 }
 
 function _collabRenderVoteCards(pair) {
@@ -8380,9 +8604,9 @@ function collabVoteBtn(side) {
     byId(IDS.collabCardB).disabled = true;
     byId(side === 'a' ? IDS.collabCardA : IDS.collabCardB).classList.add('challenge-card-chosen');
     byId(side === 'a' ? IDS.collabCardB : IDS.collabCardA).classList.add('challenge-card-unchosen');
-    document.getElementById('collab-vote-who').textContent = `✓ ${_collab.p1Name} has voted`;
-    document.getElementById('collab-vote-sub').textContent = `Pass to ${_collab.p2Name}`;
-    document.getElementById('collab-p2-ready-btn').style.display = 'block';
+    byId(IDS.collabVoteWho).textContent = `✓ ${_collab.p1Name} has voted`;
+    byId(IDS.collabVoteSub).textContent = `Pass to ${_collab.p2Name}`;
+    byId(IDS.collabP2ReadyBtn).style.display = 'block';
   } else if (phase === 'p2') {
     _collab.currentVote.p2 = side;
     _collab.votingPhase    = 'reveal';
@@ -8392,7 +8616,7 @@ function collabVoteBtn(side) {
 
 function collabP2Ready() {
   _collab.votingPhase = 'p2';
-  document.getElementById('collab-p2-ready-btn').style.display = 'none';
+  byId(IDS.collabP2ReadyBtn).style.display = 'none';
   _collabRenderVoteCards(_collab.pairs[_collab.currentPair]);
   _collabSetVoteHeading('p2');
   byId(IDS.collabCardA).disabled = false;
@@ -8404,8 +8628,8 @@ function _collabRevealVotes() {
   const pair = _collab.pairs[_collab.currentPair];
   byId(IDS.collabCardA).disabled = true;
   byId(IDS.collabCardB).disabled = true;
-  document.getElementById('collab-vote-who').textContent = '';
-  document.getElementById('collab-vote-sub').textContent = '';
+  byId(IDS.collabVoteWho).textContent = '';
+  byId(IDS.collabVoteSub).textContent = '';
 
   const aEl = byId(IDS.collabCardA);
   const bEl = byId(IDS.collabCardB);
@@ -8442,7 +8666,7 @@ function _collabRevealVotes() {
 }
 
 function collabTiebreaker() {
-  document.getElementById('collab-tiebreak-btn').style.display = 'none';
+  byId(IDS.collabTiebreakBtn).style.display = 'none';
   byId(IDS.collabVoteReveal).style.display = 'none';
   _collab.votingPhase = 'p1'; _collab.currentVote = {};
   _collabRenderVoteCards(_collab.pairs[_collab.currentPair]);
@@ -8454,7 +8678,7 @@ function collabNextPair() {
   if (_collab._autoNextTimer) { clearTimeout(_collab._autoNextTimer); _collab._autoNextTimer = null; }
   _collab.currentPair++;
   byId(IDS.collabVoteNextBtn).style.display = 'none';
-  document.getElementById('collab-tiebreak-btn').style.display = 'none';
+  byId(IDS.collabTiebreakBtn).style.display = 'none';
   if (_collab.currentPair >= _collab.pairs.length) _collabShowResults();
   else _collabRenderVotePair();
 }
@@ -8467,8 +8691,8 @@ async function collabVoteMulti(side) {
   byId(side === 'a' ? IDS.collabCardA : IDS.collabCardB).classList.add('challenge-card-chosen');
   byId(side === 'a' ? IDS.collabCardB : IDS.collabCardA).classList.add('challenge-card-unchosen');
   const totalPlayers = Object.keys(_collab.players || {}).length;
-  document.getElementById('collab-vote-who').textContent = `✓ Voted — waiting for others…`;
-  document.getElementById('collab-vote-sub').textContent = '';
+  byId(IDS.collabVoteWho).textContent = `✓ Voted — waiting for others…`;
+  byId(IDS.collabVoteSub).textContent = '';
   await _collab.firebaseRef.update({ [`votes/${_collab.myPlayerId}`]: side });
 }
 
@@ -8491,14 +8715,14 @@ function _collabRenderVotePairMulti(data) {
   byId(IDS.collabVoteProgress).textContent = `Match ${idx + 1} of ${(data.pairs || []).length}`;
   byId(IDS.collabVoteReveal).style.display = 'none';
   byId(IDS.collabVoteNextBtn).style.display = 'none';
-  document.getElementById('collab-p2-ready-btn').style.display = 'none';
-  document.getElementById('collab-vote-sub').textContent = '';
+  byId(IDS.collabP2ReadyBtn).style.display = 'none';
+  byId(IDS.collabVoteSub).textContent = '';
 
   if (!myVote) {
-    document.getElementById('collab-vote-who').textContent = 'Tap your pick';
+    byId(IDS.collabVoteWho).textContent = 'Tap your pick';
     _collabRenderVoteCards(pair);
   } else {
-    document.getElementById('collab-vote-who').textContent =
+    byId(IDS.collabVoteWho).textContent =
       allVoted ? 'All votes in!' : `✓ Voted — ${votedCount} of ${totalPlayers} voted`;
     byId(IDS.collabCardA).disabled = true;
     byId(IDS.collabCardB).disabled = true;
@@ -8643,7 +8867,7 @@ function _collabRenderResults() {
 
 // ── UNIFIED SOCIAL COMPARE ────────────────────────────────────────────────────
 async function runSocialCompare() {
-  const input = document.getElementById('social-compare-input');
+  const input = byId(IDS.socialCompareInput);
   const username = (input?.value || '').trim();
   if (!username) { input?.focus(); return; }
   // Mirror into the hidden inputs that runCompatibility / runFriendRecs read from
@@ -8656,7 +8880,7 @@ async function runSocialCompare() {
 }
 
 function openChallengeFromInput() {
-  const input    = document.getElementById('social-challenge-input');
+  const input    = byId(IDS.socialChallengeInput);
   const username = (input?.value || '').trim();
   if (!username) { input?.focus(); return; }
   openChallengeMode(username, _socialPlatform);
@@ -8677,7 +8901,7 @@ async function _rerunComparison(username, platform) {
   setSocialPlatform(platform);
   const cleanName = username.replace(/ \[MAL\]$/i, '');
   // Keep all inputs in sync
-  const unifiedInput = document.getElementById('social-compare-input');
+  const unifiedInput = byId(IDS.socialCompareInput);
   if (unifiedInput) unifiedInput.value = cleanName;
   byId(IDS.compatUsernameInput).value = cleanName;
   byId(IDS.friendRecsInput).value     = cleanName;
@@ -8800,10 +9024,7 @@ async function _fetchAniListMetaForMalIds(malIds) {
         }
       }`;
     try {
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST', headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { ids: chunk } })
-      });
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
       if (res.ok) {
         const data = await res.json();
         (data?.data?.Page?.media || []).forEach(m => { if (m.idMal) metaMap.set(m.idMal, m); });
@@ -9216,11 +9437,7 @@ async function fetchGuestPool() {
         }
       }
     `;
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { page: p } })
-    });
+    const res = await _anilistFetch({ query, variables: { page: p } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data.errors) throw new Error(data.errors[0].message);
@@ -9335,7 +9552,6 @@ function excludeAnime(event, side) {
   const keepIdx     = side === 0 ? currentB : currentA;
 
   excludedIds.add(animeList[excludedIdx].id);
-  prevState = null;
   undoStack = [];
   _updateUndoBtn();
 
@@ -9470,8 +9686,8 @@ function checkMilestone(before, after) {
   // and silently mark all OLDER unseen milestones as seen at the same time.
   //
   // v1.0.122 — the older version walked unseen entries one-per-battle, which
-  // produced a Wrapped popup every battle for users with historical gaps in
-  // their seen list (e.g. someone past battle 1000 who never saw 700/900).
+  // produced a Taste Story popup every battle for users with historical gaps
+  // in their seen list (e.g. someone past battle 1000 who never saw 700/900).
   // Now: one popup, everything older marked silently, done.
   if (!tasteHit && after >= TASTE_STORY_MILESTONES[0]) {
     try {
@@ -9498,7 +9714,7 @@ function checkMilestone(before, after) {
 
 }
 
-// ─── TASTE STORY ("WRAPPED" EXPERIENCE) ──────────────────────────────────────
+// ─── TASTE STORY (milestone recap experience) ───────────────────────────────
 
 const _TASTE_ARCHETYPES = {
   'Psychological': ['Read the Wiki After Every Episode', 'The 4D Chess Enjoyer',     'Has Bookmarked the Timeline'],
@@ -9561,7 +9777,7 @@ const _STUDIO_QUIPS = {
 // AniList sometimes lists the same studio under multiple distinct names —
 // "Bones" produces most MHA seasons but the Vigilantes spinoff is credited
 // to "bones film", so without canonicalisation the user sees two separate
-// studio buckets in Studio Affinity and the Wrapped studio-loyalty insight.
+// studio buckets in Studio Affinity and the Taste Story studio-loyalty insight.
 // Map alternate names to the canonical display name. Lookup is case-
 // insensitive via the lower-keyed clone below.
 const _STUDIO_ALIASES = Object.freeze({
@@ -10132,6 +10348,30 @@ function _installModalBack() {
     if (_modalBackIgnoreNext) { _modalBackIgnoreNext = false; return; }
     const top = _modalBackStack.pop();
     if (top) top.close();
+  });
+  // v1.0.150 — Escape closes whatever's on top of the modal stack.
+  // Previously only share, mode-menu, filter-menu, and predictor had
+  // Escape handlers; detail/sync/MAL-sync/help/tower/collab/challenge/LC/
+  // archive-confirm/new-anime-confirm/guest-merge/welcome/confirm/
+  // notif-centre/session-summary/taste-story all didn't. Now all 12+
+  // dialogues close consistently. Skips when focus is in a text input
+  // so users can Esc-clear an autocomplete dropdown without closing the
+  // surrounding modal.
+  window.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (_modalBackStack.length === 0) return;
+    const t = e.target;
+    const isTextInput = t && (
+      (t.tagName === 'INPUT' && /^(text|search|email|url|password|tel|number)$/i.test(t.type || 'text'))
+      || t.tagName === 'TEXTAREA'
+      || t.isContentEditable
+    );
+    if (isTextInput) return;
+    const top = _modalBackStack[_modalBackStack.length - 1];
+    if (top) {
+      e.preventDefault();
+      top.close();
+    }
   });
 }
 
@@ -10790,20 +11030,20 @@ function dismissKbTip() {
 // ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
 function _applyTheme(light) {
   document.body.classList.toggle('light-mode', light);
-  const btn = document.getElementById('theme-toggle-btn');
+  const btn = byId(IDS.themeToggleBtn);
   if (btn) btn.textContent = light ? '☀️ Light mode' : '🌙 Dark mode';
 }
 
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light-mode');
-  localStorage.setItem('kessen.ui.theme', isLight ? 'light' : 'dark');
-  const btn = document.getElementById('theme-toggle-btn');
+  localStorage.setItem(KESSEN_KEYS.ui.theme, isLight ? 'light' : 'dark');
+  const btn = byId(IDS.themeToggleBtn);
   if (btn) btn.textContent = isLight ? '☀️ Light mode' : '🌙 Dark mode';
 }
 
 // Apply saved theme immediately on load
 (function () {
-  const saved = localStorage.getItem('kessen.ui.theme');
+  const saved = localStorage.getItem(KESSEN_KEYS.ui.theme);
   if (saved === 'light') _applyTheme(true);
 })();
 
@@ -10959,7 +11199,7 @@ function flagFuzzy(event, side) {
   const btn = document.getElementById(btnId);
   btn.classList.toggle('active', animeList[idx].fuzzy);
   // Label stays static — the .active class is the state indicator.
-  btn.textContent = "🌫 Fuzzy";
+  btn.textContent = "〰️ Fuzzy";
   // Force-blur so mobile :hover doesn't visually freeze the button in the
   // active style after the user un-toggles it.
   btn.blur();
@@ -10991,8 +11231,8 @@ function filterRankings() {
   if (rankingView === 'list') renderRankingTable();
 }
 
-// ─── STATS (kept for backwards compat; logic now lives in renderBattlesTab/renderProfileTab) ──
-function toggleStats() { switchResultsTab('battles'); }
+// v1.0.154 — removed `toggleStats()` dead shim (no callers in app.js or
+// index.html; renderBattlesTab/renderProfileTab supersede its role).
 
 async function renderGenreStats() {
   const chartEl = byId(IDS.statGenreChart);
@@ -11271,11 +11511,7 @@ async function _enrichGenresAndEras(onProgress) {
           }
         }
       }`;
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { ids: chunk } })
-    });
+    const res = await _anilistFetch({ query, variables: { ids: chunk } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data.errors) throw new Error(data.errors[0].message);
@@ -11355,13 +11591,10 @@ function _computeFranchiseIds() {
   // including them would unite two unrelated franchises through the
   // crossover's relations. _buildFranchiseGroups handles them separately as
   // standalone one-member groups.
-  const _CROSSOVER_RE = /\s+(VS|vs|×|✕|✗)\.?\s+/;
-  const isCrossover = a => _CROSSOVER_RE.test(a.titleEn || a.title || '')
-                        || _CROSSOVER_RE.test(a.titleRo || '');
   // Only seed items that have relations data — others fall through to the
   // title-pattern grouper.
   for (const a of animeList) {
-    if (Array.isArray(a.relations) && !isCrossover(a)) parent.set(a.id, a.id);
+    if (Array.isArray(a.relations) && !_isCrossoverAnime(a)) parent.set(a.id, a.id);
   }
   const find = (id) => {
     let r = id;
@@ -11695,14 +11928,14 @@ async function renderTasteProfile(forceRefetch = false) {
   // Only show archetype + insights once the user has hit the first taste story
   // milestone (50 battles). Before that, ELO values are seeded from ratings
   // rather than earned, so the archetype isn't meaningful.
-  const identityEl = document.getElementById('taste-identity-card');
+  const identityEl = byId(IDS.tasteIdentityCard);
   if (battleCount >= TASTE_STORY_MILESTONES[0]) {
     if (identityEl) identityEl.style.display = '';
     const insights = _computeTasteInsights(_lastTasteStoryMilestone(battleCount));
     const archetype = insights.find(c => c.type === 'archetype');
     byId(IDS.tasteHeadline).textContent = archetype?.headline || profile.headline;
 
-    const insightsEl = document.getElementById('taste-identity-insights');
+    const insightsEl = byId(IDS.tasteIdentityInsights);
     if (insightsEl) {
       const cards = insights.filter(c => c.type !== 'share' && c.type !== 'archetype');
       insightsEl.innerHTML = cards.map(c => `
@@ -11727,10 +11960,10 @@ async function renderTasteProfile(forceRefetch = false) {
   }
 
   // ── Section 2: Drift ───────────────────────────────────────────────────
-  _paintTasteDrift(document.getElementById('taste-drift'));
+  _paintTasteDrift(byId(IDS.tasteDrift));
 
   // ── Section 4: Evolution ───────────────────────────────────────────────
-  _paintTasteEvolution(document.getElementById('taste-evolution'));
+  _paintTasteEvolution(byId(IDS.tasteEvolution));
 
 
   // Save snapshot for drift tracking (keyed by battle count milestone)
@@ -11819,14 +12052,14 @@ async function applyMoodRec(moodKey) {
   byId(IDS.recsTabForyou).classList.remove('active');
   byId(IDS.recsTabSeasonal).classList.remove('active');
   byId(IDS.recsTabPredict).classList.remove('active');
-  document.getElementById('recs-tab-moods')?.classList.add('active');
-  document.getElementById('predictor-section').style.display = 'none';
-  document.getElementById('moods-section').style.display = '';
+  byId(IDS.recsTabMoods)?.classList.add('active');
+  byId(IDS.predictorSection).style.display = 'none';
+  byId(IDS.moodsSection).style.display = '';
   byId(IDS.recsSubText).style.display = 'none';
   byId(IDS.discoverRefreshBtn).style.display = 'none';
 
   // Ensure the discover mood grid is populated (may be empty if arriving from taste tab)
-  const discoverMoodGrid = document.getElementById('discover-mood-grid');
+  const discoverMoodGrid = byId(IDS.discoverMoodGrid);
   if (discoverMoodGrid && !discoverMoodGrid.hasChildNodes()) _paintTasteMoods(discoverMoodGrid);
 
   // Highlight the active mood tile
@@ -11846,7 +12079,7 @@ async function applyMoodRec(moodKey) {
   // If the mood grid hasn't rendered yet, fall back to painting it now so the
   // cache is populated before we read from it.
   if (!_moodCoverCache[moodKey]?.length) {
-    const discoverMoodGrid = document.getElementById('discover-mood-grid');
+    const discoverMoodGrid = byId(IDS.discoverMoodGrid);
     _paintTasteMoods(discoverMoodGrid || document.createElement('div'));
   }
   const seeds = _moodCoverCache[moodKey] || [];
@@ -11876,10 +12109,7 @@ async function applyMoodRec(moodKey) {
 
   for (const seed of seeds) {
     try {
-      const res  = await fetch('https://graphql.anilist.co', {
-        method: 'POST', headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { id: seed.id } })
-      });
+      const res  = await _anilistFetch({ query, variables: { id: seed.id } });
       const json = await res.json();
       const nodes = json?.data?.Media?.recommendations?.nodes ?? [];
       const recs  = [];
@@ -11929,7 +12159,7 @@ async function applyMoodRec(moodKey) {
 }
 
 // ── Taste snapshots (for drift tracking) ────────────────────────────────────
-const TASTE_SNAPSHOT_KEY = 'kessen.data.tasteSnapshots';
+// v1.0.154 — storage key is now KESSEN_KEYS.data.tasteSnapshots.
 
 // Wipes the global taste-snapshot store. Called from every fresh-load path
 // that resets battleCount to 0 (AniList load, MAL load, guest load, full
@@ -11938,12 +12168,12 @@ const TASTE_SNAPSHOT_KEY = 'kessen.data.tasteSnapshots';
 // reached. The proper fix would be to scope this key per-saveKey, but for
 // now an explicit clear at every reset surface is the smaller change.
 function _clearTasteSnapshots() {
-  try { localStorage.removeItem(TASTE_SNAPSHOT_KEY); } catch (_e) {}
+  try { localStorage.removeItem(KESSEN_KEYS.data.tasteSnapshots); } catch (_e) {}
 }
 
 function _maybeSaveTasteSnapshot() {
   try {
-    const snaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    const snaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
     // Save a snapshot at each 50-battle milestone, keep up to 40 (2000 battles
     // of history). Each snapshot is ~200 bytes so 40 ≈ 8 KB.
     const milestone = Math.floor(battleCount / 50) * 50;
@@ -11980,7 +12210,7 @@ function _maybeSaveTasteSnapshot() {
       gapBefore: gappedFromPrev || undefined,
     });
     if (snaps.length > 40) snaps.splice(0, snaps.length - 40);
-    localStorage.setItem(TASTE_SNAPSHOT_KEY, JSON.stringify(snaps));
+    localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(snaps));
   } catch { /* storage full / corrupt — skip */ }
 }
 
@@ -11989,7 +12219,7 @@ function _paintTasteDrift(el) {
   try {
     // Same stale-filter as _paintTasteEvolution — drop snapshots from a prior
     // account/reset whose battle count is ahead of ours.
-    const rawSnaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    const rawSnaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
     const snaps    = rawSnaps.filter(s => (s.battleCount || 0) <= battleCount);
     if (snaps.length < 2) {
       const needed = Math.max(0, 50 - battleCount);
@@ -12060,16 +12290,16 @@ function _paintTasteEvolution(el) {
   try {
     // Filter out any snapshots whose battle count is ahead of the user's
     // current count. Those are leftovers from a prior account / reset path
-    // (TASTE_SNAPSHOT_KEY is a global localStorage entry, not per-user, so it
+    // (KESSEN_KEYS.data.tasteSnapshots is a global localStorage entry, not per-user, so it
     // leaks across guest switches, fresh-loads, etc). Showing them produces
     // the "Battle 200" cards for a user who only has 113 battles bug.
-    const rawSnaps = JSON.parse(localStorage.getItem(TASTE_SNAPSHOT_KEY) || '[]');
+    const rawSnaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
     const allSnaps = rawSnaps.filter(s => (s.battleCount || 0) <= battleCount);
     // If we discarded any, persist the cleaned list so the renderer doesn't
     // re-filter on every paint and the next snapshot save starts from a
     // clean baseline.
     if (allSnaps.length !== rawSnaps.length) {
-      localStorage.setItem(TASTE_SNAPSHOT_KEY, JSON.stringify(allSnaps));
+      localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(allSnaps));
     }
     if (!allSnaps.length) {
       const needed = Math.max(0, 50 - battleCount);
@@ -12277,8 +12507,16 @@ function showAnimeDetail(id) {
   }
 
   const unfuzzyBtn = byId(IDS.modalUnfuzzyBtn);
-  unfuzzyBtn.style.display = anime.fuzzy ? 'inline-block' : 'none';
+  // v1.0.161 — keep the legacy small button hidden; the new full-width
+  // notice above the description carries the same affordance more visibly.
+  // Stash the id on it so unflagFuzzy() can still read it.
+  unfuzzyBtn.style.display = 'none';
   unfuzzyBtn.dataset.animeId = id;
+  const fuzzyNotice = byId(IDS.modalFuzzyNotice);
+  if (fuzzyNotice) {
+    fuzzyNotice.style.display = anime.fuzzy ? 'flex' : 'none';
+    fuzzyNotice.dataset.animeId = id;
+  }
 
   // Recent battles — prefer ID matching, fall back to title for legacy entries
   const related = battleHistory
@@ -12326,10 +12564,15 @@ function closeDetailOnOverlay(event) {
 }
 
 function unflagFuzzy() {
-  const id = parseInt(byId(IDS.modalUnfuzzyBtn).dataset.animeId);
+  // v1.0.161 — id can live on either the legacy button or the new notice;
+  // read whichever is populated.
+  const notice = byId(IDS.modalFuzzyNotice);
+  const legacy = byId(IDS.modalUnfuzzyBtn);
+  const id = parseInt(notice?.dataset?.animeId || legacy?.dataset?.animeId || '0');
   const anime = animeList.find(a => a.id === id);
   if (anime) { anime.fuzzy = false; saveState(); }
-  byId(IDS.modalUnfuzzyBtn).style.display = 'none';
+  if (notice) notice.style.display = 'none';
+  if (legacy) legacy.style.display = 'none';
   closeDetail();
   filterRankings(); // immediately remove card from fuzzy-only view without full re-render
 }
@@ -12455,8 +12698,8 @@ function toggleFormat(fmt, scope = 'ranking') {
 }
 
 function toggleMobileFilters() {
-  const panel = document.getElementById('collapsible-filters');
-  const btn   = document.getElementById('mobile-filter-toggle');
+  const panel = byId(IDS.collapsibleFilters);
+  const btn   = byId(IDS.mobileFilterToggle);
   if (!panel || !btn) return;
   const open = panel.classList.toggle('open');
   btn.classList.toggle('active', open);
@@ -12479,7 +12722,7 @@ function syncFormatButtons() {
     b.classList.toggle('hidden-fmt', isHidden);
   });
   // Highlight the battle-screen filter button if any battle-scope format is hidden
-  const filterBtn = document.getElementById('filter-btn');
+  const filterBtn = byId(IDS.filterBtn);
   if (filterBtn) filterBtn.classList.toggle('has-filter', hiddenFormatsBattle.size > 0);
 }
 
@@ -12606,10 +12849,7 @@ async function _predictorSearch(q) {
       }
     }`;
   try {
-    const res  = await fetch('https://graphql.anilist.co', {
-      method: 'POST', headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { search: q } })
-    });
+    const res  = await _anilistFetch({ query, variables: { search: q } });
     const json = await res.json();
     const items = json?.data?.Page?.media ?? [];
     if (!items.length) { dd.innerHTML = '<div style="padding:10px 12px;color:#8b949e;font-size:0.8rem">No results</div>'; return; }
@@ -12691,10 +12931,7 @@ async function runPredictor(prefetched = null) {
         }
       }`;
     try {
-      const res  = await fetch('https://graphql.anilist.co', {
-        method: 'POST', headers: anilistHeaders(),
-        body: JSON.stringify({ query: searchQuery, variables: { search: q } })
-      });
+      const res  = await _anilistFetch({ query: searchQuery, variables: { search: q } });
       const json = await res.json();
       media = json?.data?.Media;
     } catch (e) {
@@ -13060,7 +13297,7 @@ function _avatarOutsideClick(e) {
 // Taste: milestone-aware NEW badge — reappears whenever a new taste story
 // milestone is crossed, nudging the user to revisit their updated profile.
 
-const _NEW_BADGE_TASTE_KEY = 'kessen_taste_badge_milestone';
+// v1.0.154 — storage key is now KESSEN_KEYS.ui.tasteNewBadgeMilestone.
 
 function _initNewBadges() {
   _syncTasteNewBadge();
@@ -13069,11 +13306,11 @@ function _initNewBadges() {
 // Show/hide the Taste NEW badge based on whether the current milestone
 // is newer than what the user last dismissed.
 function _syncTasteNewBadge() {
-  const el = document.getElementById('new-badge-taste');
+  const el = byId(IDS.newBadgeTaste);
   if (!el) return;
   if (battleCount < TASTE_STORY_MILESTONES[0]) { el.style.display = 'none'; return; }
   const currentMilestone = _lastTasteStoryMilestone(battleCount);
-  const seenMilestone    = Number(localStorage.getItem(_NEW_BADGE_TASTE_KEY) || 0);
+  const seenMilestone    = Number(localStorage.getItem(KESSEN_KEYS.ui.tasteNewBadgeMilestone) || 0);
   el.style.display = currentMilestone > seenMilestone ? '' : 'none';
 }
 
@@ -13083,7 +13320,7 @@ function _dismissNewBadge(tab) {
   try {
     if (tab === 'taste') {
       if (battleCount >= TASTE_STORY_MILESTONES[0]) {
-        localStorage.setItem(_NEW_BADGE_TASTE_KEY, String(_lastTasteStoryMilestone(battleCount)));
+        localStorage.setItem(KESSEN_KEYS.ui.tasteNewBadgeMilestone, String(_lastTasteStoryMilestone(battleCount)));
       }
     }
   } catch (_) {}
@@ -13124,8 +13361,8 @@ function _modeMenuEscHandler(e) {
 
 function toggleFilterMenu(event) {
   if (event) event.stopPropagation();
-  const pop = document.getElementById('filter-popover');
-  const btn = document.getElementById('filter-btn');
+  const pop = byId(IDS.filterPopover);
+  const btn = byId(IDS.filterBtn);
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
   pop.classList.toggle('open', willOpen);
@@ -13137,16 +13374,16 @@ function toggleFilterMenu(event) {
   }
 }
 function _filterOutsideClick(e) {
-  const pop = document.getElementById('filter-popover');
-  const btn = document.getElementById('filter-btn');
+  const pop = byId(IDS.filterPopover);
+  const btn = byId(IDS.filterBtn);
   // Clicks inside the popover (e.g. format buttons) keep it open
   if (pop && pop.contains(e.target)) return;
   if (btn && btn.contains(e.target)) return;
   _closeFilterMenu();
 }
 function _closeFilterMenu() {
-  const pop = document.getElementById('filter-popover');
-  const btn = document.getElementById('filter-btn');
+  const pop = byId(IDS.filterPopover);
+  const btn = byId(IDS.filterBtn);
   if (pop) pop.classList.remove('open');
   if (btn) btn.setAttribute('aria-expanded', 'false');
   document.removeEventListener('click', _filterOutsideClick);
@@ -13254,7 +13491,7 @@ function _paintTrio(fresh = false) {
       const extUrl    = esc(_animeExternalUrl(a));
       const extLabel  = esc(_animeExternalLabel(a));
       // Label stays static; .active class (amber tint) shows the flagged state.
-      const fuzzyText = "🌫 Fuzzy";
+      const fuzzyText = "〰️ Fuzzy";
       const fuzzyCls  = a.fuzzy ? ' active' : '';
 
       return `
@@ -13326,7 +13563,7 @@ function trioFlagFuzzy(event, pos) {
     const btn = card.querySelector('.fuzzy-btn');
     if (btn) {
       btn.classList.toggle('active', animeList[idx].fuzzy);
-      btn.textContent = "🌫 Fuzzy";
+      btn.textContent = "〰️ Fuzzy";
       btn.blur(); // clear sticky :hover on touch
     }
   }
@@ -13342,7 +13579,6 @@ function trioToggleSynopsis(event, pos) {
 function trioExcludeAnime(event, pos) {
   event.stopPropagation();
   excludedIds.add(animeList[currentTrio[pos]].id);
-  prevState = null;
   undoStack = [];
   _updateUndoBtn();
 
@@ -13496,7 +13732,6 @@ function applyTrioResult() {
   // Push undo snapshot (treated as one unit)
   undoStack.push(snap);
   if (undoStack.length > MAX_UNDO_DEPTH) undoStack.shift();
-  prevState = undoStack[undoStack.length - 1];
   _updateUndoBtn();
 }
 
@@ -14004,13 +14239,24 @@ function renderFranchiseTable() {
     const clickHandler = isSingle
       ? `showAnimeDetail(${group.members[0].id})`
       : `showFranchiseDetail('${esc(group.name).replace(/'/g, "\\'")}')`;
+    // v1.0.162 — mirror the grid card fix: display the ELO rank, not the
+    // current-sort position. Falls back to `rank` if eloRank somehow absent.
+    const displayRank = (group.eloRank ?? rank) + 1;
     html += `
       <tr class="franchise-table-group" data-gid="${gid}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
-        <td class="tbl-rank">${rank + 1}</td>
+        <td class="tbl-rank">${displayRank}</td>
         <td><img class="tbl-cover" src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
           <strong>${esc(group.name)}</strong>
           ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>` : ''}
+          ${(() => {
+            // v1.0.165 — fuzzy count in the franchise table view. Same shape
+            // as the grid badge.
+            const fc = group.members.filter(a => a.fuzzy).length;
+            return fc > 0
+              ? `<span class="franchise-fuzzy-count" style="margin-left:6px" title="${fc} entr${fc === 1 ? 'y is' : 'ies are'} flagged as fuzzy — click in to see which.">〰️ ${fc} fuzzy</span>`
+              : '';
+          })()}
           ${!isSingle ? `<span class="franchise-table-chevron" data-chv="${gid}" onclick="event.stopPropagation();toggleFranchiseTableGroup(${gid})" style="margin-left:6px;color:#6e7681;font-size:0.85rem;display:inline-block;transition:transform 0.15s;cursor:pointer;padding:0 4px">▸</span>` : ''}
         </td>
         <td>${group.bestElo}</td>
@@ -14233,11 +14479,7 @@ async function executeSyncToAniList() {
           lists { entries { mediaId } }
         }
       }`;
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query: listQuery, variables: { userId: authUser?.id } })
-    });
+    const res = await _anilistFetch({ query: listQuery, variables: { userId: authUser?.id } });
     const data = await res.json();
     if (!data.errors) {
       anilistIds = new Set(
@@ -14294,11 +14536,7 @@ async function executeSyncToAniList() {
 
     for (let attempt = 1; attempt <= 2 && !itemOk; attempt++) {
       try {
-        const res = await fetch('https://graphql.anilist.co', {
-          method: 'POST',
-          headers: anilistHeaders(),
-          body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
-        });
+        const res = await _anilistFetch({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } });
         if (res.status === 429) {
           // Rare path (usually CORS-blocked before we get here)
           consecutiveRateLimits++;
@@ -14335,11 +14573,7 @@ async function executeSyncToAniList() {
       // One more attempt on the current item after the reset
       if (!itemOk) {
         try {
-          const res = await fetch('https://graphql.anilist.co', {
-            method: 'POST',
-            headers: anilistHeaders(),
-            body: JSON.stringify({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } })
-          });
+          const res = await _anilistFetch({ query: mutation, variables: { mediaId: item.mediaId, score: item.apiScore } });
           const json = await res.json();
           if (!json.errors) itemOk = true;
         } catch { /* still failing — give up on this item */ }
@@ -14645,11 +14879,7 @@ async function reseedFromAniList() {
           lists { entries { score status media { id } } }
         }
       }`;
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify({ query, variables: { username: authUser.name } })
-    });
+    const res = await _anilistFetch({ query, variables: { username: authUser.name } });
     const data = await res.json();
     if (data.errors) throw new Error(data.errors[0].message);
 
@@ -14707,11 +14937,7 @@ async function reseedFromMAL() {
           media(id_in: $ids, type: ANIME) { id idMal }
         }
       }`;
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { ids: chunk } })
-      });
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
       const data = await res.json();
       (data?.data?.Page?.media ?? []).forEach(m => { if (m.idMal) idMalMap[m.id] = m.idMal; });
       if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 250));
@@ -14813,11 +15039,7 @@ async function refreshMetadata() {
             }
           }
         }`;
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { ids: chunk } })
-      });
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
       const data = await res.json();
       if (data.errors) throw new Error(data.errors[0].message);
       (data.data?.Page?.media ?? []).forEach(m => { metaMap[m.id] = m; });
@@ -15198,17 +15420,36 @@ function _ncRenderList() {
     list.innerHTML = '<div class="nc-empty">No notifications — you\'re all caught up ✓</div>';
     return;
   }
+  // v1.0.148 — escape n.msg before interpolating into innerHTML.
+  // Notifications can originate from internal events (which interpolate
+  // AniList/MAL titles — user-mutable on those platforms) or from the
+  // Firebase sync path (other devices). Without escaping, a crafted
+  // message could plant an <img src=x onerror=...> that steals
+  // localStorage tokens when the bell is opened. The dismiss button is
+  // attached via a delegated listener below instead of inline onclick,
+  // sidestepping the esc()-then-decoded attribute-context bypass.
+  // _ncIcon / _ncTimeAgo / _ncActionBtn return trusted markup we control.
   list.innerHTML = _notifCentre.map(n => `
-    <div class="nc-item" data-id="${n.id}">
+    <div class="nc-item" data-id="${esc(String(n.id || ''))}">
       <div class="nc-item-body">
-        <div class="nc-item-msg">${_ncIcon(n.type)} ${n.msg}</div>
+        <div class="nc-item-msg">${_ncIcon(n.type)} ${esc(String(n.msg || ''))}</div>
         <div class="nc-item-time">${_ncTimeAgo(n.timestamp)}</div>
       </div>
       <div class="nc-item-actions">
         ${_ncActionBtn(n)}
-        <button class="nc-dismiss-btn" onclick="ncDismiss('${n.id}')" title="Dismiss">✕</button>
+        <button class="nc-dismiss-btn" data-dismiss="${esc(String(n.id || ''))}" title="Dismiss">✕</button>
       </div>
     </div>`).join('');
+  // Delegated dismiss handler — one listener regardless of how many
+  // items render, no quote-context shenanigans, and event.target gives
+  // us the trusted DOM node directly.
+  if (!list._dismissBound) {
+    list.addEventListener('click', e => {
+      const btn = e.target.closest('.nc-dismiss-btn');
+      if (btn?.dataset?.dismiss) ncDismiss(btn.dataset.dismiss);
+    });
+    list._dismissBound = true;
+  }
 }
 
 function openNotifCentre() {
@@ -15298,11 +15539,7 @@ async function checkForNewAnimeMAL() {
           }
         }
       }`;
-      const res = await fetch('https://graphql.anilist.co', {
-        method: 'POST',
-        headers: anilistHeaders(),
-        body: JSON.stringify({ query, variables: { ids: chunk } })
-      });
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
       const data = await res.json();
       (data?.data?.Page?.media ?? []).forEach(m => {
         if (!ownIds.has(m.id)) {
@@ -15953,6 +16190,10 @@ function _flushSessionOnUnload(payload) {
 }
 
 window.addEventListener('beforeunload', () => {
+  // v1.0.148 — flush any pending local saveState debounce before navigation;
+  // this is the safety valve that keeps a fast-clicker from losing the last
+  // battle's ELO when they immediately close the tab.
+  flushSaveState();
   if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey) return;
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
 
