@@ -3807,17 +3807,22 @@
 
       /* Modal stacks vertically on mobile */
       .modal-box { flex-direction: column; }
-      /* v1.0.167 — drop sticky on the cover when the modal stacks vertically.
-         Desktop wants the cover pinned to its left column while the right
-         column scrolls, but on mobile the cover is now the top row of a
-         single-column layout — sticky makes it float over the title and
-         member rows beneath. Static positioning lets it scroll away with
-         the rest of the content, which is the standard mobile hero pattern. */
+      /* v1.0.167 — mobile cover treatment.
+         (1) Drop sticky positioning so the cover scrolls away with the rest
+             of the content (the desktop column-sticky pattern overlaps content
+             when the modal stacks vertically).
+         (2) Render as a centered portrait thumbnail at natural cover aspect
+             ratio (~0.71). The previous full-width 200px-tall hero used
+             `object-fit: cover` on AniList's portrait images, which cropped
+             them to a thin middle slice with no title or characters visible. */
       #modal-cover {
-        width: 100%;
+        width: 140px;
         height: 200px;
         object-fit: cover;
         position: static;
+        align-self: center;
+        margin-bottom: 4px;
+        border-radius: 10px;
       }
       .modal-stats-row { grid-template-columns: repeat(2, 1fr); }
 
