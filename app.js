@@ -14183,6 +14183,25 @@ function finishTower() {
   if (modeBtn) { modeBtn.classList.remove('active-tower'); modeBtn.textContent = '⚙ Mode'; }
   byId(IDS.towerProgressWrap).style.display = 'none';
   byId(IDS.towerStatus).style.display = 'none';
+
+  // v1.0.171 — Tower battles now count toward battleCount so cross-device
+  // sync detects the change. Without this, the Firebase ping after a tower
+  // run carries the same battleCount as before, the other device's listener
+  // sees `remoteBattles <= battleCount` and silently ignores → user never
+  // gets the "your other device ranked X more anime" prompt on their phone
+  // until they do a regular battle on the original device.
+  //
+  // The per-round saveState() in pickWinnerTower runs after this function
+  // returns (see the call order in pickWinnerTower), so the bumped count
+  // is picked up by the next save + cloud sync naturally.
+  //
+  // Milestone check fires for any 50/100/500/etc threshold crossed during
+  // the tower run. checkSessionSummary is deliberately not called — the
+  // tower already has its own summary screen.
+  const prevCount = battleCount;
+  battleCount += towerResults.length;
+  checkMilestone(prevCount, battleCount);
+  _checkAchievements();
   byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
   byId(IDS.battlePromptP).textContent  = 'Click your favourite — or skip if you can\'t decide.';
   byId(IDS.undoBtn).disabled = true;
@@ -15745,6 +15764,13 @@ async function togglePushMaster(checked) {
         syncedAt:   Date.now(),
       });
       toast('Phone notifications enabled.', 'ok');
+      // v1.0.170 — Notification.permission can lag by a tick in Chrome / Edge
+      // after requestPermission() resolves 'granted'. The immediate
+      // _pushRefreshUI() at the bottom of this function reads the stale
+      // permission and hides the categories; user only sees them after
+      // closing + reopening the bell. Force categories visible now so the
+      // UI matches the actual state without waiting for permission readback.
+      byId(IDS.ncPushCategories)?.classList.add('show');
     } else {
       // Unsubscribe locally + tell the server.
       const reg = await navigator.serviceWorker.ready;
@@ -15764,7 +15790,10 @@ async function togglePushMaster(checked) {
   } catch (e) {
     toast(e.message || 'Push setup failed.', 'err');
   }
+  // Refresh now AND on next frame — covers fast browsers + ones where
+  // Notification.permission lags by a tick after requestPermission resolves.
   _pushRefreshUI();
+  requestAnimationFrame(_pushRefreshUI);
 }
 
 async function setPushCategory(name, checked) {
