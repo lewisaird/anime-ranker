@@ -15658,10 +15658,17 @@ function _pushB64ToUint8(b64) {
 }
 
 // Pull whichever auth token applies. Mirrors the pattern used by save-session.
+// v1.0.169 — auth blobs are stored as JSON ({ token, user, saved }), not raw
+// strings. Parse and extract the actual bearer token, otherwise the server
+// rejects the entire blob with 401 and the toggle silently fails.
 function _pushAuthTokens() {
+  const parse = (raw) => {
+    if (!raw) return null;
+    try { return JSON.parse(raw).token || null; } catch { return null; }
+  };
   return {
-    token:    localStorage.getItem(KESSEN_KEYS.auth.anilist) || null,
-    malToken: localStorage.getItem(KESSEN_KEYS.auth.mal)     || null,
+    token:    parse(localStorage.getItem(KESSEN_KEYS.auth.anilist)),
+    malToken: parse(localStorage.getItem(KESSEN_KEYS.auth.mal)),
   };
 }
 
