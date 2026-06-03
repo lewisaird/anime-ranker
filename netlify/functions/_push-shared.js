@@ -144,3 +144,81 @@ export function removeSubscription(record, endpoint) {
   }
   return record;
 }
+
+// v1.0.173 — Resolve an AniList username (e.g. "lewis-aird") to the
+// canonical userId ("anilist_<numeric>"). Used by /push-send-invite to find
+// the invitee's subscription record from the username the inviter typed.
+// Returns null if the user doesn't exist on AniList or the request fails.
+export async function resolveAniListUsername(name) {
+  if (!name || typeof name !== 'string') return null;
+  const cleaned = name.trim().slice(0, 50);
+  if (!cleaned) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        query: 'query($n:String){User(name:$n){id name}}',
+        variables: { n: cleaned },
+      }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    const id = data?.data?.User?.id;
+    return id ? `anilist_${id}` : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// v1.0.173 — Send a VAPID-signed push message to every device subscription
+// in the user's record. Returns { sent, failed, removed }: `removed` is
+// the number of expired/invalid subscriptions cleaned out of the record.
+// Caller is responsible for re-saving the record if removed > 0.
+export async function sendPushToUser(record, payload) {
+  if (!record || !record.subscriptions?.length) {
+    return { sent: 0, failed: 0, removed: 0 };
+  }
+  const { default: webpush } = await import('web-push');
+  const publicKey  = process.env.VAPID_PUBLIC_KEY;
+  const privateKey = process.env.VAPID_PRIVATE_KEY;
+  const subject    = process.env.VAPID_SUBJECT;
+  if (!publicKey || !privateKey || !subject) {
+    throw new Error('VAPID env vars missing — set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT');
+  }
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+
+  const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const results = await Promise.allSettled(
+    record.subscriptions.map(s =>
+      webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, body)
+    )
+  );
+
+  let sent = 0, failed = 0;
+  const keep = [];
+  results.forEach((r, i) => {
+    const sub = record.subscriptions[i];
+    if (r.status === 'fulfilled') {
+      sent++;
+      keep.push(sub);
+    } else {
+      // 410 Gone / 404 Not Found = subscription is dead, prune it.
+      // Anything else = transient, keep the subscription and retry on next push.
+      const status = r.reason?.statusCode || 0;
+      failed++;
+      if (status === 410 || status === 404) {
+        // drop
+      } else {
+        keep.push(sub);
+      }
+    }
+  });
+  const removed = record.subscriptions.length - keep.length;
+  record.subscriptions = keep;
+  return { sent, failed, removed };
+}

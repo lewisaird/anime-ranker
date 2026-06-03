@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.171" />
+  <meta name="version" content="1.0.173" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -289,6 +289,19 @@
       <h3 style="margin:0 0 4px">Share this code</h3>
       <p style="font-size:0.78rem;color:#8b949e;margin:0 0 10px;text-align:center">Others enter this on the Join screen</p>
       <div id="collab-lobby-code" class="collab-session-code"></div>
+      <!-- v1.0.173 — Invite by AniList username. Sends a phone push to the
+           invitee (if they're signed in to Kessen AND have phone push enabled).
+           Doesn't reveal whether the invitee exists or has push — every
+           outcome that isn't "actually delivered" surfaces as a neutral hint
+           so people don't use the form as a username scraper. -->
+      <div class="invite-by-name">
+        <label for="invite-username">Or invite by AniList username</label>
+        <div class="invite-row">
+          <input id="invite-username" type="text" placeholder="e.g. lewis-aird" maxlength="50" autocomplete="off" />
+          <button class="btn-secondary" onclick="sendWtInvite()">Send</button>
+        </div>
+        <p id="invite-status" class="invite-status"></p>
+      </div>
       <div id="collab-player-list" class="collab-player-list" style="margin-top:14px"></div>
       <!-- Host only -->
       <div id="collab-host-actions" style="display:none;margin-top:16px">

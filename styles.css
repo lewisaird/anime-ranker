@@ -3289,6 +3289,35 @@
       background: var(--bg-tertiary); border-radius: 10px;
       padding: 18px 10px; margin: 12px 0;
     }
+    /* v1.0.173 — Invite by AniList username inside the lobby. */
+    .invite-by-name {
+      margin-top: 4px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+    }
+    .invite-by-name label {
+      display: block; font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .invite-row {
+      display: flex; gap: 6px; align-items: stretch;
+    }
+    .invite-row input {
+      flex: 1; min-width: 0;
+      background: var(--bg-tertiary); border: 1px solid var(--border-default);
+      color: var(--text-primary); border-radius: 6px; padding: 8px 10px; font-size: 0.85rem;
+    }
+    .invite-row button {
+      flex-shrink: 0; padding: 8px 14px;
+    }
+    .invite-status {
+      margin: 6px 0 0;
+      font-size: 0.75rem; color: var(--text-secondary); min-height: 1em;
+    }
+    .invite-status.ok    { color: var(--accent-green); }
+    .invite-status.warn  { color: var(--accent-amber); }
+    .invite-status.error { color: var(--accent-red); }
     /* Search */
     .collab-search-wrap { position: relative; }
     .collab-search-results {

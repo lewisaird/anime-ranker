@@ -427,6 +427,7 @@ let matchupStats = {};
 // ─── TOWER OF POWER ──────────────────────────────────────────────────────────
 let towerMode       = false;
 let towerChampIdx   = null;      // index in animeList of the chosen champion
+let _towerStartBattleCount = 0;  // battleCount snapshot when this tower started — used by finishTower to call checkMilestone with the correct "before" value
 let towerRound      = 0;         // 0-9
 let towerOpponents  = [];        // pre-selected array of 10 opponent indices
 let towerResults    = [];        // [{opponentIdx, championWon}]
@@ -6485,6 +6486,53 @@ function _lcCheckDeepLink(retriesLeft = 10) {
   }
 }
 
+// v1.0.173 — Watch Together deep-link handler. Mirrors _lcCheckDeepLink:
+// opens the Watch Together modal, switches to the multi-device guest panel,
+// pre-fills the join code, and auto-triggers the join if the user is
+// already authenticated. Used by the push notification flow — tapping a
+// "Lewis invited you to Watch Together" notification opens Kessen at
+// /?wt=TM5Y5G8 and this function handles the rest.
+function _wtCheckDeepLink(retriesLeft = 10) {
+  const params = new URLSearchParams(window.location.search);
+  const code   = params.get('wt');
+  if (!code) return;
+  const upperCode = code.toUpperCase();
+  if (typeof _isValidSessionCode === 'function' && !_isValidSessionCode(upperCode)) return;
+
+  if (!_FIREBASE_READY) {
+    if (retriesLeft > 0) {
+      showToast('Joining Watch Together…', 1000);
+      setTimeout(() => _wtCheckDeepLink(retriesLeft - 1), 500);
+      return;
+    }
+    showToast('⚠️ Could not connect to Watch Together — check your connection and try again.', 5000);
+    _wtClearDeepLink();
+    return;
+  }
+
+  _wtClearDeepLink();
+  openCollabMode();
+  // Switch to multi-device → guest sub-panel where the join input lives.
+  if (typeof collabMultiShowRole === 'function') {
+    try { collabMultiShowRole('guest'); } catch { /* defensive */ }
+  }
+  const codeEl = byId(IDS.collabJoinInput);
+  if (codeEl) codeEl.value = upperCode;
+
+  const alreadyAuthed = !!(authUser?.name || malAuthUser?.name);
+  if (alreadyAuthed) {
+    setTimeout(() => collabJoinSession(), 300);
+  }
+}
+
+function _wtClearDeepLink() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('wt');
+    window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
+  } catch { /* defensive */ }
+}
+
 function lcDismissRejoin() {
   _lcClearSession();
   const banner = byId(IDS.lcRejoinBanner);
@@ -7526,6 +7574,81 @@ function _collabGeneratePlayerId() {
 }
 
 // ── SESSION STORAGE (for rejoin) ──────────────────────────────────────────────
+// v1.0.173 — Watch Together push invite by AniList username.
+// UI lives inside the create-session lobby panel. POSTs to
+// /api/push-send-invite; the server resolves the username, looks up the
+// invitee's push subscription, and fires a VAPID-signed push with deep-link
+// payload. All outcomes that aren't a confirmed delivery surface as soft
+// hints — we deliberately don't tell the inviter "this user exists but
+// hasn't enabled push" so the form can't be used as a username probe.
+const _WT_INVITE_STATUS_LABELS = {
+  'sent':            { cls: 'ok',    msg: 'Invite sent.' },
+  'cooldown':        { cls: 'warn',  msg: 'You just sent them this invite — wait a minute before resending.' },
+  'self':            { cls: 'warn',  msg: 'That’s you — share the code with someone else.' },
+  // Soft fail (don't leak existence)
+  'unknown-user':    { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
+  'no-subscription': { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
+  'opted-out':       { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
+};
+
+async function sendWtInvite() {
+  const input    = byId('invite-username');
+  const statusEl = byId('invite-status');
+  if (!input || !statusEl) return;
+
+  const targetName = input.value.trim();
+  if (!targetName) {
+    statusEl.className = 'invite-status error';
+    statusEl.textContent = 'Enter an AniList username.';
+    return;
+  }
+  const code = _collab?.sessionCode;
+  if (!code) {
+    statusEl.className = 'invite-status error';
+    statusEl.textContent = 'No active session — create or rejoin first.';
+    return;
+  }
+
+  // Reuse the same auth-token parsing as the push module.
+  const auth = (typeof _pushAuthTokens === 'function')
+    ? _pushAuthTokens()
+    : { token: null, malToken: null };
+  if (!auth.token && !auth.malToken) {
+    statusEl.className = 'invite-status error';
+    statusEl.textContent = 'Sign in to AniList or MAL first.';
+    return;
+  }
+
+  statusEl.className = 'invite-status';
+  statusEl.textContent = 'Sending…';
+
+  try {
+    const res = await fetch('/.netlify/functions/push-send-invite', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        ...auth,
+        targetName,
+        sessionCode: code,
+        kind:        'wt',
+        fromName:    _collab?.myName || null,
+      }),
+    });
+    const data = await res.json().catch(() => ({ error: 'Bad response' }));
+    if (!res.ok || data.error) {
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+    const label = _WT_INVITE_STATUS_LABELS[data.status]
+      || { cls: 'warn', msg: 'Couldn’t notify them — share the code instead.' };
+    statusEl.className = `invite-status ${label.cls}`;
+    statusEl.textContent = label.msg;
+    if (data.status === 'sent') input.value = '';
+  } catch (e) {
+    statusEl.className = 'invite-status error';
+    statusEl.textContent = e.message || 'Send failed.';
+  }
+}
+
 function _collabSaveSession() {
   try {
     sessionStorage.setItem('kessen-collab', JSON.stringify({
@@ -14078,6 +14201,10 @@ function startTower(championIdx) {
   towerRound     = 0;
   towerResults   = [];
   towerMode      = true;
+  // v1.0.172 — Capture battleCount at tower start so the end-of-run
+  // milestone/achievements pass knows the "before" count regardless of how
+  // many rounds got incremented per-round inside pickWinnerTower.
+  _towerStartBattleCount = battleCount;
   const modeBtn  = byId(IDS.modeBtn);
   if (modeBtn) { modeBtn.classList.add('active-tower'); modeBtn.textContent = '⚡ Mode: Tower'; }
 
@@ -14168,6 +14295,12 @@ function pickWinnerTower(side) {
 
   towerResults.push({ opponentIdx: oppIdx, championWon });
   towerRound++;
+  // v1.0.172 — Per-round increment so the battle counter at the top of the
+  // screen ticks up live during a tower run (previously the count jumped by
+  // 10 only at finish). checkMilestone / _checkAchievements are deferred
+  // until finishTower so any milestone card doesn't pop mid-run; the tower
+  // summary takes priority and the milestone shows after it closes.
+  battleCount++;
 
   if (towerRound >= TOWER_ROUNDS) {
     finishTower();
@@ -14184,23 +14317,13 @@ function finishTower() {
   byId(IDS.towerProgressWrap).style.display = 'none';
   byId(IDS.towerStatus).style.display = 'none';
 
-  // v1.0.171 — Tower battles now count toward battleCount so cross-device
-  // sync detects the change. Without this, the Firebase ping after a tower
-  // run carries the same battleCount as before, the other device's listener
-  // sees `remoteBattles <= battleCount` and silently ignores → user never
-  // gets the "your other device ranked X more anime" prompt on their phone
-  // until they do a regular battle on the original device.
-  //
-  // The per-round saveState() in pickWinnerTower runs after this function
-  // returns (see the call order in pickWinnerTower), so the bumped count
-  // is picked up by the next save + cloud sync naturally.
-  //
-  // Milestone check fires for any 50/100/500/etc threshold crossed during
-  // the tower run. checkSessionSummary is deliberately not called — the
-  // tower already has its own summary screen.
-  const prevCount = battleCount;
-  battleCount += towerResults.length;
-  checkMilestone(prevCount, battleCount);
+  // v1.0.172 — battleCount is now incremented per round inside
+  // pickWinnerTower, so by the time we get here it already reflects the
+  // full tower run. checkMilestone uses the snapshot captured when the
+  // tower started so it correctly fires for any threshold crossed during
+  // the run (50, 100, 500, etc). checkSessionSummary is deliberately not
+  // called — the tower already has its own summary screen.
+  checkMilestone(_towerStartBattleCount, battleCount);
   _checkAchievements();
   byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
   byId(IDS.battlePromptP).textContent  = 'Click your favourite — or skip if you can\'t decide.';
@@ -16534,6 +16657,8 @@ window.addEventListener('load', () => {
   if (input.value.trim()) startLoading();
   // Auto-open Live Challenge join if a ?lc= deep link is present
   _lcCheckDeepLink();
+  // v1.0.173 — same for Watch Together via ?wt= (used by push invites)
+  _wtCheckDeepLink();
 });
 
 // Save to cloud when the user closes the tab or navigates away.
