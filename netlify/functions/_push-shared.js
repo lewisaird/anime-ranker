@@ -89,6 +89,12 @@ export async function resolveUserId({ token, malToken }) {
 
 // Load the push blob for a user. Returns a fully-formed object with default
 // shape, so callers don't have to handle "subscription not registered yet".
+// v1.0.177 — schema bumped to 2. Adds Tower-retry polling state:
+//   - aniListToken / aniListUserId  : present only while towerRetry is on
+//   - notifiedCompletions[]         : media IDs we've already pushed for
+//   - lastPolledAt                  : ms timestamp of last scheduled poll
+//   - initialSnapshotDone           : true after register-time backfill catch-up
+// All fields default safely so reading an older v1 record continues to work.
 export async function loadPushRecord(userId, context) {
   const store = getStore({ name: PUSH_BLOB_STORE, context });
   const raw = await store.get(`subs_${userId}`, { type: 'json' });
@@ -96,10 +102,24 @@ export async function loadPushRecord(userId, context) {
     return {
       subscriptions: [],
       categories: { towerRetry: true, watchTogether: true, liveChallenge: true },
-      schemaVersion: 1,
+      aniListToken:          null,
+      aniListUserId:         null,
+      notifiedCompletions:   [],
+      lastPolledAt:          0,
+      initialSnapshotDone:   false,
+      schemaVersion: 2,
     };
   }
-  return raw;
+  // Migrate v1 → v2 on read so older records get the new fields filled in.
+  return {
+    aniListToken:          null,
+    aniListUserId:         null,
+    notifiedCompletions:   [],
+    lastPolledAt:          0,
+    initialSnapshotDone:   false,
+    ...raw,
+    schemaVersion: 2,
+  };
 }
 
 export async function savePushRecord(userId, record, context) {
@@ -173,6 +193,95 @@ export async function resolveAniListUsername(name) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// v1.0.177 — AniList polling helpers for Phase 2C (Tower retry pushes).
+//
+// Authenticated GraphQL call against AniList. Token is the user's long-lived
+// access token (AniList tokens last ~1 year; no refresh flow needed).
+export async function callAniList(token, query, variables = {}) {
+  if (!token) throw new Error('AniList token missing');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Accept':        'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (!res.ok || data.errors) {
+      const code = res.status;
+      const err = data.errors?.[0]?.message || `HTTP ${code}`;
+      const e = new Error(err);
+      e.status = code;
+      throw e;
+    }
+    return data.data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Fetch all COMPLETED anime media IDs for a user. Paginates 50 per page.
+// Returns: [{ id, titleEn, titleRo, cover }]. Most-recently-updated first.
+export async function fetchCompletedAnime(token, userId, maxPages = 20) {
+  const query = `
+    query($userId:Int,$page:Int){
+      Page(page:$page,perPage:50){
+        pageInfo{ hasNextPage }
+        mediaList(userId:$userId,status:COMPLETED,type:ANIME,sort:UPDATED_TIME_DESC){
+          mediaId
+          media{
+            id
+            title{ english romaji }
+            coverImage{ medium }
+          }
+        }
+      }
+    }`;
+  const all = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const data = await callAniList(token, query, { userId, page });
+    const entries = data?.Page?.mediaList || [];
+    for (const e of entries) {
+      all.push({
+        id:      e.media?.id || e.mediaId,
+        titleEn: e.media?.title?.english || null,
+        titleRo: e.media?.title?.romaji  || null,
+        cover:   e.media?.coverImage?.medium || null,
+      });
+    }
+    if (!data?.Page?.pageInfo?.hasNextPage) break;
+    // Polite delay between pages to stay well clear of AniList's 90 req/min cap.
+    await new Promise(r => setTimeout(r, 700));
+  }
+  return all;
+}
+
+// Iterate every push record in the kessen-push blob store. Yields one record
+// per user with their userId attached. The scheduled tower-retry function
+// uses this to find opted-in users; future maintenance functions (cleanup of
+// dead subscriptions, etc.) can reuse it.
+export async function* iteratePushRecords(context) {
+  const store = getStore({ name: PUSH_BLOB_STORE, context });
+  let cursor;
+  do {
+    const page = await store.list({ prefix: 'subs_', cursor });
+    for (const blob of page.blobs || []) {
+      const userId = blob.key.replace(/^subs_/, '');
+      const record = await store.get(blob.key, { type: 'json' });
+      if (record && typeof record === 'object') {
+        yield { userId, record };
+      }
+    }
+    cursor = page.cursor;
+  } while (cursor);
 }
 
 // v1.0.173 — Send a VAPID-signed push message to every device subscription

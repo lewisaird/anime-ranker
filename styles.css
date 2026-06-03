@@ -3284,10 +3284,18 @@
     .collab-name-input:focus { border-color: var(--accent-primary); }
     /* Session code display */
     .collab-session-code {
-      font-size: 2.8rem; font-weight: 800; letter-spacing: 0.2em;
+      /* v1.0.176 — clamp font + min-width so the 7-char code with letter-
+         spacing 0.2em doesn't force the flex container wider than the
+         viewport on narrow phones. Previously the "Copy link" button got
+         pushed off-screen. clamp scales between 1.5rem (very narrow) and
+         2.8rem (desktop). min-width:0 lets the flex item actually shrink. */
+      font-size: clamp(1.5rem, 6.5vw, 2.8rem);
+      font-weight: 800; letter-spacing: 0.18em;
       text-align: center; color: var(--accent-primary);
       background: var(--bg-tertiary); border-radius: 10px;
       padding: 18px 10px; margin: 12px 0;
+      min-width: 0;
+      overflow: hidden;
     }
     /* v1.0.173 — Invite by AniList username inside the lobby. */
     .invite-by-name {

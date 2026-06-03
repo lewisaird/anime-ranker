@@ -6064,6 +6064,10 @@ function _challengeRenderPair() {
     const el        = byId(elId);
     el.className    = 'challenge-card';
     el.disabled     = false;
+    // v1.0.176 — same focus-ring fix as the Watch Together version: if the
+    // button retained focus from the previous round's tap, blur it so the
+    // new round's card doesn't start with a phantom :focus highlight.
+    if (document.activeElement === el) el.blur();
     el.innerHTML    = `
       <img src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" />
       <div class="challenge-card-title">${esc(anime.title)}</div>
@@ -8857,6 +8861,11 @@ function _collabRenderVoteCards(pair) {
     el.className = 'challenge-card collab-vote-card';
     el.disabled  = false;
     el.style.opacity = '';
+    // v1.0.176 — blur the card if it currently has focus. Without this,
+    // when a round advances after a tap the button retains its :focus state
+    // and the browser's focus ring leaves the previously-tapped card glowing
+    // blue in the new round — looks identical to the "you picked this" state.
+    if (document.activeElement === el) el.blur();
     const epBadge = show.format === 'MOVIE'
       ? '<span class="ep-badge">Movie</span>'
       : show.episodes ? `<span class="ep-badge">${show.episodes} ep</span>` : '';
@@ -15410,16 +15419,25 @@ async function checkForNewAnime() {
     // anime that just flipped from CURRENT/REPEATING → COMPLETED.
     const freshStatusMap = new Map(entries.map(e => [e.id, e.status]));
     const WATCHING = new Set(['CURRENT', 'REPEATING']);
+    // v1.0.178 — Collect IDs of anime whose status just flipped to COMPLETED
+    // so we can tell the server "we already showed an in-app prompt for
+    // these". Prevents the hourly Tower-retry server poll from also firing
+    // a phone push for the same anime — the bell prompt + the push would
+    // otherwise both fire for any user who opens Kessen between the AniList
+    // status change and the next cron tick.
+    const newlyCompletedIds = [];
     animeList.forEach(a => {
       const freshStatus = freshStatusMap.get(a.id);
       if (freshStatus && freshStatus !== a.status) {
         // Persist the updated status so we don't re-detect next poll
         if (freshStatus === 'COMPLETED' && WATCHING.has(a.status)) {
           _queueFinishPrompt(a);
+          newlyCompletedIds.push(a.id);
         }
         a.status = freshStatus;
       }
     });
+    if (newlyCompletedIds.length) _pushMarkSeen(newlyCompletedIds);
 
     _refreshListBanners('AniList');
   } catch (e) { console.warn('[checkForNewAnime] poll failed:', e?.message); }
@@ -15851,6 +15869,29 @@ function _pushAuthTokens() {
     token:    parse(localStorage.getItem(KESSEN_KEYS.auth.anilist)),
     malToken: parse(localStorage.getItem(KESSEN_KEYS.auth.mal)),
   };
+}
+
+// v1.0.178 — Tell the server "we already showed an in-app prompt for these
+// anime IDs", so the hourly Tower-retry cron poll skips them. Best-effort:
+// silently swallows network errors (the server-side poll will still fire
+// in that case but it's a low-impact failure — user sees the same message
+// twice rather than missing one). Only sends if the user has push enabled +
+// Tower-retry on, to avoid pointless API calls for non-opted-in users.
+async function _pushMarkSeen(animeIds) {
+  if (!Array.isArray(animeIds) || animeIds.length === 0) return;
+  const local = (typeof _pushLoadLocal === 'function') ? _pushLoadLocal() : null;
+  if (!local?.enabled || !local?.categories?.towerRetry) return;
+  const auth = (typeof _pushAuthTokens === 'function')
+    ? _pushAuthTokens()
+    : { token: null, malToken: null };
+  if (!auth.token && !auth.malToken) return;
+  try {
+    await fetch('/.netlify/functions/push-mark-seen', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ ...auth, mediaIds: animeIds }),
+    });
+  } catch { /* best-effort */ }
 }
 
 async function _pushRegisterServer(subscription, categories) {
