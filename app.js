@@ -6512,12 +6512,26 @@ function _wtCheckDeepLink(retriesLeft = 10) {
 
   _wtClearDeepLink();
   openCollabMode();
-  // Switch to multi-device → guest sub-panel where the join input lives.
+  // v1.0.174 — collabMultiShowRole only toggles a sub-section of the
+  // multi-setup panel — it does NOT navigate there. Without
+  // collabChooseMode('multi') first, the modal stays on the mode-picker
+  // ("One device" / "Multiple devices") and a confused user taps "One
+  // device" and ends up in a local Watch Together while the host waits
+  // for a guest that never joined.
+  if (typeof collabChooseMode === 'function') {
+    try { collabChooseMode('multi'); } catch { /* defensive */ }
+  }
   if (typeof collabMultiShowRole === 'function') {
     try { collabMultiShowRole('guest'); } catch { /* defensive */ }
   }
   const codeEl = byId(IDS.collabJoinInput);
   if (codeEl) codeEl.value = upperCode;
+
+  // Pre-fill the multi-device name field from the user's AniList / MAL handle
+  // so they're not blocked by an empty "Your name" requirement on auto-join.
+  const myName = authUser?.name || malAuthUser?.name || '';
+  const nameEl = byId(IDS.collabMultiName);
+  if (nameEl && !nameEl.value && myName) nameEl.value = myName;
 
   const alreadyAuthed = !!(authUser?.name || malAuthUser?.name);
   if (alreadyAuthed) {
@@ -7581,19 +7595,24 @@ function _collabGeneratePlayerId() {
 // payload. All outcomes that aren't a confirmed delivery surface as soft
 // hints — we deliberately don't tell the inviter "this user exists but
 // hasn't enabled push" so the form can't be used as a username probe.
-const _WT_INVITE_STATUS_LABELS = {
+const _INVITE_STATUS_LABELS = {
   'sent':            { cls: 'ok',    msg: 'Invite sent.' },
   'cooldown':        { cls: 'warn',  msg: 'You just sent them this invite — wait a minute before resending.' },
   'self':            { cls: 'warn',  msg: 'That’s you — share the code with someone else.' },
-  // Soft fail (don't leak existence)
+  // Soft fail (don't leak existence). All three resolve to the same user-facing
+  // message — we deliberately don't reveal whether the username exists, whether
+  // they've enabled push, or whether they've opted out of this category.
   'unknown-user':    { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
   'no-subscription': { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
   'opted-out':       { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
 };
 
-async function sendWtInvite() {
-  const input    = byId('invite-username');
-  const statusEl = byId('invite-status');
+// v1.0.175 — Shared invite-by-AniList-username sender. Both Watch Together
+// and Live Challenge invite flows route through this — only the input/status
+// element ids and the source for the session code + display name differ.
+async function _sendInviteByName({ kind, inputId, statusId, getCode, getMyName }) {
+  const input    = byId(inputId);
+  const statusEl = byId(statusId);
   if (!input || !statusEl) return;
 
   const targetName = input.value.trim();
@@ -7602,7 +7621,7 @@ async function sendWtInvite() {
     statusEl.textContent = 'Enter an AniList username.';
     return;
   }
-  const code = _collab?.sessionCode;
+  const code = typeof getCode === 'function' ? getCode() : null;
   if (!code) {
     statusEl.className = 'invite-status error';
     statusEl.textContent = 'No active session — create or rejoin first.';
@@ -7630,15 +7649,15 @@ async function sendWtInvite() {
         ...auth,
         targetName,
         sessionCode: code,
-        kind:        'wt',
-        fromName:    _collab?.myName || null,
+        kind,
+        fromName:    (typeof getMyName === 'function' && getMyName()) || null,
       }),
     });
     const data = await res.json().catch(() => ({ error: 'Bad response' }));
     if (!res.ok || data.error) {
       throw new Error(data.error || `Request failed (${res.status})`);
     }
-    const label = _WT_INVITE_STATUS_LABELS[data.status]
+    const label = _INVITE_STATUS_LABELS[data.status]
       || { cls: 'warn', msg: 'Couldn’t notify them — share the code instead.' };
     statusEl.className = `invite-status ${label.cls}`;
     statusEl.textContent = label.msg;
@@ -7647,6 +7666,26 @@ async function sendWtInvite() {
     statusEl.className = 'invite-status error';
     statusEl.textContent = e.message || 'Send failed.';
   }
+}
+
+function sendWtInvite() {
+  return _sendInviteByName({
+    kind:      'wt',
+    inputId:   'invite-username',
+    statusId:  'invite-status',
+    getCode:   () => _collab?.sessionCode,
+    getMyName: () => _collab?.myName,
+  });
+}
+
+function sendLcInvite() {
+  return _sendInviteByName({
+    kind:      'lc',
+    inputId:   'lc-invite-username',
+    statusId:  'lc-invite-status',
+    getCode:   () => _lc?.sessionCode,
+    getMyName: () => _lc?.myUsername,
+  });
 }
 
 function _collabSaveSession() {

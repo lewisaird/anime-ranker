@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.173" />
+  <meta name="version" content="1.0.175" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -523,6 +523,16 @@
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
         <div id="lc-lobby-code" class="collab-session-code" style="flex:1;margin:0"></div>
         <button id="lc-share-btn" class="btn-secondary" style="flex-shrink:0;padding:8px 14px;font-size:0.82rem" onclick="lcShareLink()">Copy link</button>
+      </div>
+      <!-- v1.0.175 — Invite by AniList username. Same pattern as Watch
+           Together — POSTs to /api/push-send-invite with kind:'lc'. -->
+      <div class="invite-by-name">
+        <label for="lc-invite-username">Or invite by AniList username</label>
+        <div class="invite-row">
+          <input id="lc-invite-username" type="text" placeholder="e.g. lewis-aird" maxlength="50" autocomplete="off" />
+          <button class="btn-secondary" onclick="sendLcInvite()">Send</button>
+        </div>
+        <p id="lc-invite-status" class="invite-status"></p>
       </div>
       <div id="lc-player-list" style="margin-bottom:14px;min-height:40px"></div>
       <!-- Host only -->
