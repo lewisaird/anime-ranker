@@ -18,6 +18,35 @@
 
 const https = require('https');
 
+// v1.0.152 — Origin allowlist parallel to mal-api.js / anilist-auth.js.
+// Without it the function is reachable cross-origin; while the OAuth code
+// + verifier pair is one-time and PKCE-bound, an attacker could still use
+// this endpoint as a free oracle to validate scraped codes or burn the
+// MAL client_secret rate-limit budget. Keep in sync with mal-api.js.
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://kessen.co.uk',
+  'https://www.kessen.co.uk',
+];
+const EXTRA_ALLOWED = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const ALLOWED_ORIGIN_PATTERNS = [
+  ...DEFAULT_ALLOWED_ORIGINS,
+  ...EXTRA_ALLOWED,
+  /^https:\/\/[a-z0-9-]+--kessen\.netlify\.app$/,
+  /^https:\/\/kessen\.netlify\.app$/,
+  /^https:\/\/[a-z0-9-]+\.netlify\.app$/,
+  /^http:\/\/localhost(:\d+)?$/,
+  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+];
+function isOriginAllowed(origin) {
+  if (!origin) return false;
+  for (const p of ALLOWED_ORIGIN_PATTERNS) {
+    if (typeof p === 'string' && p === origin) return true;
+    if (p instanceof RegExp && p.test(origin)) return true;
+  }
+  return false;
+}
+
 // HTTPS POST helper for the token endpoint
 function httpsPost(hostname, path, body, headers) {
   return new Promise((resolve, reject) => {
@@ -42,6 +71,11 @@ function httpsPost(hostname, path, body, headers) {
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+  }
+
+  const origin = event.headers?.origin || event.headers?.Origin || '';
+  if (!isOriginAllowed(origin)) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Origin not allowed' }) };
   }
 
   let body;

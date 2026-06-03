@@ -11,15 +11,36 @@
 // The secret key is set via the ADMIN_DELETE_KEY environment variable in Netlify.
 
 import { getStore } from '@netlify/blobs';
+import { timingSafeEqual } from 'node:crypto';
 
 async function lookupAniListId(username) {
+  // v1.0.152 — use a GraphQL variable instead of string interpolation.
+  // Blast radius was already limited by the admin-key gate, but a leaked
+  // key plus a crafted username could read arbitrary AniList fields.
+  // Variables defang the injection entirely.
   const res = await fetch('https://graphql.anilist.co', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ query: `{ User(name: "${username}") { id } }` }),
+    body: JSON.stringify({
+      query: 'query($name: String) { User(name: $name) { id } }',
+      variables: { name: username },
+    }),
   });
   const data = await res.json();
   return data?.data?.User?.id ?? null;
+}
+
+// v1.0.152 — Constant-time string comparison so the admin key can't be
+// brute-forced char-by-char via response-time analysis. Both inputs need
+// to be the same length for timingSafeEqual; we pad / detect-length first.
+function _adminKeyMatches(provided, expected) {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  if (provided.length !== expected.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
 async function lookupMALId(username) {
@@ -35,9 +56,9 @@ export default async (request, context) => {
   const username = url.searchParams.get('username');
   const platform = (url.searchParams.get('platform') || 'anilist').toLowerCase();
 
-  // Validate secret key
+  // Validate secret key (constant-time compare — see _adminKeyMatches above)
   const adminKey = process.env.ADMIN_DELETE_KEY;
-  if (!adminKey || key !== adminKey) {
+  if (!adminKey || !_adminKeyMatches(key, adminKey)) {
     return Response.json({ error: 'Unauthorised' }, { status: 401 });
   }
 

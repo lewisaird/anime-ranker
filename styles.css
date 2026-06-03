@@ -2561,6 +2561,66 @@
       padding: 8px 0;
     }
 
+    /* v1.0.168 — phone push settings inside the notification centre modal.
+       Sits below the in-app bell list as a distinct configuration section,
+       so the bell stays the entry point for "all notification stuff" without
+       needing a separate Settings modal. */
+    .nc-push-section {
+      border-top: 1px solid var(--border-default);
+      padding: 14px 16px;
+      background: var(--bg-primary);
+    }
+    .nc-push-title {
+      margin: 0 0 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+    .nc-push-blurb {
+      margin: 0 0 10px;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+    .nc-push-master {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 6px 0;
+      min-height: 28px;
+    }
+    .nc-push-master input[type="checkbox"] {
+      width: 18px; height: 18px; cursor: pointer; flex-shrink: 0;
+    }
+    .nc-push-categories {
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      margin: 8px 0 0 14px;
+      padding-left: 12px;
+      border-left: 2px solid var(--border-subtle);
+    }
+    .nc-push-categories.show { display: flex; }
+    .nc-push-categories label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 4px 0;
+      min-height: 24px;
+    }
+    .nc-push-categories input[type="checkbox"] {
+      width: 16px; height: 16px; cursor: pointer; flex-shrink: 0;
+    }
+    /* Greyed-out master toggle when push isn't supported or is blocked */
+    .nc-push-section.is-unavailable .nc-push-master { opacity: 0.55; cursor: not-allowed; }
+    .nc-push-section.is-unavailable .nc-push-master input { pointer-events: none; }
+
     .nc-empty {
       padding: 32px 20px;
       text-align: center;

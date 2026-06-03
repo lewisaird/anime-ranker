@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.166';
+const APP_VERSION  = '1.0.168';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -162,4 +162,70 @@ self.addEventListener('fetch', event => {
       return Response.error();
     })
   );
+});
+
+// ── Push notifications (Phase 0) ────────────────────────────────────────────
+// v1.0.168 — Web Push handler. Receives messages dispatched by the
+// /api/push-send Netlify Function (signed with VAPID private key, delivered
+// via FCM / Apple Push / whichever endpoint the browser registered with).
+//
+// Payload shape (JSON):
+//   {
+//     kind:    'wt-invite' | 'lc-invite' | 'tower-retry' | 'test',
+//     title:   'Lewis invited you to Watch Together',
+//     body:    'Tap to join session TM5Y5G8',
+//     url?:    '/?wt=TM5Y5G8',           // deep link on click
+//     icon?:   '/icon-192.png',
+//     badge?:  '/icon.svg',
+//     tag?:    'wt-TM5Y5G8',             // collapse multiple of same kind
+//     data?:   { ... }                   // round-trips to notificationclick
+//   }
+//
+// Missing / malformed payload still shows a generic fallback so we never
+// suppress a notification the user expected — push delivery itself is a
+// strong signal of intent.
+
+self.addEventListener('push', event => {
+  let payload = {};
+  try {
+    if (event.data) payload = event.data.json();
+  } catch {
+    try { payload.body = event.data?.text?.() || ''; } catch { /* noop */ }
+  }
+
+  const title = payload.title || 'Kessen';
+  const options = {
+    body:        payload.body  || '',
+    icon:        payload.icon  || '/icon-192.png',
+    badge:       payload.badge || '/icon.svg',
+    tag:         payload.tag,
+    data:        { url: payload.url || '/', ...(payload.data || {}) },
+    requireInteraction: false,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Notification click — focus an existing Kessen tab if one is open, otherwise
+// open a new one at the payload's deep-link target. Standard PWA pattern.
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = event.notification.data?.url || '/';
+
+  event.waitUntil((async () => {
+    const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // Prefer an existing visible Kessen tab on the same origin
+    for (const c of allClients) {
+      const sameOrigin = new URL(c.url).origin === self.location.origin;
+      if (sameOrigin && 'focus' in c) {
+        if (c.navigate && target !== '/') {
+          try { await c.navigate(target); } catch { /* navigate can throw on cross-origin or stale clients */ }
+        }
+        return c.focus();
+      }
+    }
+    if (self.clients.openWindow) {
+      return self.clients.openWindow(target);
+    }
+  })());
 });

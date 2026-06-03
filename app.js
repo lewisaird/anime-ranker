@@ -226,6 +226,14 @@ const IDS = Object.freeze({
   notifBadge:             'notif-badge',
   notifCentreModal:       'notif-centre-modal',
   notifCentreList:        'notif-centre-list',
+  // v1.0.168 — phone push notification settings inside the notif-centre modal
+  ncPushSection:          'nc-push-section',
+  ncPushBlurb:            'nc-push-blurb',
+  ncPushMaster:           'nc-push-master',
+  ncPushCategories:       'nc-push-categories',
+  ncPushCatTower:         'nc-push-cat-tower',
+  ncPushCatWt:            'nc-push-cat-wt',
+  ncPushCatLc:            'nc-push-cat-lc',
   collabModal:              'collab-modal',
   collabPanelMode:           'collab-panel-mode',
   collabPanelSetup:          'collab-panel-setup',
@@ -541,6 +549,12 @@ const KESSEN_KEYS = {
     // saves don't lose the seen-milestone marker (no migration entry exists
     // for the legacy underscore form).
     tasteNewBadgeMilestone: 'kessen_taste_badge_milestone',
+    // v1.0.168 — Push notification config cached per-device.
+    // Stored shape: { enabled: bool, categories: { towerRetry, watchTogether,
+    // liveChallenge }, endpoint: string, syncedAt: number }. Mirror of what
+    // the server has so the toggle reflects state synchronously without an
+    // API round-trip on modal open.
+    push:                   'kessen.ui.push',
   },
   settings: {
     allowAdult:  'kessen.settings.allowAdult',
@@ -2989,7 +3003,10 @@ const FRANCHISE_ALIASES = Object.freeze([
   // PREFIX_MIN. Covers Cagliostro, Castle of Cagliostro, Part 1-6,
   // The First, Goemon's Blood Spray, etc. Excludes Lupinranger (different
   // tokusatsu franchise) via word boundary.
-  { pattern: /^lupin\s+(?:iii|the\s+third|3rd|3)\b/i, canon: 'Lupin III' },
+  // v1.0.167 — extended to also match "Lupin the 3rd" / "Lupin the Third" /
+  // "Lupin the IIIrd" forms. The previous pattern split "Lupin III: ..." (which
+  // matched) from "Lupin the 3rd ..." (which didn't) into separate franchises.
+  { pattern: /^lupin\s+(?:iii|3rd|3|the\s+(?:iii|iiird|third|3rd|3))\b/i, canon: 'Lupin III' },
   // Slayers — Next, Try, Premium, Revolution, Evolution-R, NEXT Movie,
   // Great. None of Next/Try are in the spinoff strip list and "slayers"
   // is 7 chars so prefix-match would have needed loosening.
@@ -3008,13 +3025,57 @@ const FRANCHISE_ALIASES = Object.freeze([
   // Detective Conan — long-running umbrella with English ("Case Closed"),
   // Japanese ("Meitantei Conan", "Detective Conan"). The conan films share
   // none of the same prefix structures so an explicit alias collapses the lot.
-  { pattern: /\b(?:meitantei\s+conan|detective\s+conan|case\s+closed)\b/i, canon: 'Detective Conan' },
+  // v1.0.167 — anchored at start (was \b) so crossover titles like "Lupin III
+  // vs Detective Conan" don't get pulled into the Conan franchise. With the
+  // anchor those titles match the Lupin III alias instead, which is correct
+  // since the Lupin name comes first in the crossover billing.
+  { pattern: /^(?:meitantei\s+conan|detective\s+conan|case\s+closed)\b/i, canon: 'Detective Conan' },
   // Aikatsu! — Stars, Friends, Planet, On Parade, 10th Story. The exclamation
   // mark is part of the brand; \b after handles "Aikatsu!", "Aikatsu Stars!".
   { pattern: /^aikatsu/i,             canon: 'Aikatsu!' },
   // Tenchi Muyou! / Tenchi Muyo — Universe, in Tokyo, in Love, Geminar,
   // GXP. Brand uses two conventional romanisations.
   { pattern: /^tenchi\s+muyou?/i,     canon: 'Tenchi Muyou!' },
+  // Trigun — original 1998 TV, Badlands Rumble (2010 movie), Stampede
+  // (2023 reboot), Stampede: Stargaze (2025 special). Stem "Trigun" is
+  // 6 chars, below PREFIX_MIN, so neither title-pattern nor relations
+  // graph reliably bridges Stampede ↔ Stargaze ↔ original.
+  { pattern: /^trigun\b/i,            canon: 'Trigun' },
+  // Dragon Ball — original (1986), Z (1989), GT (1996), Kai (recap),
+  // Super (2015), Daima (2024), Heroes (game tie-in), plus the many
+  // theatrical films (Battle of Gods, Resurrection F, Broly, Super Hero).
+  // Suffixes like "Z", "GT", "Super" mean the title-stems don't share a
+  // common prefix beyond "Dragon Ball" itself, and Z↔Super relations on
+  // AniList go through the recap series Kai, so a sub-series the user
+  // skipped breaks the chain. Optional "Super" prefix catches the
+  // "Super Dragon Ball Heroes" naming inversion.
+  { pattern: /^(super\s+)?dragon\s*ball\b/i, canon: 'Dragon Ball' },
+  // Pokémon — main anime (1997+ across regions), Concierge (Netflix
+  // stop-motion), Generations / Origins / Evolutions / Twilight Wings
+  // / Chronicles / Hands (web/special series), and the many films
+  // (Mewtwo Strikes Back, Lugia, etc.). Stem "Pokémon" is 7 chars, just
+  // under PREFIX_MIN, so two Pokémon titles with differing suffixes don't
+  // bridge via title-pattern. Pattern accepts both "pokemon" and
+  // "pokémon" spellings since AniList lists both in the wild.
+  { pattern: /^pok[eé]mon\b/i,        canon: 'Pokémon' },
+  // Digimon — Adventure / 02 / Tri / Last Evolution / Tamers / Frontier /
+  // Data Squad (Savers) / Fusion (Xros Wars) / Universe App Monsters /
+  // Ghost Game / Survive. Each sub-series has different protagonist and cast
+  // so neither title-pattern nor AniList relations reliably bridges them —
+  // same shape as Pretty Cure / Yu-Gi-Oh!.
+  { pattern: /^digimon\b/i,           canon: 'Digimon' },
+  // One Piece — main TV (1000+ eps), the films (Stampede, Red, Gold, etc.),
+  // the 3D shorts (3D2Y, Mugiwara Chase, Trap Coaster). AniList relations
+  // treat the 3D shorts as their own root so they don't link to the main
+  // series, and the title stems share only "one piece" (9 chars) which IS
+  // above PREFIX_MIN but the "3D" suffix prevents direct prefix match.
+  { pattern: /^one\s*piece\b/i,       canon: 'One Piece' },
+  // Doraemon — main TV (1973 + 1979 + 2005), all the films (Nobita's
+  // Dinosaur, Treasure Island, Space Heroes, etc.), and crossovers
+  // ("Doraemon Meets Hattori the Ninja"). Stem "Doraemon" is 8 chars (at
+  // PREFIX_MIN exactly) but the crossover entries don't have AniList
+  // relations linking back to the main franchise.
+  { pattern: /^doraemon\b/i,          canon: 'Doraemon' },
 ]);
 
 function _franchiseAlias(title) {
@@ -3060,6 +3121,16 @@ const _GENERIC_BASES = new Set([
   // Nobita no Parallel Saiyuuki (1988), etc. The English titles are distinct;
   // grouping on the shared romaji incorrectly fuses them.
   'saiyuuki',
+  // v1.0.167 — AniList convention suffixes that mark a media-adaptation type,
+  // not a franchise. "X: The Animation" is the standard way AniList names the
+  // anime adaptation of a game / manga / novel. Without blocking these, the
+  // after-colon key for one such title gets registered as a franchise key,
+  // then every other "Y: The Animation" / "Y the Animation" entry hits it
+  // via suffix-lookup and merges. Observed bridge: 34 unrelated anime (GARO,
+  // Persona, Phantom, Granblue Fantasy, Gunslinger Stratos, Ping Pong, etc.)
+  // chained into one franchise named after Ping Pong.
+  'the animation', 'the movie', 'the movies', 'the series',
+  'the special', 'the specials', 'specials',
 ]);
 
 function _franchiseBaseName(title) {
@@ -3223,6 +3294,12 @@ function _franchiseSuffixLookup(key, keyMap, indexes) {
 
   for (const existingKey of candidates) {
     if (existingKey.length < 6) continue;
+    // v1.0.167 — never bridge through a generic-base key. Defensive: the
+    // after-colon registration path already filters these out, but if a
+    // future code path registers a generic key the lookup must still ignore
+    // it. Otherwise a single "X: The Animation" entry can chain dozens of
+    // unrelated franchises through the suffix-match path.
+    if (_GENERIC_BASES.has(existingKey)) continue;
     // Suffix: "Evangelion" ↔ "Neon Genesis Evangelion"
     if (Math.min(key.length, existingKey.length) >= SUFFIX_MIN) {
       if (existingKey.endsWith(' ' + key) || key.endsWith(' ' + existingKey)) {
@@ -3373,6 +3450,13 @@ function _buildFranchiseGroups(sorted) {
       let roAfterColon = roRaw.includes(':') ? _franchiseKey(roRaw.replace(/^[^:]+:\s*/, '')) : null;
       if (enAfterColon && enAfterColon.length < _AFTER_COLON_MIN) enAfterColon = null;
       if (roAfterColon && roAfterColon.length < _AFTER_COLON_MIN) roAfterColon = null;
+      // v1.0.167 — never treat a generic phrase ("the animation", "the movie",
+      // etc.) as a franchise key. Without this gate the after-colon key for
+      // "X: The Animation" gets registered, then every other "Y: The Animation"
+      // entry finds it via direct match or suffix-lookup and merges into one
+      // unrelated mega-group.
+      if (enAfterColon && _GENERIC_BASES.has(enAfterColon)) enAfterColon = null;
+      if (roAfterColon && _GENERIC_BASES.has(roAfterColon)) roAfterColon = null;
 
       // Check if any key already has a group
       canon = keyMap.get(enKey)
@@ -3602,8 +3686,12 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     // franchise view by title made #1 become whichever franchise was
     // alphabetically first — confusing to anyone tracking their ELO ranks.
     const displayRank = (group.eloRank ?? rank) + 1;
+    // v1.0.167 — apply the same gold/silver/bronze styling that flat rank
+    // cards use. Top-3 franchises (by ELO rank, not sort position) should
+    // stand out in franchise mode just like they do in flat-list mode.
+    const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
     card.innerHTML = `
-      <span class="rank-number">#${displayRank}</span>
+      <span class="rank-number ${numClass}">#${displayRank}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
       <img src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
@@ -15496,10 +15584,231 @@ function openNotifCentre() {
   _ncUpdateBell();
   _ncRenderList();
   byId(IDS.notifCentreModal)?.classList.add('open');
+  // v1.0.168 — refresh the phone-push settings UI so the toggle reflects
+  // the current Notification.permission state every time the modal opens
+  // (the user may have changed it in browser settings since last open).
+  if (typeof _pushRefreshUI === 'function') _pushRefreshUI();
 }
 
 function closeNotifCentre() {
   byId(IDS.notifCentreModal)?.classList.remove('open');
+}
+
+// ── Phone push notifications (Phase 0 plumbing) ─────────────────────────────
+// v1.0.168 — opt-in master toggle + per-category checkboxes inside the
+// notification centre. Subscribes the browser's PushSubscription with the
+// VAPID public key from the meta tag, posts it to /api/push-register along
+// with the user's AniList / MAL auth token. The server stores it in the
+// "kessen-push" blob keyed by the verified userId. Used later by Watch
+// Together invite / Live Challenge invite / Tower retry triggers.
+//
+// Push is OFF by default. Browser permission isn't asked until the user
+// explicitly flips the master toggle — single-shot prompts are punishing
+// when declined, so we keep it deliberate.
+
+const PUSH_API = {
+  register:   '/.netlify/functions/push-register',
+  unregister: '/.netlify/functions/push-unregister',
+};
+
+const PUSH_DEFAULT_CATEGORIES = Object.freeze({
+  towerRetry:    true,
+  watchTogether: true,
+  liveChallenge: true,
+});
+
+function _pushIsSupported() {
+  return typeof window !== 'undefined'
+      && 'serviceWorker' in navigator
+      && 'PushManager' in window
+      && 'Notification' in window;
+}
+
+function _pushVapidKey() {
+  return document.querySelector('meta[name="vapid-public-key"]')?.content?.trim() || '';
+}
+
+function _pushLoadLocal() {
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.ui.push);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      enabled:    !!parsed.enabled,
+      categories: { ...PUSH_DEFAULT_CATEGORIES, ...(parsed.categories || {}) },
+      endpoint:   parsed.endpoint || null,
+      syncedAt:   parsed.syncedAt || 0,
+    };
+  } catch { return null; }
+}
+
+function _pushSaveLocal(state) {
+  try { localStorage.setItem(KESSEN_KEYS.ui.push, JSON.stringify(state)); } catch { /* quota */ }
+}
+
+// Base64url → Uint8Array conversion for the applicationServerKey.
+function _pushB64ToUint8(b64) {
+  const padding = '='.repeat((4 - b64.length % 4) % 4);
+  const base64  = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw     = atob(base64);
+  const out     = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// Pull whichever auth token applies. Mirrors the pattern used by save-session.
+function _pushAuthTokens() {
+  return {
+    token:    localStorage.getItem(KESSEN_KEYS.auth.anilist) || null,
+    malToken: localStorage.getItem(KESSEN_KEYS.auth.mal)     || null,
+  };
+}
+
+async function _pushRegisterServer(subscription, categories) {
+  const auth = _pushAuthTokens();
+  if (!auth.token && !auth.malToken) {
+    throw new Error('You need to be signed in (AniList or MAL) to enable push notifications.');
+  }
+  const res = await fetch(PUSH_API.register, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...auth,
+      subscription: subscription.toJSON(),
+      categories,
+      ua: navigator.userAgent.slice(0, 200),
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Network error' }));
+    throw new Error(err.error || `Register failed (${res.status})`);
+  }
+  return res.json();
+}
+
+async function _pushUnregisterServer(endpoint) {
+  const auth = _pushAuthTokens();
+  if (!auth.token && !auth.malToken) return; // silent — nothing to unregister
+  await fetch(PUSH_API.unregister, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...auth, endpoint }),
+  }).catch(() => { /* best-effort */ });
+}
+
+async function togglePushMaster(checked) {
+  const blurb = byId(IDS.ncPushBlurb);
+  if (!_pushIsSupported()) {
+    if (blurb) blurb.textContent = 'Your browser doesn’t support push notifications.';
+    return;
+  }
+  if (!_pushVapidKey()) {
+    if (blurb) blurb.textContent = 'Push notifications aren’t configured on the server yet — coming soon.';
+    _pushRefreshUI();
+    return;
+  }
+
+  try {
+    if (checked) {
+      // Request permission. This is a single-shot prompt — if the user
+      // already declined, it returns "denied" without re-prompting.
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        toast(perm === 'denied'
+          ? 'Notifications were blocked. Unblock them in your browser settings to enable.'
+          : 'Notifications permission not granted.', 'warn');
+        _pushRefreshUI();
+        return;
+      }
+
+      // Subscribe with our VAPID public key.
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _pushB64ToUint8(_pushVapidKey()),
+      });
+
+      const local = _pushLoadLocal() || { categories: PUSH_DEFAULT_CATEGORIES };
+      const result = await _pushRegisterServer(sub, local.categories);
+      _pushSaveLocal({
+        enabled:    true,
+        categories: result.categories || local.categories,
+        endpoint:   sub.endpoint,
+        syncedAt:   Date.now(),
+      });
+      toast('Phone notifications enabled.', 'ok');
+    } else {
+      // Unsubscribe locally + tell the server.
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      const endpoint = sub?.endpoint || _pushLoadLocal()?.endpoint;
+      if (sub) await sub.unsubscribe().catch(() => {});
+      await _pushUnregisterServer(endpoint);
+      const prev = _pushLoadLocal();
+      _pushSaveLocal({
+        enabled:    false,
+        categories: prev?.categories || PUSH_DEFAULT_CATEGORIES,
+        endpoint:   null,
+        syncedAt:   Date.now(),
+      });
+      toast('Phone notifications disabled.', 'ok');
+    }
+  } catch (e) {
+    toast(e.message || 'Push setup failed.', 'err');
+  }
+  _pushRefreshUI();
+}
+
+async function setPushCategory(name, checked) {
+  const local = _pushLoadLocal() || { enabled: false, categories: { ...PUSH_DEFAULT_CATEGORIES }, endpoint: null };
+  local.categories = { ...local.categories, [name]: !!checked };
+  _pushSaveLocal(local);
+  // Push to server if currently registered. If not, the next master-toggle
+  // enable will pick up the new categories from local state.
+  if (local.enabled) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) await _pushRegisterServer(sub, local.categories);
+    } catch { /* best-effort; the toggle reverts on next refresh */ }
+  }
+}
+
+function _pushRefreshUI() {
+  const section  = byId(IDS.ncPushSection);
+  const masterEl = byId(IDS.ncPushMaster);
+  const cats     = byId(IDS.ncPushCategories);
+  const blurb    = byId(IDS.ncPushBlurb);
+  if (!section || !masterEl || !cats || !blurb) return;
+
+  const supported = _pushIsSupported();
+  const vapid     = _pushVapidKey();
+  const perm      = supported ? Notification.permission : 'unsupported';
+  const local     = _pushLoadLocal();
+  const enabled   = !!local?.enabled && perm === 'granted';
+
+  // Section availability state
+  section.classList.toggle('is-unavailable', !supported || !vapid || perm === 'denied');
+
+  // Master toggle
+  masterEl.checked  = enabled;
+  masterEl.disabled = !supported || !vapid || perm === 'denied';
+
+  // Categories visible only when master is on
+  cats.classList.toggle('show', enabled);
+  if (enabled && local?.categories) {
+    byId(IDS.ncPushCatTower).checked = !!local.categories.towerRetry;
+    byId(IDS.ncPushCatWt   ).checked = !!local.categories.watchTogether;
+    byId(IDS.ncPushCatLc   ).checked = !!local.categories.liveChallenge;
+  }
+
+  // Blurb explains current state
+  if      (!supported)         blurb.textContent = 'Your browser doesn’t support push notifications.';
+  else if (!vapid)             blurb.textContent = 'Push notifications aren’t configured on the server yet — coming soon.';
+  else if (perm === 'denied')  blurb.textContent = 'Notifications are blocked in your browser. Unblock them in your browser settings to enable.';
+  else if (enabled)            blurb.textContent = 'You’ll get pushed to this device for the categories below.';
+  else                         blurb.textContent = 'Get pushed to your phone when shows are ready for the Tower or someone invites you to Watch Together.';
 }
 
 function ncDismiss(id) {

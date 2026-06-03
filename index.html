@@ -12,7 +12,12 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.167" />
+  <meta name="version" content="1.0.168" />
+  <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
+       the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
+       leaves the server. If empty, the in-app Settings → Notifications toggle stays
+       disabled with a "configuration pending" note. -->
+  <meta name="vapid-public-key" content="BFckV37pvTPNqq3q_bigQ6VuSe9neoGB3w0dY-zNHAc7gXaI8A0iCrN4p2WRSyOSdGUXsS7rsdqc4Dn2Xhi_HKA" />
 
   <!-- Open Graph (Facebook, Discord, iMessage, LinkedIn, WhatsApp, etc.) -->
   <meta property="og:type" content="website" />
@@ -1726,6 +1731,27 @@
       </div>
     </div>
     <div id="notif-centre-list" class="nc-list"></div>
+    <!-- v1.0.168 — Phone push notifications (Phase 0 plumbing).
+         Master toggle fires the browser's permission prompt + registers a
+         PushSubscription with the server. Category toggles control which
+         events generate a push (Tower retry / Watch Together / Live Challenge).
+         When the master toggle is off OR the browser blocked permissions, the
+         category checkboxes are hidden. The blurb auto-updates based on
+         current state: "off", "blocked by browser", "Notifications not
+         supported", "Enabled on this device". -->
+    <div id="nc-push-section" class="nc-push-section">
+      <h4 class="nc-push-title">Phone push notifications</h4>
+      <p class="nc-push-blurb" id="nc-push-blurb"></p>
+      <label class="nc-push-master">
+        <input type="checkbox" id="nc-push-master" onchange="togglePushMaster(this.checked)" />
+        <span>Enable on this device</span>
+      </label>
+      <div id="nc-push-categories" class="nc-push-categories">
+        <label><input type="checkbox" id="nc-push-cat-tower" onchange="setPushCategory('towerRetry', this.checked)" /> <span>Tower retry prompts</span></label>
+        <label><input type="checkbox" id="nc-push-cat-wt"    onchange="setPushCategory('watchTogether', this.checked)" /> <span>Watch Together invites</span></label>
+        <label><input type="checkbox" id="nc-push-cat-lc"    onchange="setPushCategory('liveChallenge', this.checked)" /> <span>Live Challenge invites</span></label>
+      </div>
+    </div>
   </div>
 </div>
 
