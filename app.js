@@ -2981,6 +2981,13 @@ const FRANCHISE_ALIASES = Object.freeze([
   // "Zeonic Toyota Special Movie" are Gundam-affiliated even when the title
   // doesn't contain the word "Gundam".
   { pattern: /\bzeonic\b/i,           canon: 'Gundam' },
+  // v1.0.197 — Mobile Suit Gakuen — SD Gundam school-parody short series
+  // about Gundam: G no Reconguista. AniList explicitly classifies both
+  // entries with PARENT relations pointing to G-Reco TV and the G-Reco
+  // films. The titles don't contain "Gundam" so the brand alias above
+  // doesn't catch them. Use a targeted alias since "Mobile Suit Gakuen"
+  // is a distinctive enough phrase that no non-Gundam anime uses it.
+  { pattern: /^mobile\s+suit\s+gakuen\b/i, canon: 'Gundam' },
   // .hack// — distinctive prefix shared by Sign, Roots, G.U., G.U. Returner,
   // Quantum, Versus, Liminality, The Movie, etc. Different sub-series use
   // different casts so AniList relations only partially link them.
@@ -3007,7 +3014,14 @@ const FRANCHISE_ALIASES = Object.freeze([
   // v1.0.167 — extended to also match "Lupin the 3rd" / "Lupin the Third" /
   // "Lupin the IIIrd" forms. The previous pattern split "Lupin III: ..." (which
   // matched) from "Lupin the 3rd ..." (which didn't) into separate franchises.
-  { pattern: /^lupin\s+(?:iii|3rd|3|the\s+(?:iii|iiird|third|3rd|3))\b/i, canon: 'Lupin III' },
+  // v1.0.185 — broadened to plain ^lupin\b so it also catches the stylised
+  // "LUPIN THE THIIIRRRD" spinoff (variable I/R count), the "Lupin ZERO"
+  // 2022 prequel, the "Lupin 8-sei" 2024 sequel about Lupin's grandson,
+  // and the Mandarin-romanised "Lupin Shanshei Pilot". Every "Lupin" anime
+  // is part of the Monkey Punch / Maurice Leblanc shared universe, so the
+  // broad match has no realistic false-positive surface. Word-boundary
+  // still keeps "Lupinranger" (Super Sentai tokusatsu) out.
+  { pattern: /^lupin\b/i,              canon: 'Lupin III' },
   // Slayers — Next, Try, Premium, Revolution, Evolution-R, NEXT Movie,
   // Great. None of Next/Try are in the spinoff strip list and "slayers"
   // is 7 chars so prefix-match would have needed loosening.
@@ -3023,6 +3037,12 @@ const FRANCHISE_ALIASES = Object.freeze([
   // iDOLM@STER — Cinderella Girls, Million Live, SideM, Shiny Colors, Xenoglossia.
   // Multiple capitalisation conventions in the wild; the brand uses @ or A.
   { pattern: /^(?:the\s+)?idolm[a@]ster\b/i, canon: 'The iDOLM@STER' },
+  // v1.0.192 — Cinderella Girls is an iDOLM@STER sub-brand but some AniList
+  // entries omit the "iDOLM@STER" prefix entirely ("Cinderella Girls Gekijou
+  // CLIMAX SEASON", "Cinderella Girls Theater"). "Cinderella Girls" is a
+  // distinctive enough phrase to alias safely — no non-iDOLM@STER anime
+  // uses it as a title prefix.
+  { pattern: /^cinderella\s+girls\b/i,      canon: 'The iDOLM@STER' },
   // Detective Conan — long-running umbrella with English ("Case Closed"),
   // Japanese ("Meitantei Conan", "Detective Conan"). The conan films share
   // none of the same prefix structures so an explicit alias collapses the lot.
@@ -3077,6 +3097,227 @@ const FRANCHISE_ALIASES = Object.freeze([
   // PREFIX_MIN exactly) but the crossover entries don't have AniList
   // relations linking back to the main franchise.
   { pattern: /^doraemon\b/i,          canon: 'Doraemon' },
+  // Fate / Type-Moon shared universe — stay night (Fate route, Unlimited
+  // Blade Works movie + TV, Heaven's Feel trilogy), Zero, Apocrypha, Grand
+  // Order, Extra, strange Fake, kaleid liner Prisma Illya, etc. Each
+  // sub-series has a completely different cast and Holy Grail War, so the
+  // AniList relations graph doesn't bridge them. All titles share the
+  // distinctive "Fate/" or "Fate " prefix. Character class allows both the
+  // slash form ("Fate/Zero") and the space form ("Fate Grand Order English
+  // localisation") which AniList lists for some entries.
+  { pattern: /^fate[\s\/]/i,           canon: 'Fate' },
+  // Lord El-Melloi II's Case Files — Fate spin-off, but the title doesn't
+  // start with "Fate" so the umbrella above misses it. Routed to the same
+  // canon so it groups with the rest of the Fate works.
+  { pattern: /^(?:the\s+)?(?:case\s+files\s+of\s+)?lord\s+el-melloi/i, canon: 'Fate' },
+  // KONOSUBA — main series (God's blessing on this wonderful world) +
+  // Explosion on This Wonderful World (Megumin prequel spin-off). They
+  // share the "KONOSUBA" brand prefix but the dash-subtitle format
+  // ("KONOSUBA -Subtitle!") breaks the paired-dash strip regex, so they
+  // don't auto-bridge via title-pattern. Stem "konosuba" is 8 chars (at
+  // PREFIX_MIN exactly).
+  { pattern: /^konosuba\b/i,           canon: 'KONOSUBA' },
+  // Nisekoi — first season is "Nisekoi", second season is "Nisekoi:" with
+  // a trailing colon that has nothing after it. The colon-strip in
+  // _franchiseBaseName requires whitespace + content AFTER the colon, so
+  // the trailing-colon variant becomes its own key and splits off. Alias
+  // normalises them.
+  { pattern: /^nisekoi\b/i,            canon: 'Nisekoi' },
+
+  // ───────────── v1.0.182 — Audit pass 4 batch (13 aliases) ─────────────
+  // Each entry below was flagged by franchise-audit.js as a legitimate
+  // umbrella split (not a false-positive shared category word). False
+  // positives from the same audit run — black, dragon, tales, samurai,
+  // golden, high school, tokyo (Revengers vs Godfathers), super — were
+  // intentionally not added: their groups are genuinely distinct IPs.
+
+  // Bleach — main TV (2004, 2022 Thousand-Year Blood War cours), Colorful
+  // Gotei-13 special, 20th anniversary trailer. AniList uses inconsistent
+  // caps ("BLEACH" vs "Bleach"). Stem 6 chars, below PREFIX_MIN.
+  { pattern: /^bleach\b/i,             canon: 'Bleach' },
+
+  // Persona — P3 the Movie tetralogy, P4 the Animation, P4 the Golden
+  // ANIMATION (no space between "Persona" and "4"), P5 the Animation -the
+  // Day Breakers-, Trinity Soul. Different casts per game so AniList
+  // relations don't bridge them. Stem 7 chars, below PREFIX_MIN. Pattern
+  // accepts either a word boundary or an immediate digit so "Persona4 the
+  // Golden ANIMATION" matches the same as "Persona 4 the Animation".
+  { pattern: /^persona(?:\b|\d)/i,     canon: 'Persona' },
+
+  // Re:ZERO — main "Starting Life in Another World" (Season 1/2/3 + films)
+  // plus the "Starting Break Time From Zero" chibi shorts (RU: "Kyuukei
+  // Jikan"). The colon and tilde-delimited subtitles produce different
+  // base names. AniList sometimes lists Break Time as separate root.
+  { pattern: /^re:?\s*zero\b/i,        canon: 'Re:ZERO' },
+
+  // Date A Live family — main TV series + Date A Bullet (Kurumi-focused
+  // film duology). Shared cast and continuity but franchise-name
+  // splitting means they group separately.
+  { pattern: /^date\s+a\s+/i,          canon: 'Date A Live' },
+
+  // Tokyo Ghoul — "Tokyo Ghoul", "Tokyo Ghoul √A", "Tokyo Ghoul:re" (the
+  // sequel that uses a trailing-colon variant). Other "Tokyo *" titles
+  // (Revengers, 24th Ward, Godfathers) are unrelated and not caught by
+  // this pattern since it requires the second token "ghoul".
+  { pattern: /^tokyo\s+ghoul/i,        canon: 'Tokyo Ghoul' },
+
+  // Haikyu!! — main TV/films plus "HAIKYU!! LAND VS. AIR" OVA event. The
+  // double "!!" is part of the brand but isn't always present. The
+  // exclamation/event-title structure causes splits.
+  { pattern: /^haikyu/i,               canon: 'Haikyu!!' },
+
+  // Natsume's Book of Friends ↔ Natsume Yuujinchou — Lewis's library uses
+  // the English title for the main series but a "Natsume Yuujinchou ×
+  // Kumamoto-ken" tourism collab special slips through under the JP
+  // title. Map both spellings (and the rare apostrophe variants AniList
+  // sometimes serves) to the English canon.
+  { pattern: /^natsume(?:['’]?s\s+book\s+of\s+friends|\s+yuujinchou)/i,
+                                       canon: "Natsume's Book of Friends" },
+
+  // When They Cry / Higurashi no Naku Koro ni — same EN↔JP split. Covers
+  // the side-story OVAs "Kaku: Outbreak" and "Kira" which AniList lists
+  // under the Japanese title only. Umineko stays separate (different
+  // cast, different setting, even though it's a When-They-Cry-branded
+  // Ryukishi07 work — Lewis hasn't asked to bridge them and they share
+  // no AniList relations).
+  { pattern: /^(?:when\s+they\s+cry|higurashi\s+no\s+naku\s+koro)/i,
+                                       canon: 'When They Cry' },
+
+  // Sword Art Online — main series + Sword Art OFFline (chibi comedy
+  // shorts officially bundled with SAO BD releases). The "OFF" variant
+  // shares almost no title-pattern with main SAO entries.
+  { pattern: /^sword\s+art\s+(?:online|offline)/i, canon: 'Sword Art Online' },
+
+  // A Certain (Toaru) franchise — Magical Index, Scientific Railgun,
+  // Scientific Accelerator, plus the films and OVAs. Spin-offs share no
+  // AniList relations chain. Pattern covers both the English-title
+  // ("A Certain Magical/Scientific X") and Japanese-title ("Toaru
+  // Majutsu/Kagaku no X") forms.
+  { pattern: /^(?:a\s+certain\s+(?:magical|scientific)|toaru\s+(?:majutsu|kagaku))\b/i,
+                                       canon: 'A Certain Magical Index' },
+
+  // Naruto — main TV / Shippuden / films are bridged via title-pattern,
+  // but "NARUTO Spin-Off: Rock Lee & His Ninja Pals" uses the all-caps
+  // brand + colon subtitle and splits off. Boruto stays separate (no
+  // common prefix with "Naruto" so it can't false-match).
+  { pattern: /^naruto\b/i,             canon: 'Naruto' },
+
+  // Fairy Tail — main series, films, OVAs + "FAIRY TAIL × RAVE" Mashima
+  // crossover. "Fairy gone" is unrelated and excluded by the two-token
+  // requirement.
+  { pattern: /^fairy\s+tail\b/i,       canon: 'Fairy Tail' },
+
+  // Evangelion — original TV, End of Evangelion, the four Rebuild films
+  // (1.0/2.0/3.0/3.0+1.0), and the short "EVANGELION:3.0 (-46h)"
+  // prologue. The colon-and-version-number titles fragment under the
+  // existing base-name logic.
+  { pattern: /^(?:neon\s+genesis\s+)?evangelion/i, canon: 'Neon Genesis Evangelion' },
+
+  // v1.0.196 — ARIA water-bus franchise — Sato Junichi's slice-of-life set on
+  // a terraformed Mars in Venice. Entries are titled "ARIA The ANIMATION"
+  // (S1), "ARIA The NATURAL" (S2), "ARIA The ORIGINATION" (S3), "ARIA The
+  // OVA ~ARIETTA~", "ARIA The AVVENIRE", "ARIA The CREPUSCOLO", "ARIA The
+  // BENEDIZIONE" + Picture Drama specials. CASE-SENSITIVE pattern: matches
+  // the all-caps "ARIA" brand only, deliberately NOT catching "Aria the
+  // Scarlet Ammo" (Hidan no Aria, a completely unrelated gun-girls anime
+  // that shares the lowercase "Aria the" prefix). The water-bus uses ALL
+  // CAPS ARIA exclusively in AniList; Scarlet Ammo uses proper case "Aria".
+  { pattern: /^ARIA\b/,                canon: 'ARIA' },
+
+  // v1.0.195 — Art of Fighting (Ryuuko no Ken) 1995 OVA. AniList stores
+  // its romaji title as "Battle Spirits: Ryuuko no Ken" because SNK
+  // marketed it under their early-2000s "Battle Spirits" arcade-board
+  // line. That romaji's colon-strip reduces to "Battle Spirits" — same
+  // key as Bandai's unrelated 2008+ Battle Spirits TCG franchise — and
+  // the entry would bridge into that group via roKey direct match. This
+  // alias fires before any strip so both enKey and roKey for this entry
+  // resolve to 'Art of Fighting' canon, leaving Bandai's Battle Spirits
+  // entries untouched. Only matches the specific "Ryuuko no Ken" suffix
+  // so other "Battle Spirits: X" titles stay in their proper franchise.
+  { pattern: /^battle\s+spirits:\s*ryuuko\s+no\s+ken/i, canon: 'Art of Fighting' },
+
+  // v1.0.193 — Initial D — long-running street-racing series with very
+  // inconsistent sub-title formats: "1st Stage" / "Second Stage" /
+  // "Third Stage" / "Fourth Stage" / "Fifth Stage" / "Final Stage" /
+  // "Extra Stage" (1 + 2) / "Battle Stage" (1 + 2) / "Legend" films.
+  // No common stem beyond "Initial D" itself (9 chars, above PREFIX_MIN
+  // but the "Stage" suffix variations defeat title-pattern bridging
+  // because each stage entry's title isn't a prefix of the others).
+  { pattern: /^initial\s+d\b/i,        canon: 'Initial D' },
+
+  // v1.0.193 — Duel Masters — TCG tie-in series. Original "Duel Masters"
+  // and the reboot "Duel Masters!" / "Duel Masters!!" use trailing
+  // exclamation marks as the only differentiator. _franchiseBaseName
+  // normalises "!+$" → "!" so "Duel Masters!" and "Duel Masters!!"
+  // bridge to each other, but the original (no exclamation) still
+  // splits. Alias collapses both variants.
+  { pattern: /^duel\s+masters!?\b/i,   canon: 'Duel Masters' },
+
+  // v1.0.190 — Magical Girl Lyrical Nanoha umbrella, covering the main TV
+  // series (S1, A's, StrikerS, ViVid), the three movies (1st, 2nd A's,
+  // Reflection/Detonation), the picture-drama specials, and the ViVid
+  // Strike! spin-off (TV + OVA — same universe, set two years after
+  // ViVid, AniList relations link them as side-story/sequel). Pre-v1.0.189
+  // ViVid Strike! bridged into the main franchise via an after-colon
+  // SUFFIX match; the architectural fix correctly removed that mechanism,
+  // and this explicit alias restores the legitimate grouping. EN and JP
+  // romaji ("Mahou Shoujo Lyrical Nanoha") both covered.
+  { pattern: /^(?:magical\s+girl\s+|mahou\s+shoujo\s+)?lyrical\s+nanoha\b|^vivid\s+strike\b/i,
+                                       canon: 'Magical Girl Lyrical Nanoha' },
+
+  // ───────────── v1.0.183 — Audit pass 5 batch (5 aliases) ─────────────
+
+  // Rascal Does Not Dream (Seishun Buta Yarou) — TV "Bunny Girl Senpai"
+  // plus the film sequence: "a Dreaming Girl", "a Sister Venturing Out",
+  // "a Knapsack Kid", "Santa Claus". Every film is structured as
+  // "Rascal Does Not Dream of <noun phrase>" so the trailing noun varies
+  // wildly and title-pattern can't bridge them. The Japanese-title form
+  // ("Seishun Buta Yarou wa ...") gets the same canon for users who
+  // import via the JP track.
+  { pattern: /^rascal\s+does\s+not\s+dream/i, canon: 'Rascal Does Not Dream of Bunny Girl Senpai' },
+  { pattern: /^seishun\s+buta\s+yarou/i,      canon: 'Rascal Does Not Dream of Bunny Girl Senpai' },
+
+  // Kamisama Kiss — main "Kamisama Kiss" (S1) and "Kamisama Kiss◎" (S2).
+  // The ◎ symbol survives _franchiseKey normalisation and forks the two
+  // seasons. Also covers the Japanese title "Kamisama Hajimemashita" and
+  // its specials ("Kamisama, Shiawase ni Naru").
+  { pattern: /^kamisama\s+(?:kiss|hajimemashita)/i, canon: 'Kamisama Kiss' },
+
+  // Himouto! Umaru-chan — TV + "R" (S2) + OVA bridge fine, but
+  // "Himouto! Umaru-chanS" (an OVA bundle title with no space before the
+  // "S") forks out because the stem "himouto umaru chans" diverges from
+  // "himouto umaru chan" after 16 chars — within prefix-match range but
+  // suffix-lookup sees the trailing "S" as a distinct token.
+  { pattern: /^himouto!?\s+umaru/i,           canon: 'Himouto! Umaru-chan' },
+
+  // Miss Kobayashi's Dragon Maid — main TV (S1/S2 = Miss Kobayashi's
+  // Dragon Maid / Dragon Maid S) plus the special "Dragon Something"
+  // OVA. JP title "Kobayashi-san Chi no Maid Dragon" routes to the same
+  // canon.
+  { pattern: /^miss\s+kobayashi['’]?s?\s+dragon/i, canon: "Miss Kobayashi's Dragon Maid" },
+  { pattern: /^kobayashi-san\s+chi\s+no\s+maid/i,  canon: "Miss Kobayashi's Dragon Maid" },
+
+  // Tamako — "Tamako Market" (TV) + "Tamako -love story-" (sequel film
+  // using the dash-subtitle convention). No common 2nd-token between
+  // them, so title-pattern can't bridge.
+  { pattern: /^tamako\b/i,                    canon: 'Tamako Market' },
+
+  // ───────────── v1.0.184 — Audit pass 6 batch (2 aliases) ─────────────
+
+  // Major — long-running baseball franchise. AniList loads each season
+  // as its own entry titled literally "Major S1" through "Major S6",
+  // plus the specials "Major: Yuujou no Ikkyuu" and "Major: World
+  // Series". No shared title token beyond "Major" itself (stem 5 chars,
+  // well below PREFIX_MIN). The "Major 2nd" sequel (about Goro's son)
+  // also lands here, which is correct — same universe.
+  { pattern: /^major\b/i,                     canon: 'Major' },
+
+  // We Never Learn / BOKUBEN — S1 uses "We Never Learn: BOKUBEN" but S2
+  // uses "We Never Learn!: BOKUBEN Season 2" (added exclamation), and
+  // the JP title is "Bokutachi wa Benkyou ga Dekinai". Three different
+  // shapes that don't bridge naturally.
+  { pattern: /^we\s+never\s+learn/i,          canon: 'We Never Learn' },
+  { pattern: /^bokutachi\s+wa\s+benkyou/i,    canon: 'We Never Learn' },
 ]);
 
 function _franchiseAlias(title) {
@@ -3132,6 +3373,62 @@ const _GENERIC_BASES = new Set([
   // chained into one franchise named after Ping Pong.
   'the animation', 'the movie', 'the movies', 'the series',
   'the special', 'the specials', 'specials',
+  // v1.0.186 — Bandai's "Tales of" anthology brand. AniList's romaji title
+  // for the Tales of games uses the form "Tales of: Crestoria - Tougen no
+  // Senshi" (colon right after "of"), so the colon-strip in
+  // _franchiseBaseName reduces them to exactly "Tales of" — 8 chars,
+  // exactly at PREFIX_MIN. Once registered as a roKey, suffix-lookup then
+  // bridged every "Tales of X" entry via key.startsWith("tales of ") and
+  // pulled in adjacent franchises like Little Women / Ai no Wakakusa
+  // Monogatari ("Tales of Little Women" is the EN title for the 1987 WMT
+  // series — its enKey "tales of little women" was the canonical match
+  // target). Observed: 11 unrelated anime (4× Little Women WMT + 3× Yao
+  // Shen Ji + 2× Tales of the Rays + Crestoria + Homeroom) chained into
+  // a single mega-group named after the most popular member.
+  'tales of',
+  // v1.0.193 — Generic isekai title phrase that appears as the EN-title
+  // SUFFIX of dozens of unrelated anime ("Drug Store in Another World",
+  // "Restaurant to Another World", "Skeleton Knight in Another World",
+  // "Farming Life in Another World", etc.). The 2022 idol anime literally
+  // titled "Another World" registers "another world" as a 13-char main
+  // enKey, then every other "X in/from/to Another World" entry suffix-
+  // matches it via key.endsWith(" another world"), chaining all of them
+  // into one mega-group. Blacklisting keeps "Another World" the entry as
+  // its own group and prevents the suffix bridge.
+  'another world',
+  // v1.0.194 — Japanese word meaning "end of the Edo period" (幕末). Used
+  // as a setting marker in many unrelated samurai-era anime: "BAKUMATSU"
+  // (2018 Toei), "Bakumatsu Rock" (2014 Studio Deen), "Bakumatsu
+  // Gijinden Roman" (1986), "Bakumatsu Kikansetsu Irohanihoheto" (2006),
+  // etc. The 2018 standalone-titled "BAKUMATSU" registers "bakumatsu"
+  // (9 chars) as a main enKey; every other "Bakumatsu X" / "X Bakumatsu"
+  // entry then PREFIX-matches it via key.startsWith("bakumatsu ") since
+  // Math.min(key_len, 9) ≥ PREFIX_MIN(8). Same architectural shape as
+  // the "Another World" bug — short common word as MAIN enKey hub.
+  'bakumatsu',
+  // v1.0.187 — Generic single-word subtitle commonly used across unrelated
+  // franchises ("Afro Samurai: Resurrection", "Princess Resurrection",
+  // "Ninja Resurrection", "Ghost in the Shell: Stand Alone Complex - The
+  // Laughing Man → Resurrection"). When _AFTER_COLON_MIN=10 admits
+  // "resurrection" (12 chars) as an after-colon key, suffix-lookup then
+  // bridges every "X Resurrection" title via key.endsWith(" resurrection"),
+  // chaining unrelated works into a single mega-group. Same architectural
+  // shape as the "tales of" bug above. Blacklisting is the targeted fix;
+  // a broader structural fix (e.g., not indexing after-colon keys for
+  // suffix lookup) is tracked separately.
+  'resurrection',
+  // v1.0.188 — "X: The Motion Picture" is a 1980s–90s film-release
+  // convention. Many unrelated franchises use it ("Clannad: The Motion
+  // Picture", "Fatal Fury: The Motion Picture", "Samurai Shodown The
+  // Motion Picture", "Legend of Crystania: The Motion Picture", "Bubblegum
+  // Crisis: Tokyo 2040 - The Motion Picture", etc.). Without blacklisting,
+  // the after-colon key "the motion picture" gets registered by the FIRST
+  // such title and every other one suffix-matches it, chaining unrelated
+  // franchises through Clannad / whichever happened to register first.
+  // Observed: 12 entries from 5 unrelated franchises (Clannad, Fatal Fury,
+  // Legend of Crystania, Samurai Shodown, Samurai Spirits) all merged
+  // under the Clannad canon.
+  'the motion picture', 'motion picture',
 ]);
 
 function _franchiseBaseName(title) {
@@ -3166,7 +3463,13 @@ function _franchiseBaseName(title) {
     // fuzzy-match any other "Golden ___" anime via the prefix suffix-lookup and
     // pull unrelated franchises together (originally surfaced as Golden Time being
     // dragged into the GOLDEN BOY group).
-    .replace(/^(.+?\s+.+?)\s+[A-Z]{2,}:\s+.*$/, '$1')
+    // v1.0.196 — additionally require the captured prefix to be ≥10 chars. The
+    // v1.0.129 check only required 2 word-tokens, which included stopwords like
+    // "The". Observed: "ARIA The ORIGINATION: That Little Secret Place..." matched
+    // and got stripped to "ARIA The" (8 chars), which then PREFIX-bridged every
+    // other "Aria the X" entry (water-bus ARIA seasons AND the unrelated "Aria
+    // the Scarlet Ammo"/Hidan no Aria) into one 9-member mega-group.
+    .replace(/^(.+?\s+.+?)\s+[A-Z]{2,}:\s+.*$/, (m, p1) => p1.length >= 10 ? p1 : m)
     // Strip everything from a subtitle-separator colon onwards.
     // v1.0.127 — requires whitespace AFTER the colon so titles like "Re:Zero"
     // (where the colon is part of the actual name, not a separator) aren't
@@ -3181,8 +3484,12 @@ function _franchiseBaseName(title) {
     .replace(/[!\s]+(Specials?|OVAs?|ONAs?|Recaps?|Extra|Encore)$/i, s => s.startsWith('!') ? '!' : '')
     // Normalise trailing ! count so "Show!" and "Show!!" match
     .replace(/!+$/, '!')
-    // Strip "The Movie" and anything after
-    .replace(/\s+(The\s+)?Movie\b.*/i, '')
+    // Strip "The Movie" / "The Motion Picture" and anything after.
+    // v1.0.188 — extended to also catch "Motion Picture" so titles like
+    // "Samurai Shodown The Motion Picture" (which has NO colon, so the
+    // colon-strip path can't help) reduce to "Samurai Shodown" and group
+    // with sibling "Samurai Spirits 2" via the romaji bridge.
+    .replace(/\s+(The\s+)?(Movie|Motion\s+Picture)\b.*/i, '')
     // Strip "Final Season/Part/Chapter" as a phrase first
     .replace(/\s+(Final|The\s+Final)\s+(Season|Part|Chapter|Arc|Cour).*$/i, '')
     // Strip season/part/cour markers with number
@@ -3269,7 +3576,7 @@ function _franchiseKey(title) {
 // can match — both prefix and suffix conditions require shared boundary
 // words by construction). Behaviour-preserving: same suffix-before-prefix
 // preference per candidate, same insertion-order iteration via Set semantics.
-function _franchiseSuffixLookup(key, keyMap, indexes) {
+function _franchiseSuffixLookup(key, keyMap, indexes, afterColonKeys) {
   if (!key || key.length < 6) return null;
   const SUFFIX_MIN = 10;
   const PREFIX_MIN = 8;
@@ -3301,15 +3608,40 @@ function _franchiseSuffixLookup(key, keyMap, indexes) {
     // it. Otherwise a single "X: The Animation" entry can chain dozens of
     // unrelated franchises through the suffix-match path.
     if (_GENERIC_BASES.has(existingKey)) continue;
+    // v1.0.189 — Architectural fix for the generic-after-colon bug class.
+    // If existingKey was registered from an "X: SubName" after-colon
+    // extraction, skip SUFFIX-direction matching entirely. The bug pattern
+    // is always: a short generic English noun (like "resurrection", "the
+    // motion picture", "tales of") becomes a 10+ char after-colon key,
+    // then a later entry whose title ends with that noun gets bridged via
+    // key.endsWith(' ' + existingKey). PREFIX-direction matches stay
+    // allowed — those bridge legitimate sub-arcs like "Sword Art Online:
+    // Alicization" ↔ "Alicization War of Underworld" via
+    // key.startsWith(existingKey + ' '). Direct keyMap lookup is also
+    // unchanged, so the documented "SpinoffName: FranchiseName" case
+    // (Sword Oratoria → DanMachi parent) still works.
+    const isAfterColon = afterColonKeys && afterColonKeys.has(existingKey);
     // Suffix: "Evangelion" ↔ "Neon Genesis Evangelion"
-    if (Math.min(key.length, existingKey.length) >= SUFFIX_MIN) {
+    if (!isAfterColon && Math.min(key.length, existingKey.length) >= SUFFIX_MIN) {
       if (existingKey.endsWith(' ' + key) || key.endsWith(' ' + existingKey)) {
         return keyMap.get(existingKey);
       }
     }
     // Prefix: "Great Pretender" ↔ "Great Pretender razbliuto",
-    //        "Hellsing" ↔ "Hellsing Ultimate"
-    if (Math.min(key.length, existingKey.length) >= PREFIX_MIN) {
+    //        "Hellsing" ↔ "Hellsing Ultimate".
+    // Also legitimate for after-colon keys: "alicization" (from SAO main
+    // entry's after-colon) ↔ "alicization war of underworld" (a later
+    // bare-titled sub-arc).
+    // v1.0.193 — When existingKey is after-colon, raise the threshold to
+    // 10 chars on the shorter side. Catches the case where a short common
+    // word (8 chars) coincidentally appears as the FIRST word of an
+    // unrelated after-colon string: "Crayon Shin-chan: Mononoke Ninja
+    // Chinpuuden" registers "mononoke ninja chinpuuden" as after-colon,
+    // and the standalone "Mononoke" (8 chars, at old PREFIX_MIN) would
+    // PREFIX-match it via existingKey.startsWith(key + ' '). The legit
+    // SAO sub-arc bridge survives because "alicization" is 11 chars.
+    const prefixMin = isAfterColon ? 10 : PREFIX_MIN;
+    if (Math.min(key.length, existingKey.length) >= prefixMin) {
       if (key.startsWith(existingKey + ' ') || existingKey.startsWith(key + ' ')) {
         return keyMap.get(existingKey);
       }
@@ -3344,6 +3676,14 @@ function _isCrossoverTitle(title) {
   const left  = m[1].trim().toLowerCase();
   const right = m[2].trim().toLowerCase();
   if (!left || !right) return false;
+  // v1.0.197 — if the LEFT side contains a colon, treat as a within-franchise
+  // sub-title rather than a crossover. Real crossover titles structure as
+  // "FranchiseA vs FranchiseB", never as "Franchise: Subtitle vs Character".
+  // Observed: "Crayon Shin-chan: Action Mask vs. Leotard Devil" — both are
+  // Crayon Shin-chan in-universe characters, NOT separate franchises. Pre-fix
+  // this title was treated as a crossover, getting its own [1] group instead
+  // of joining the Shin Chan main franchise.
+  if (left.includes(':')) return false;
   return left !== right;
 }
 function _isCrossoverAnime(a) {
@@ -3374,6 +3714,11 @@ function _buildFranchiseGroups(sorted) {
   // v1.0.149 — indexes that mirror keyMap by first/last word so the suffix
   // lookup can skip 99% of unrelated keys.
   const indexes = _newFranchiseIndexes();
+  // v1.0.189 — Track which keys came from after-colon extraction. Passed
+  // to _franchiseSuffixLookup so it can skip SUFFIX-direction matches
+  // against generic after-colon nouns (the "resurrection" / "the motion
+  // picture" / "tales of" bug class).
+  const afterColonKeys = new Set();
 
   // Relations-graph component map (AniList SEQUEL/PREQUEL/SIDE_STORY/etc).
   // For anime that have relations data, this catches franchises where the
@@ -3459,13 +3804,25 @@ function _buildFranchiseGroups(sorted) {
       if (enAfterColon && _GENERIC_BASES.has(enAfterColon)) enAfterColon = null;
       if (roAfterColon && _GENERIC_BASES.has(roAfterColon)) roAfterColon = null;
 
-      // Check if any key already has a group
+      // Check if any key already has a group.
+      // v1.0.191 — Extends v1.0.189's architectural fix to direct lookup.
+      // When the new entry's enAfterColon (or roAfterColon) matches a key
+      // already in afterColonKeys, both sides are secondary keys — neither
+      // is anyone's primary franchise identifier. Bridging them merges
+      // unrelated franchises that just happen to share a generic
+      // subtitle word ("Alternative", "Reflection", "Resurrection", etc.).
+      // Observed: "Prince of Stride: Alternative" + "Detective Opera Milky
+      // Holmes: Alternative" both produced enAfterColon "alternative" and
+      // got fused into one 9-member group. The legitimate documented case
+      // — "Sword Oratoria: Is It Wrong…" finding standalone "Is It Wrong…"
+      // — still works because the standalone's "is it wrong…" is a MAIN
+      // enKey, not an after-colon key.
       canon = keyMap.get(enKey)
            || (useRoKey ? keyMap.get(roKey) : null)
-           || (enAfterColon && keyMap.get(enAfterColon))
-           || (roAfterColon && keyMap.get(roAfterColon))
-           || _franchiseSuffixLookup(enKey, keyMap, indexes)
-           || (useRoKey ? _franchiseSuffixLookup(roKey, keyMap, indexes) : null)
+           || (enAfterColon && !afterColonKeys.has(enAfterColon) && keyMap.get(enAfterColon))
+           || (roAfterColon && !afterColonKeys.has(roAfterColon) && keyMap.get(roAfterColon))
+           || _franchiseSuffixLookup(enKey, keyMap, indexes, afterColonKeys)
+           || (useRoKey ? _franchiseSuffixLookup(roKey, keyMap, indexes, afterColonKeys) : null)
            || enKey;
 
       // Register all key variants so future anime with any title variant find
@@ -3474,8 +3831,10 @@ function _buildFranchiseGroups(sorted) {
       keyMap.set(enKey, canon);
       _indexFranchiseKey(indexes, enKey);
       if (useRoKey) { keyMap.set(roKey, canon); _indexFranchiseKey(indexes, roKey); }
-      if (enAfterColon && enAfterColon !== enKey) { keyMap.set(enAfterColon, canon); _indexFranchiseKey(indexes, enAfterColon); }
-      if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) { keyMap.set(roAfterColon, canon); _indexFranchiseKey(indexes, roAfterColon); }
+      // v1.0.189 — after-colon keys are tracked in afterColonKeys so
+      // suffix-lookup can disallow SUFFIX-direction matches against them.
+      if (enAfterColon && enAfterColon !== enKey) { keyMap.set(enAfterColon, canon); _indexFranchiseKey(indexes, enAfterColon); afterColonKeys.add(enAfterColon); }
+      if (roAfterColon && roAfterColon !== roKey && roAfterColon !== enAfterColon) { keyMap.set(roAfterColon, canon); _indexFranchiseKey(indexes, roAfterColon); afterColonKeys.add(roAfterColon); }
     }
 
     if (!groups.has(canon)) {
