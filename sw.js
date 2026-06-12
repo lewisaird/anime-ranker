@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.198';
+const APP_VERSION  = '1.0.202';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -77,9 +77,18 @@ self.addEventListener('activate', event => {
 // v1.0.149 — Soft FIFO eviction for the cover cache. We don't have access
 // to real LRU metadata in the Cache API, so we use insertion order (which
 // matches "first downloaded" in our usage pattern — close enough to LRU
-// for cover images where re-render fetches the same URL). Runs after each
-// cover store; if we're over the cap, drop the oldest 10% in a batch.
+// for cover images where re-render fetches the same URL).
+//
+// v1.0.200 — trim is AMORTISED: cache.keys() enumerates the whole cache, and
+// running that after every single store made a burst of cover loads (season
+// grids, Watch Together nominations) queue dozens of full-index scans on
+// IndexedDB, contending with the cache.match() reads of covers still loading.
+// Now it runs once every TRIM_EVERY stores. Worst-case overshoot is
+// COVER_CACHE_MAX + TRIM_EVERY entries — negligible.
+const TRIM_EVERY = 25;
+let _coverPutCount = 0;
 async function _trimCoverCache(cache) {
+  if (++_coverPutCount % TRIM_EVERY !== 0) return;
   const keys = await cache.keys();
   if (keys.length <= COVER_CACHE_MAX) return;
   const removeCount = Math.ceil(COVER_CACHE_MAX * 0.1);
@@ -114,7 +123,15 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       const cache = await caches.open(COVER_CACHE);
       const cached = await cache.match(request);
-      const networkFetch = fetch(request)
+      // v1.0.200 — cache-first, NO background revalidate. Covers are
+      // immutable per AniList/MAL ID (same reason this cache is unversioned),
+      // so a hit is final: revalidating re-downloaded every cover on every
+      // render (the mobile-data waste this cache exists to prevent) and
+      // re-stored it, triggering the trim scan each time. A hit now costs
+      // zero network and zero cache writes. If a CDN ever does change a
+      // cover, FIFO eviction at the cap eventually refetches it.
+      if (cached) return cached;
+      const fresh = await fetch(request)
         .then(response => {
           if (response && response.status === 200 && response.type !== 'opaque') {
             cache.put(request, response.clone()).then(() => _trimCoverCache(cache));
@@ -122,12 +139,6 @@ self.addEventListener('fetch', event => {
           return response;
         })
         .catch(() => null);
-      // Stale-while-revalidate: return cached immediately, refresh in bg.
-      if (cached) {
-        event.waitUntil(networkFetch);
-        return cached;
-      }
-      const fresh = await networkFetch;
       return fresh || Response.error();
     })());
     return;

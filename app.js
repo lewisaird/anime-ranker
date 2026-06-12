@@ -471,6 +471,69 @@ function safeUrl(u) {
   return '';
 }
 
+// v1.0.199 — Emits ` crossorigin="anonymous"` for cover URLs on CDNs verified
+// to send Access-Control-Allow-Origin (s4/*.anilist.co reflects the origin;
+// cdn.myanimelist.net sends *). Without the attribute, <img> requests are
+// no-cors → the response is opaque → sw.js deliberately refuses to cache it
+// (Chrome pads opaque cache entries by ~7MB each for quota accounting), so
+// the kessen-covers-v1 cache never filled and every Rankings scroll re-hit
+// the CDN. With it, responses are type 'cors' and cache normally.
+// NOT emitted for unknown hosts (e.g. img.anili.st sends no ACAO header —
+// verified June 2026): a CORS-mode request there would fail outright and
+// blank the image, which is worse than an uncached one.
+function coverCors(u) {
+  try {
+    const h = new URL(String(u)).hostname;
+    if (h.endsWith('.anilist.co') || h === 'cdn.myanimelist.net') {
+      return ' crossorigin="anonymous"';
+    }
+  } catch { /* relative, empty or malformed URL — omit the attribute */ }
+  return '';
+}
+
+// v1.0.201 — Self-healing fallback for the crossorigin covers above.
+//
+// THE TRAP (verified live against s4.anilist.co): when a cover is requested
+// WITHOUT an Origin header, AniList's CDN replies with NO
+// Access-Control-Allow-Origin and NO `Vary: Origin`, cached for 31 days
+// (max-age=2678400). Every cover already in a user's HTTP cache from before
+// v1.0.199 is such a response. A `crossorigin="anonymous"` <img> for the
+// same URL gets that cached, header-less response back — and the CORS check
+// fails, blanking covers that loaded fine for months. Only long-cached
+// entries break, which is why it looks random per user.
+//
+// THE FIX: capture-phase error listener (error events don't bubble, but they
+// DO capture). First failure of a crossorigin cover → retry exactly once
+// without the attribute. The retry is a no-cors request, happily reuses the
+// same cached bytes, and renders. The SW skips caching the opaque retry, so
+// affected covers simply stay uncached until the stale HTTP-cache entry
+// expires — after which CORS (and SW caching) works organically.
+// stopImmediatePropagation() — NOT plain stopPropagation() — because the
+// app's pre-existing global error listener (bottom of this file) is ALSO a
+// capture listener on document, and stopPropagation doesn't stop listeners
+// on the SAME node. v1.0.201 used stopPropagation: the retry worked, but
+// that listener still tagged the img with .img-broken (opacity 0.3) and
+// nothing removed it — covers rendered greyed-out at 30%. This handler is
+// registered first (script order), so stopImmediatePropagation suppresses
+// the img-broken tag and the inline onerror= handlers for the FIRST failure
+// only; a genuine second failure propagates normally and all of those run
+// as before. The one-shot load listener also strips .img-broken in case any
+// other code path tagged the element before the retry settled.
+// The data-cors-retried guard makes loops impossible.
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.dataset.corsRetried || img.getAttribute('crossorigin') === null) return;
+  const src = img.getAttribute('src');
+  if (!src) return;
+  img.dataset.corsRetried = '1';
+  e.stopImmediatePropagation();
+  img.addEventListener('load', () => img.classList.remove('img-broken'), { once: true });
+  img.removeAttribute('crossorigin');
+  img.removeAttribute('src');
+  img.src = src;
+}, true);
+
 // ─── ANILIST AUTH ────────────────────────────────────────────────────────────
 let authToken = null;
 let authUser  = null; // { id, name, avatar }
@@ -1900,6 +1963,16 @@ function _startFirebaseSync() {
   if (typeof firebase === 'undefined') return; // SDK didn't load
   _initFirebase();
   if (!_firebaseApp) return;
+  // v1.0.199 — attach only once anonymous auth has settled. A listener
+  // attached pre-auth is permission-denied under the hardened rules and the
+  // SDK does NOT retro-authenticate it, so the error handler would detach it.
+  _ensureFirebaseAuth().then(() => _startFirebaseSyncAttach());
+}
+
+function _startFirebaseSyncAttach() {
+  // Re-check the guards — auth settling is async and state may have moved
+  // (user logged out, sync toggled off, app torn down).
+  if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser() || !_firebaseApp) return;
 
   const path = _getFirebaseSyncPath();
   if (!path) return;
@@ -2048,6 +2121,7 @@ async function _doCloudSave() {
         const path = _getFirebaseSyncPath();
         if (path) {
           _initFirebase();
+          await _ensureFirebaseAuth(); // hardened rules require auth for the ping write
           if (_firebaseApp) _firebaseApp.database().ref(path).set({
             savedAt:      session.savedAt,
             savedBy:      _deviceId,
@@ -2921,7 +2995,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   card.innerHTML = `
     <span class="rank-number ${numClass}">#${displayRank}</span>
     <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
-    <img src="${safeUrl(anime.cover)}" alt="${esc(displayTitle(anime))}" loading="lazy" />
+    <img${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="${esc(displayTitle(anime))}" loading="lazy" />
     <div class="rank-title">${esc(displayTitle(anime))}</div>
     ${epBadge}
     ${_statusBadge(anime.status)}
@@ -3663,7 +3737,7 @@ function _newFranchiseIndexes() {
 // sides which is stylisation, not a crossover, and shouldn't trip this.
 // "Queen's Blade Rebellion VS Hagure Yuusha no Estetica" has differing
 // sides, so it IS a crossover and gets its own canon.
-const _CROSSOVER_RE_FRANCHISE = /^(.+?)\s+(?:VS|vs|×|✕|✗)\.?\s+(.+)$/;
+const _CROSSOVER_RE_FRANCHISE = /^(.+?)\s+(VS|vs|×|✕|✗)\.?\s+(.+)$/;
 function _isCrossoverTitle(title) {
   if (!title) return false;
   // v1.0.150 — strip trailing parenthetical qualifiers ("(2011)", "(TV)",
@@ -3673,8 +3747,9 @@ function _isCrossoverTitle(title) {
   const cleaned = title.replace(/\s*\([^)]*\)\s*$/, '');
   const m = _CROSSOVER_RE_FRANCHISE.exec(cleaned);
   if (!m) return false;
-  const left  = m[1].trim().toLowerCase();
-  const right = m[2].trim().toLowerCase();
+  const left   = m[1].trim().toLowerCase();
+  const marker = m[2];
+  const right  = m[3].trim().toLowerCase();
   if (!left || !right) return false;
   // v1.0.197 — if the LEFT side contains a colon, treat as a within-franchise
   // sub-title rather than a crossover. Real crossover titles structure as
@@ -3683,7 +3758,13 @@ function _isCrossoverTitle(title) {
   // Crayon Shin-chan in-universe characters, NOT separate franchises. Pre-fix
   // this title was treated as a crossover, getting its own [1] group instead
   // of joining the Shin Chan main franchise.
-  if (left.includes(':')) return false;
+  //
+  // v1.0.199 — the colon guard applies ONLY to "vs"-style markers. × is an
+  // unambiguous crossover symbol, and real × crossovers often carry a colon
+  // inside one franchise's own name ("IS: Infinite Stratos × Sonico").
+  // Scoping the guard to vs keeps both observations true: in-universe
+  // "X vs Y" sub-titles stay grouped, × crossovers keep their own canon.
+  if (/^vs$/i.test(marker) && left.includes(':')) return false;
   return left !== right;
 }
 function _isCrossoverAnime(a) {
@@ -4020,7 +4101,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
           : '';
         return `
         <div class="franchise-member${fuzzyCls}" onclick="showAnimeDetail(${a.id})">
-          <img src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
+          <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
           <span class="franchise-member-title">${esc(a.titleEn || a.title)}${fuzzyPill}</span>
           <span class="franchise-member-elo">${a.elo}</span>
         </div>`;
@@ -4053,7 +4134,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     card.innerHTML = `
       <span class="rank-number ${numClass}">#${displayRank}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
-      <img src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
+      <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
       ${countBadge || fuzzyCountBadge ? `<div class="franchise-grid-meta">${countBadge}${fuzzyCountBadge}</div>` : ''}
       <div class="rank-elo">ELO ${group.bestElo}</div>
@@ -4066,7 +4147,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   } else {
     card.innerHTML = `
       <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))" ondblclick="event.stopPropagation();showFranchiseDetail('${esc(group.name)}')" title="Double-click for franchise overview">
-        <img src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
+        <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
         <div class="franchise-info">
           <div class="franchise-name rank-title">${esc(group.name)}</div>
           <div class="franchise-meta">
@@ -4112,7 +4193,7 @@ function showFranchiseDetail(groupName) {
     // doesn't carry the outline any more — only the affected entry).
     const fuzzyCls = a.fuzzy ? ' is-fuzzy' : '';
     return `<div class="franchise-detail-member${fuzzyCls}" onclick="closeDetailModal();showAnimeDetail(${a.id})">
-      <img src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
+      <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
         <div class="franchise-detail-member-stats">
@@ -5461,7 +5542,7 @@ function recCardHtml(media, opts = {}) {
   return `
     <a class="rec-card" href="${esc(recUrl)}" target="_blank" rel="noopener noreferrer"
        style="${watched ? 'opacity:0.45' : ''}">
-      <img src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
+      <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
       <div class="rec-card-body">
         <div class="rec-card-title">${esc(title)}</div>
         <div class="rec-card-meta">${esc(media.format || '')}${seasonLabel ? ' · ' + esc(seasonLabel) : ''}</div>
@@ -5994,7 +6075,7 @@ async function runCompatibility() {
       const aid = Number(item.anime.id) || 0;
       return `
       <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid})">
-        <img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
+        <img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
         <span class="compat-anime-title">${esc(item.title)}</span>
         <span class="compat-ranks">${esc(desc)} ›</span>
       </div>
@@ -6149,7 +6230,7 @@ async function _runCompatibilityMal(username2) {
       const aid = Number(item.anime.id) || 0;
       return `
       <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid})">
-        <img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
+        <img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
         <span class="compat-anime-title">${esc(item.title)}</span>
         <span class="compat-ranks">${esc(desc)} ›</span>
       </div>
@@ -6428,7 +6509,7 @@ function _challengeRenderPair() {
     // new round's card doesn't start with a phantom :focus highlight.
     if (document.activeElement === el) el.blur();
     el.innerHTML    = `
-      <img src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" />
+      <img${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" />
       <div class="challenge-card-title">${esc(anime.title)}</div>
       <div class="challenge-card-elo">Your ELO ${Math.round(anime.elo)}</div>`;
   };
@@ -6922,6 +7003,7 @@ async function lcRejoinSession() {
   if (!_isValidSessionCode(stored.code)) { _lcClearSession(); return; }
   _initFirebase();
   if (!_firebaseApp) return;
+  await _ensureFirebaseAuth();
 
   const btn = document.querySelector('#lc-rejoin-banner .collab-rejoin-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Rejoining…'; }
@@ -7073,6 +7155,7 @@ async function lcCreateSession() {
       hasPicked: false, hasSubmitted: false, currentPair: 0,
     };
 
+    await _ensureFirebaseAuth(); // hardened rules require auth before the create write
     const ref = firebase.database().ref('live-challenges/' + code);
     const writeTimeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Could not reach the session server.')), 20000)
@@ -7127,6 +7210,7 @@ async function lcJoinSession() {
     if (watchedIds.length < 5)
       throw new Error(`Only ${watchedIds.length} watched anime found — need at least 5 to play.`);
 
+    await _ensureFirebaseAuth(); // hardened rules require auth before the lobby read
     const ref  = firebase.database().ref('live-challenges/' + code);
     const snap = await ref.once('value');
     const data = snap.val();
@@ -7437,7 +7521,7 @@ function _lcRenderPair() {
         ? '<span class="ep-badge">Movie</span>'
         : episodes ? `<span class="ep-badge">${episodes} ep</span>` : '';
       el.innerHTML = cover
-        ? `<img src="${safeUrl(cover)}" alt="${esc(title)}" />
+        ? `<img${coverCors(cover)} src="${safeUrl(cover)}" alt="${esc(title)}" />
            <div class="challenge-card-title">${esc(title)}</div>
            ${epBadge ? `<div class="challenge-card-meta">${epBadge}</div>` : ''}`
         : `<div class="collab-no-cover">🎬</div>
@@ -7908,7 +7992,51 @@ function _initFirebase() {
     }
   }
   _firebaseSyncApp = _firebaseApp;
+  // Warm up anonymous auth immediately so it's usually settled before the
+  // first DB read/write. Fire-and-forget — entry points that attach refs
+  // await _ensureFirebaseAuth() themselves.
+  _ensureFirebaseAuth();
   return _firebaseApp;
+}
+
+// v1.0.199 — Anonymous Firebase Auth (phase 1 of the rules-hardening rollout;
+// see FIREBASE_RULES.md). Once the hardened rules are live, every RTDB read/
+// write requires auth != null, so DB entry points await this before attaching
+// refs or writing. Notes:
+//   • signInAnonymously() reuses a previously persisted anonymous user (the
+//     SDK waits for persistence restore internally), so the uid is stable per
+//     browser profile and sign-in is a one-time cost.
+//   • Failure is non-fatal by design: under the CURRENT open rules everything
+//     still works unauthenticated; under hardened rules the existing
+//     per-feature error paths (sync listener detach, create/join toasts)
+//     surface the problem. We also null the cached promise so the next entry
+//     point retries instead of being stuck with a rejected sign-in forever.
+//   • If the auth-compat <script> didn't load (blocked CDN), firebase.auth is
+//     undefined — resolve null and proceed, same non-fatal contract.
+let _firebaseAuthPromise = null;
+function _ensureFirebaseAuth() {
+  if (!_firebaseApp || typeof firebase === 'undefined' || typeof firebase.auth !== 'function') {
+    return Promise.resolve(null);
+  }
+  if (_firebaseAuthPromise) return _firebaseAuthPromise;
+  try {
+    const auth = _firebaseApp.auth();
+    if (auth.currentUser) {
+      _firebaseAuthPromise = Promise.resolve(auth.currentUser);
+    } else {
+      _firebaseAuthPromise = auth.signInAnonymously()
+        .then(cred => (cred && cred.user) || auth.currentUser || null)
+        .catch(err => {
+          console.warn('[firebase] anonymous sign-in failed:', err && err.code, err && err.message);
+          _firebaseAuthPromise = null; // retry on next call
+          return null;
+        });
+    }
+  } catch (e) {
+    console.warn('[firebase] auth unavailable:', e && e.message);
+    return Promise.resolve(null);
+  }
+  return _firebaseAuthPromise;
 }
 
 // Back-compat shim — older call sites used a separate sync app. They now share
@@ -8189,6 +8317,7 @@ async function collabRejoinSession() {
   if (btn) { btn.disabled = true; btn.textContent = 'Rejoining…'; }
 
   try {
+    await _ensureFirebaseAuth(); // hardened rules require auth before the rejoin read
     const ref  = _firebaseApp.database().ref('collab-sessions/' + stored.code);
     const snap = await ref.once('value');
 
@@ -8322,6 +8451,7 @@ async function collabCreateSession() {
       createdAt: Date.now(),
     };
 
+    await _ensureFirebaseAuth(); // hardened rules require auth before the create write
     const ref = _firebaseApp.database().ref('collab-sessions/' + code);
 
     // Race the write against a 20s timeout. The connection check above already
@@ -8388,6 +8518,7 @@ async function collabJoinSession() {
     return;
   }
 
+  await _ensureFirebaseAuth(); // hardened rules require auth before the lobby read
   const ref = _firebaseApp.database().ref('collab-sessions/' + code);
 
   // Race the read against a 20s timeout (same pattern as collabCreateSession).
@@ -8915,7 +9046,7 @@ function _collabRenderSearchRows(res, raw, already, takenBy, anilistLoading) {
 
     return `<div class="collab-search-item ${blocked ? 'collab-search-added' : ''}"
       onclick="${blocked ? '' : `collabPickFromSearch(${idx})`}">
-      ${item.cover ? `<img src="${safeUrl(item.cover)}" alt="" loading="lazy" />` : '<div class="collab-search-no-cover">🎬</div>'}
+      ${item.cover ? `<img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" loading="lazy" />` : '<div class="collab-search-no-cover">🎬</div>'}
       <span class="collab-search-name">${esc(item.title)}</span>
       ${sourceBadge}
       ${statusBadge}
@@ -8984,7 +9115,7 @@ function _collabRenderNominations() {
   byId(IDS.collabNominateCount).textContent = `${noms.length} / 5`;
   byId(IDS.collabNominationsList).innerHTML = noms.map((n, idx) => `
     <div class="collab-nom-item">
-      ${n.cover ? `<img src="${safeUrl(n.cover)}" alt="" loading="lazy" />` : '<div class="collab-nom-cover-placeholder">🎬</div>'}
+      ${n.cover ? `<img${coverCors(n.cover)} src="${safeUrl(n.cover)}" alt="" loading="lazy" />` : '<div class="collab-nom-cover-placeholder">🎬</div>'}
       <span class="collab-nom-title">${esc(n.title)}</span>
       <button class="collab-nom-remove" onclick="collabRemoveNomination(${idx})" aria-label="Remove">✕</button>
     </div>`).join('') || '<p class="collab-nom-empty">Nothing yet — search above to add shows</p>';
@@ -9229,7 +9360,7 @@ function _collabRenderVoteCards(pair) {
       ? '<span class="ep-badge">Movie</span>'
       : show.episodes ? `<span class="ep-badge">${show.episodes} ep</span>` : '';
     el.innerHTML = `
-      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="${esc(show.title)}" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
+      ${show.cover ? `<img${coverCors(show.cover)} src="${safeUrl(show.cover)}" alt="${esc(show.title)}" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
       <div class="challenge-card-title">${esc(show.title)}</div>
       ${epBadge ? `<div class="challenge-card-meta">${epBadge}</div>` : ''}`;
   });
@@ -9498,7 +9629,7 @@ function _collabRenderResults() {
     const tLabel = t > 0 ? ` · ${t} tie${t !== 1 ? 's' : ''}` : '';
     return `<div class="collab-result-item ${i === 0 ? 'collab-result-winner' : ''}">
       <span class="collab-result-medal">${medals[i] || (i + 1) + '.'}</span>
-      ${show.cover ? `<img src="${safeUrl(show.cover)}" alt="" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
+      ${show.cover ? `<img${coverCors(show.cover)} src="${safeUrl(show.cover)}" alt="" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
       <div class="collab-result-info">
         <div class="collab-result-title">${esc(show.title)}</div>
         <div class="collab-result-wins">${wLabel}<span class="collab-result-ties">${tLabel}</span></div>
@@ -9764,7 +9895,7 @@ async function runFriendRecs() {
           const mediaId = Number(media.id) || 0;
           return `
             <a class="rec-card friend-rec-card" href="https://anilist.co/anime/${mediaId}" target="_blank" rel="noopener noreferrer">
-              <img src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
+              <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
               <div class="friend-score-badge">${esc(username.slice(0,8))}: ${esc(friendScore)}</div>
               <div class="rec-card-body">
                 <div class="rec-card-title">${esc(title)}</div>
@@ -9850,7 +9981,7 @@ async function _runFriendRecsMal(username) {
           const safeId = Number(malId) || 0;
           return `
           <a class="rec-card friend-rec-card" href="https://myanimelist.net/anime/${safeId}" target="_blank" rel="noopener noreferrer">
-            <img src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
+            <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
             <div class="friend-score-badge">${esc(username.slice(0,8))}: ${esc(friendScore)}</div>
             <div class="rec-card-body">
               <div class="rec-card-title">${esc(title)}</div>
@@ -10221,7 +10352,7 @@ function renderExcluded() {
       item.className = 'excluded-item';
       item.id = `excl-${anime.id}`;
       item.innerHTML = `
-        <img src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" loading="lazy" />
+        <img${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="${esc(anime.title)}" loading="lazy" />
         <span class="excluded-item-title">${esc(anime.title)}</span>
         <button class="btn-secondary" style="font-size:0.8rem;padding:5px 12px"
           onclick="reAddAnime(${Number(anime.id) || 0})">↩ Re-add</button>
@@ -10664,7 +10795,7 @@ function _renderTasteStoryCard() {
   if (card.type === 'share') {
     const top3Html = card.top3.map(a => `
       <div class="ts-cover-wrap">
-        <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}" loading="lazy" />
+        <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}" loading="lazy" />
         <div class="ts-cover-title">${esc(displayTitle(a))}</div>
       </div>`).join('');
     body.innerHTML = `
@@ -10679,7 +10810,7 @@ function _renderTasteStoryCard() {
     body.innerHTML = `
       <div class="ts-label">${esc(card.label)}</div>
       <div class="ts-champion-wrap">
-        <img class="ts-champion-cover" src="${safeUrl(card.cover)}" alt="${esc(card.headline)}" onerror="this.style.display='none'" />
+        <img class="ts-champion-cover"${coverCors(card.cover)} src="${safeUrl(card.cover)}" alt="${esc(card.headline)}" onerror="this.style.display='none'" />
         <div class="ts-champion-info">
           <div class="ts-headline" style="color:${esc(card.accent)}">${esc(card.headline)}</div>
           <div class="ts-sub">${esc(card.sub)}</div>
@@ -11728,7 +11859,7 @@ function showSessionSummary() {
 
   byId(IDS.sessionSummaryList).innerHTML = movers.map(a => `
     <div class="session-mover">
-      <img src="${safeUrl(a.cover)}" alt="${esc(a.title)}" loading="lazy" />
+      <img${coverCors(a.cover)} src="${safeUrl(a.cover)}" alt="${esc(a.title)}" loading="lazy" />
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title)}</div>
         <div style="font-size:0.78rem;color:#8b949e">${sessionStartElo[a.id] | 0} \u2192 ${a.elo | 0} ELO</div>
@@ -11808,6 +11939,7 @@ function tryLoadSharedView() {
 
       if (cover) {
         const img = document.createElement('img');
+        if (coverCors(cover)) img.crossOrigin = 'anonymous';
         img.src = cover;
         img.alt = title;
         img.loading = 'lazy';
@@ -12123,7 +12255,7 @@ function toggleStudioAnimePanel(panelId, studioName) {
     return `
       <div class="studio-anime-item" onclick="openDetail(${idx})">
         <span class="studio-anime-rank">${rankStr}</span>
-        <img class="studio-anime-cover" src="${esc(a.cover || '')}" alt="" loading="lazy"
+        <img class="studio-anime-cover"${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy"
              onerror="this.style.display='none'" />
         <span class="studio-anime-title">${esc(displayTitle(a))}</span>
         <span class="studio-anime-elo">${a.elo}</span>
@@ -12662,7 +12794,7 @@ function _paintTasteMoods(el) {
     const covers = moodCovers[mood.key];
     if (covers.length < 2) return '';
     const coversHtml = covers.map(a => `
-      <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
+      <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
            title="${esc(displayTitle(a))}"
            loading="lazy" onerror="this.style.display='none'" />`).join('');
     return `
@@ -13442,7 +13574,7 @@ function renderDisagreements() {
     const cls  = d.delta > 0 ? 'delta-up' : 'delta-down';
     const globalPct = (d.anime.globalScore / 10).toFixed(1); // 85 → 8.5
     el.innerHTML = `
-      <img src="${safeUrl(d.anime.cover)}" alt="${esc(displayTitle(d.anime))}" />
+      <img${coverCors(d.anime.cover)} src="${safeUrl(d.anime.cover)}" alt="${esc(displayTitle(d.anime))}" />
       <div class="disagree-item-info">
         <div class="disagree-item-title">${esc(displayTitle(d.anime))}</div>
         <div class="disagree-item-meta">Your ELO #${d.eloRank} · Community ${globalPct}/10 (#${d.globalRank})</div>
@@ -13503,7 +13635,7 @@ async function _predictorSearch(q) {
       return `<div class="predictor-dropdown-item" data-idx="${i}"
                    onmousedown="predictorPick(${m.id})"
                    onmouseover="predictorHover(${i})">
-        <img src="${safeUrl(cover)}" alt="" aria-hidden="true" />
+        <img${coverCors(cover)} src="${safeUrl(cover)}" alt="" aria-hidden="true" />
         <div class="predictor-dropdown-item-info">
           <div class="predictor-dropdown-item-title">${esc(title)}</div>
           <div class="predictor-dropdown-item-meta">${esc([fmt, year].filter(Boolean).join(' · '))}</div>
@@ -13774,7 +13906,7 @@ function _renderPrediction(media, pred, container) {
 
   container.innerHTML = `
     <div class="predictor-result">
-      <img class="predictor-cover" src="${cover}" alt="${title}" />
+      <img class="predictor-cover"${coverCors(cover)} src="${safeUrl(cover)}" alt="${esc(title)}" />
       <div class="predictor-body">
         <div class="predictor-title">${title}</div>
         <div class="predictor-tier-badge ${tierClass}">${pred.tier} tier</div>
@@ -14139,7 +14271,7 @@ function _paintTrio(fresh = false) {
       return `
         <div class="anime-card trio-card ${rankCls}" id="trio-card-${pos}" onclick="trioTap(${pos})">
           ${badgeEl}
-          <img src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
+          <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="${esc(displayTitle(a))}"
                decoding="async" loading="lazy"
                onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
           <div class="anime-card-body">
@@ -14588,7 +14720,7 @@ function populateTowerList(q) {
     const el = document.createElement('div');
     el.className = 'tower-anime-item';
     el.innerHTML = `
-      <img src="${safeUrl(a.cover)}" alt="${esc(displayTitle(a))}" />
+      <img${coverCors(a.cover)} src="${safeUrl(a.cover)}" alt="${esc(displayTitle(a))}" />
       <span>${esc(displayTitle(a))}</span>
       <span class="tower-anime-elo">ELO ${a.elo}</span>
     `;
@@ -14755,7 +14887,7 @@ function finishTower() {
     const row = document.createElement('div');
     row.className = `tower-result-row ${r.championWon ? 'won' : 'lost'}`;
     row.innerHTML = `
-      <img src="${safeUrl(opp.cover)}" alt="${esc(displayTitle(opp))}" />
+      <img${coverCors(opp.cover)} src="${safeUrl(opp.cover)}" alt="${esc(displayTitle(opp))}" />
       <div class="tower-result-info">
         <div class="name">${esc(displayTitle(opp))}</div>
         <div class="meta">ELO ${opp.elo} · ${opp.battles || 0} battles</div>
@@ -14878,7 +15010,7 @@ function _vsRenderTableSlice() {
       : '';
     html += `<tr class="ranking-table-row${anime.fuzzy ? ' is-fuzzy' : ''}">
       <td class="tbl-rank">${displayIdx}</td>
-      <td><img class="tbl-cover" src="${anime.cover}" alt="" aria-hidden="true" loading="lazy" /></td>
+      <td><img class="tbl-cover"${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
       <td class="tbl-title" onclick="showAnimeDetail(${anime.id})">${title}${fuzzyPill}${sb ? ' ' + sb : ''}</td>
       <td>${anime.elo}</td>
       <td>${wr}</td>
@@ -14915,7 +15047,7 @@ function renderFranchiseTable() {
     html += `
       <tr class="franchise-table-group" data-gid="${gid}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
         <td class="tbl-rank">${displayRank}</td>
-        <td><img class="tbl-cover" src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
+        <td><img class="tbl-cover"${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
           <strong>${esc(group.name)}</strong>
           ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>` : ''}
@@ -14949,7 +15081,7 @@ function renderFranchiseTable() {
           : '';
         html += `<tr class="franchise-table-member${a.fuzzy ? ' is-fuzzy' : ''}" data-member-gid="${gid}" style="display:none" onclick="showAnimeDetail(${a.id})">
           <td></td>
-          <td><img class="tbl-cover" src="${esc(a.cover || '')}" alt="" loading="lazy" /></td>
+          <td><img class="tbl-cover"${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" /></td>
           <td class="tbl-title" style="padding-left:24px">${esc(a.titleEn || a.title)}${fuzzyPill}</td>
           <td>${a.elo}</td>
           <td>${wr}</td>
@@ -15097,7 +15229,7 @@ function openSyncModal() {
   // Build preview table
   const rows = _syncQueue.map(item => `
     <tr>
-      <td><img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
+      <td><img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.title)}</td>
       <td style="text-align:center"><span class="sync-score-pill ${_scoreClass(item.score10)}">${esc(item.apiScore)}</span></td>
     </tr>`).join('');
@@ -15336,7 +15468,7 @@ function openMALSyncModal() {
 
   const rows = _malSyncQueue.map(item => `
     <tr>
-      <td><img src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
+      <td><img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.title)}</td>
       <td style="text-align:center"><span class="sync-score-pill ${_scoreClass(item.score)}">${esc(item.score)}</span></td>
     </tr>`).join('');
@@ -15943,6 +16075,7 @@ function _ncPushToFirebase() {
   clearTimeout(_ncFirebasePushTimer);
   _ncFirebasePushTimer = setTimeout(async () => {
     try {
+      await _ensureFirebaseAuth(); // hardened rules require auth for this write
       await _firebaseApp.database().ref(`${base}/notifications`).set({
         items:     _notifCentre.slice(0, 50),
         updatedAt: Date.now(),

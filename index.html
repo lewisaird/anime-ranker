@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.198" />
+  <meta name="version" content="1.0.202" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -57,10 +57,13 @@
   <link rel="preconnect" href="https://cdn.myanimelist.net" crossorigin />
 
   <link rel="stylesheet" href="styles.css" />
-  <!-- Firebase SDK — only needed for multi-device Watch Together mode.
-       Remove these two lines if you don't plan to use multi-device. -->
+  <!-- Firebase SDK — only needed for multi-device Watch Together / Live
+       Challenge / cross-device sync. Remove these three lines if you don't
+       plan to use multi-device. auth-compat powers the anonymous sign-in the
+       hardened RTDB security rules require (see FIREBASE_RULES.md). -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 </head>
 <body>
 
