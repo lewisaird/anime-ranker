@@ -382,6 +382,13 @@ let saveKey      = '';
 let undoStack       = [];    // stack of up to MAX_UNDO_DEPTH snapshots (most recent last)
 const MAX_UNDO_DEPTH = 5;
 let nextPairOverride = null; // [idxA, idxB] — used once after an undo to restore the original "next" pair
+// v1.0.203 — the upcoming battle pair is picked one battle early so its two
+// posters can be fetched while the current battle is on screen. By the time
+// the user taps a winner, the next covers come straight from the HTTP cache
+// instead of visibly loading. Validity is re-checked at consume time (pool
+// filters may have changed); invalid → discarded and picked fresh.
+let _preloadedPair = null; // [ia, ib] for the next battle (normal mode only)
+let _preloadedImgs = [];   // refs to in-flight Image() objects (prevents GC)
 let battleHistory   = [];    // [{winnerTitle, loserTitle, winnerEloAfter, loserEloAfter, eloSwing}]
 const MAX_HISTORY   = 1000;
 let excludedIds     = new Set(); // anime IDs permanently removed from battle pool
@@ -2755,10 +2762,47 @@ function renderBattle() {
     const pair = pickSettlePair();
     [ia, ib] = pair ?? pickOpponents();
   } else {
-    [ia, ib] = pickOpponents();
+    [ia, ib] = _takeValidPreloadedPair() ?? pickOpponents();
   }
   renderPair(ia, ib);
   saveState();
+  _preloadNextBattlePair();
+}
+
+// v1.0.203 — consume the pair picked during the previous battle, re-checking
+// the same eligibility rules pickOpponents uses (the pool may have changed
+// since it was picked: exclusions, format filters, list reload). Any doubt →
+// return null and let the caller pick fresh.
+function _takeValidPreloadedPair() {
+  const pair = _preloadedPair;
+  _preloadedPair = null;
+  if (!pair) return null;
+  const [a, b] = pair;
+  const ok = i => Number.isInteger(i) && i >= 0 && i < animeList.length
+    && !excludedIds.has(animeList[i].id)
+    && !hiddenFormatsBattle.has(animeList[i].format);
+  return (a !== b && ok(a) && ok(b)) ? pair : null;
+}
+
+// v1.0.203 — pick the next pair now and start fetching its covers in the
+// background. setTimeout(0) lets the CURRENT pair's covers begin loading
+// first so the preload never competes with what's on screen. Settle / Tower /
+// Trio modes pick their own pairs through different code paths — no preload
+// there. The Image() requests use the same plain no-cors mode as the battle
+// <img> elements, so the render is a guaranteed warm-cache hit.
+function _preloadNextBattlePair() {
+  if (settleMode || towerMode || trioMode) return;
+  setTimeout(() => {
+    if (settleMode || towerMode || trioMode) return;
+    _preloadedPair = pickOpponents();
+    _preloadedImgs = _preloadedPair.map(i => {
+      const url = animeList[i]?.cover;
+      if (!url) return null;
+      const im = new Image();
+      im.src = url;
+      return im;
+    });
+  }, 0);
 }
 
 function pickWinner(side) {
