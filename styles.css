@@ -53,6 +53,36 @@
       color-scheme: light;
     }
 
+    /* v1.0.208 — Warm mode. A third theme option alongside Dark and Light:
+       a dark-base theme with warm-tinted surfaces and text. Brand blue stays
+       the primary action colour so the identity is intact; only the greys
+       shift. Semantic accents (red, green) stay untouched because they need
+       to read as warning/success regardless of theme. Amber drifts toward
+       peach because it's the only accent where warmth IS the point.
+       The dark theme's 48 `body.light-mode .x` overrides aren't mirrored
+       here on purpose — Warm is still a dark theme structurally, so the
+       dark-base styles already work; we only need to override the variables. */
+    body.warm-mode {
+      --bg-primary:       #14110d;
+      --bg-secondary:     #1d1913;
+      --bg-tertiary:      #251f18;
+      --border-subtle:    #2a251f;
+      --border-default:   #3a322a;
+      --text-muted:       #7d7568;
+      --text-secondary:   #a99e8c;
+      --text-primary:     #d6cebd;
+      --text-bright:      #f5ede2;
+      --accent-blue:      #58a6ff;
+      --accent-blue-dark: #388bfd;
+      --accent-green:     #3fb950;
+      --accent-green-dark:#238636;
+      --accent-red:       #f85149;
+      --accent-amber:     #ffb38a;
+      --accent-primary:   var(--accent-blue);
+      --border-color:     var(--border-default);
+      color-scheme: dark;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     /* v1.0.147 — Honour OS-level reduced-motion preference. Vestibular-
@@ -329,6 +359,13 @@
        at a glance. The popover lives in .mode-control; see #mode-popover below. */
     #mode-btn.active-settle { background: #1a2d1a; border-color: var(--accent-green-dark); color: var(--accent-green); }
     #mode-btn.active-blind  { background: #1a1230; border-color: #6e40c9; color: #a371f7; }
+    /* v1.0.208 — Trio + WSO highlight states. The setMode() JS already
+       toggles these classes but they were never styled, so the Mode button
+       didn't visually reflect which mode was active — inconsistent with
+       Settle/Blind. Amber for Trio matches its banner; flame-orange for WSO
+       matches its banner + streak badge. */
+    #mode-btn.active-trio   { background: #2a1d0a; border-color: #c9913a; color: #e3a444; }
+    #mode-btn.active-wso    { background: #2a1808; border-color: #c96a3a; color: #ffb38a; }
     #filter-btn.has-filter  { border-color: #d29922; color: #e3b341; }
 
     #filter-popover {
@@ -442,6 +479,44 @@
       cursor: pointer;
       transition: all 0.18s;
       text-align: center;
+      /* v1.0.207 — host the absolutely-positioned Winner Stays On streak badge */
+      position: relative;
+    }
+
+    /* v1.0.207 — Winner Stays On streak badge. Sits at the top centre of the
+       champion's card (always card-a in WSO mode). Dark pill with a subtle
+       orange outline + peach text — matches the banner palette without the
+       attention-grabbing gradient fill of the first cut. Pulse fires on
+       increment. */
+    .wso-streak-badge {
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(20, 12, 8, 0.95);
+      color: #ffb38a;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 3px 10px;
+      border: 1.5px solid #b85a30;
+      border-radius: 999px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      z-index: 3;
+      white-space: nowrap;
+      pointer-events: none;
+      line-height: 1.2;
+      letter-spacing: 0.02em;
+    }
+    .wso-streak-badge.pulse {
+      animation: wso-pulse 0.6s ease-out;
+    }
+    @keyframes wso-pulse {
+      0%   { transform: translateX(-50%) scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+      40%  { transform: translateX(-50%) scale(1.18); box-shadow: 0 2px 12px rgba(255, 138, 0, 0.45); }
+      100% { transform: translateX(-50%) scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .wso-streak-badge.pulse { animation: none; }
     }
     @media (hover: hover) {
       .anime-card:hover {
@@ -4217,6 +4292,23 @@
       justify-content: space-between;
     }
     #trio-banner.active { display: flex; }
+
+    /* v1.0.208 — Winner Stays On banner. Same structure as trio-banner,
+       flame-orange palette to match the streak badge + button highlight. */
+    #wso-banner {
+      display: none;
+      background: linear-gradient(90deg, #2a1808, #241208);
+      border: 1px solid #c96a3a;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 0.82rem;
+      color: #ffb38a;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+    }
+    #wso-banner.active { display: flex; }
 
     /* Three cards side by side, each stretching to fill its column */
     .trio-grid {

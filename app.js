@@ -221,6 +221,7 @@ const IDS = Object.freeze({
   towerSummarySub:        'tower-summary-sub',
   towerSummaryTitle:      'tower-summary-title',
   trioBanner:             'trio-banner',
+  wsoBanner:              'wso-banner',
   trioArena:              'trio-arena',
   notifBell:              'notif-bell',
   notifBadge:             'notif-badge',
@@ -418,6 +419,16 @@ const VS_BUFFER     = 8;         // extra rows to render above/below viewport
 let rankingView     = 'grid';    // 'grid' or 'list'
 let showFuzzyOnly   = false;     // fuzzy filter toggle
 let franchiseMode   = false;     // group sequels/seasons in rankings view
+// v1.0.207 — Winner Stays On (WSO) mode. The winner of a battle "stays on"
+// against a fresh opponent until they lose; a small flame badge above their
+// card shows the current streak. Champion is always rendered as side A so
+// the badge has a stable position. Prefers unseen opponents; once everyone
+// in the active pool has been faced, falls back to the least-recently-faced
+// loser (FIFO) so the streak never ends from running out of challengers.
+let wsoMode         = false;
+let wsoWinnerIdx    = null;      // current champion's index in animeList (null = uninitialised)
+let wsoStreak       = 0;         // wins-in-a-row by champion
+let wsoFacedOrder   = [];        // anime indices already faced this streak, oldest first
 let settleMode      = false;     // targeted low-confidence matchmaking
 let blindMode       = false;     // hide titles & covers until a pick is made
 let trioMode        = false;     // rank three anime at once
@@ -1863,6 +1874,13 @@ function _saveStateNow() {
       achievements,
       comparedFriends: [...comparedFriends],
       matchupStats,
+      // v1.0.207 — persist Winner Stays On so streaks survive page reloads
+      // and cross-device sync. Only saved when the mode is currently active;
+      // older saves load with wsoMode=false and a clean state.
+      wsoMode,
+      wsoWinnerIdx,
+      wsoStreak,
+      wsoFacedOrder,
       _owner: owner, // { source, id } or null — used to detect collisions on next load
     });
   };
@@ -2022,7 +2040,7 @@ function _startFirebaseSyncAttach() {
       _lastFirebaseSyncTs = remoteTs;
       if (animeList.length) {
         _applyCloudSaveToMemory(data);
-        showToast('✅ Synced from your other device');
+        showToast('✨ Picked up where you left off');
         syncFormatButtons(); syncEpRangeButtons();
       }
     } else {
@@ -2054,7 +2072,7 @@ function applyRealtimeSync() {
   _pendingSyncData = null;
   _lastFirebaseSyncTs = new Date(data.savedAt).getTime();
   _applyCloudSaveToMemory(data);
-  showToast('✅ Rankings synced from your other device');
+  showToast('✨ Picked up where you left off');
   const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
   if (onBattle) {
     syncFormatButtons(); syncEpRangeButtons();
@@ -2307,7 +2325,7 @@ async function manualCloudPull() {
     } else {
       renderRankingList();
     }
-    showToast('✓ Cloud save loaded.');
+    showToast('☁️ Your rankings are back');
   } catch (err) {
     showToast('Failed to load cloud save: ' + (err.message || 'unknown error'));
   }
@@ -2429,6 +2447,12 @@ function loadState(username, source = 'anilist') {
     achievements    = s.achievements    ?? {};
     comparedFriends = new Set(s.comparedFriends ?? []);
     matchupStats    = s.matchupStats    ?? {};
+    // v1.0.207 — restore Winner Stays On state. Older saves predate these
+    // fields and load with defaults (mode off, no champion).
+    wsoMode         = !!s.wsoMode;
+    wsoWinnerIdx    = (typeof s.wsoWinnerIdx === 'number') ? s.wsoWinnerIdx : null;
+    wsoStreak       = (typeof s.wsoStreak === 'number') ? s.wsoStreak : 0;
+    wsoFacedOrder   = Array.isArray(s.wsoFacedOrder) ? s.wsoFacedOrder.slice() : [];
     // Migrate old saves that predate titleEn/titleRo/description/format fields
     const _avgBattles = Math.round((s.battleCount || 0) * 2 / Math.max(animeList.length, 1));
     animeList.forEach(a => {
@@ -2689,7 +2713,7 @@ function renderPair(ia, ib) {
   const imgB = byId(IDS.imgB);
   imgA.classList.remove('img-broken');
   imgB.classList.remove('img-broken');
-  imgA.src = a.cover;
+  imgA.src = _coverForBattle(a.cover);
   imgA.alt = displayTitle(a);
   byId(IDS.titleA).textContent = displayTitle(a);
   byId(IDS.eloA).textContent   = `ELO ${a.elo}`;
@@ -2697,7 +2721,7 @@ function renderPair(ia, ib) {
     (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
       : a.episodes ? `<span class="ep-badge">${a.episodes} ep</span>` : '') +
     _statusBadge(a.status);
-  imgB.src = b.cover;
+  imgB.src = _coverForBattle(b.cover);
   imgB.alt = displayTitle(b);
   byId(IDS.titleB).textContent = displayTitle(b);
   byId(IDS.eloB).textContent   = `ELO ${b.elo}`;
@@ -2748,16 +2772,32 @@ function renderCurrentPair() {
 }
 
 function renderBattle() {
-  // Restore standard battle prompt in case we're coming back from Trio mode
+  // Restore standard battle prompt in case we're coming back from Trio mode.
+  // v1.0.208 — also handles WSO: when entering WSO the prompt swaps to a
+  // mode-specific line; when leaving WSO it snaps back to standard. Setting
+  // every time renderBattle runs is cheap and avoids stale-prompt bugs where
+  // a mode toggle didn't reach the DOM (e.g. modeBtn absent at boot).
   const h2 = byId(IDS.battlePromptH2);
   const p  = byId(IDS.battlePromptP);
   if (h2 && h2.textContent === 'Rank these three') h2.textContent = 'Which did you enjoy more?';
   if (p  && p.textContent.startsWith('Tap in order')) p.textContent = 'Click your favourite — or skip if you can\'t decide.';
+  if (wsoMode) {
+    if (h2) h2.textContent = '🔥 Can the champion hold on?';
+    // subtitle stays "Click your favourite — or skip…" so the action affordance is identical
+  } else if (h2 && h2.textContent === '🔥 Can the champion hold on?') {
+    h2.textContent = 'Which did you enjoy more?';
+  }
 
   let ia, ib;
   if (nextPairOverride && nextPairOverride.length > 0) {
     [ia, ib] = nextPairOverride.shift();
     if (nextPairOverride.length === 0) nextPairOverride = null;
+  } else if (wsoMode) {
+    // v1.0.207 — Winner Stays On: champion (side A) returns from previous
+    // battle; opponent (side B) is fresh. Preload is bypassed because
+    // pickWsoPair has its own deterministic rules and the preloader picks
+    // randomly via pickOpponents.
+    [ia, ib] = pickWsoPair();
   } else if (settleMode) {
     const pair = pickSettlePair();
     [ia, ib] = pair ?? pickOpponents();
@@ -2765,8 +2805,10 @@ function renderBattle() {
     [ia, ib] = _takeValidPreloadedPair() ?? pickOpponents();
   }
   renderPair(ia, ib);
+  _renderWsoBadge(false); // v1.0.207 — refresh badge on every render; no pulse here, pickWinner pulses on increment
   saveState();
   _preloadNextBattlePair();
+  _bootPrefetchCovers(); // v1.0.205 — one-shot per page load, no-op after first call
 }
 
 // v1.0.203 — consume the pair picked during the previous battle, re-checking
@@ -2787,6 +2829,26 @@ function _takeValidPreloadedPair() {
 // v1.0.203 — pick the next pair now and start fetching its covers in the
 // background. setTimeout(0) lets the CURRENT pair's covers begin loading
 // first so the preload never competes with what's on screen. Settle / Tower /
+// v1.0.206 — Mobile-only cover size optimisation. Battle cards render at
+// 80×112 px (mobile @ 600px) or 68×96 px (narrow mobile @ 520px), and even
+// accounting for 3× device pixel ratio that maxes out around 240×336 px
+// actual. AniList's `large` (~460×640) is roughly 2× more pixels than mobile
+// devices ever display, costing ~50% extra bandwidth per cover. AniList's
+// CDN serves the same image at `medium` (~230×320) via a URL pattern swap:
+//   .../cover/large/bx21-hash.jpg → .../cover/medium/bx21-hash.jpg
+// Desktop battle cards (160×225 @2× DPR = 320×450) still benefit from large,
+// so the swap is viewport-gated. MAL CDN URLs use a different path scheme
+// (cdn.myanimelist.net/images/anime/...) and don't match — they're left
+// alone. Cached at module load (viewport check is cheap but pointless to
+// re-run per render).
+const _COVER_USE_MEDIUM = typeof window !== 'undefined'
+  && window.matchMedia
+  && window.matchMedia('(max-width: 768px)').matches;
+function _coverForBattle(url) {
+  if (!_COVER_USE_MEDIUM || !url) return url;
+  return url.replace('/cover/large/', '/cover/medium/');
+}
+
 // Trio modes pick their own pairs through different code paths — no preload
 // there. The Image() requests use the same plain no-cors mode as the battle
 // <img> elements, so the render is a guaranteed warm-cache hit.
@@ -2796,13 +2858,138 @@ function _preloadNextBattlePair() {
     if (settleMode || towerMode || trioMode) return;
     _preloadedPair = pickOpponents();
     _preloadedImgs = _preloadedPair.map(i => {
-      const url = animeList[i]?.cover;
+      const url = _coverForBattle(animeList[i]?.cover);
       if (!url) return null;
       const im = new Image();
       im.src = url;
       return im;
     });
   }, 0);
+}
+
+// v1.0.207 — Winner Stays On helpers.
+//
+// Pair-picking rules:
+//   - Champion always renders as side A (so the streak badge has a stable
+//     anchor and the user knows "left = champion").
+//   - If no champion yet OR the current champion got filtered/excluded mid-
+//     streak, reset and seed from a fresh pickOpponents() pair.
+//   - Opponent: prefer an anime NOT yet faced this streak (random among
+//     fresh); if every eligible anime has been faced, fall back to the
+//     LEAST-RECENTLY faced one (head of wsoFacedOrder, which is oldest-first).
+function _wsoChampionValid() {
+  if (wsoWinnerIdx == null) return false;
+  if (wsoWinnerIdx < 0 || wsoWinnerIdx >= animeList.length) return false;
+  const a = animeList[wsoWinnerIdx];
+  if (!a) return false;
+  if (excludedIds.has(a.id)) return false;
+  if (hiddenFormatsBattle.has(a.format)) return false;
+  return true;
+}
+
+function _pickWsoOpponent() {
+  const n = animeList.length;
+  // Eligible = anything that pickOpponents would consider, minus the champion
+  const eligible = [];
+  for (let i = 0; i < n; i++) {
+    if (i === wsoWinnerIdx) continue;
+    if (excludedIds.has(animeList[i].id)) continue;
+    if (hiddenFormatsBattle.has(animeList[i].format)) continue;
+    eligible.push(i);
+  }
+  if (eligible.length === 0) return null;
+  // Prefer fresh (unseen this streak)
+  const faced = new Set(wsoFacedOrder);
+  const fresh = eligible.filter(i => !faced.has(i));
+  if (fresh.length > 0) {
+    return fresh[Math.floor(Math.random() * fresh.length)];
+  }
+  // Fallback: least-recently faced eligible anime. wsoFacedOrder is oldest-
+  // first, so iterate and return the first eligible index we see.
+  for (const idx of wsoFacedOrder) {
+    if (eligible.includes(idx)) return idx;
+  }
+  // Should be unreachable, but be defensive
+  return eligible[Math.floor(Math.random() * eligible.length)];
+}
+
+function pickWsoPair() {
+  if (!_wsoChampionValid()) {
+    // Fresh start — let pickOpponents seed both, take side A as champion
+    const [a, b] = pickOpponents();
+    wsoWinnerIdx  = a;
+    wsoStreak     = 0;
+    wsoFacedOrder = [b];
+    return [a, b];
+  }
+  const opp = _pickWsoOpponent();
+  if (opp == null) {
+    // Pool empty (everything filtered out) — fall back to standard pick
+    return pickOpponents();
+  }
+  return [wsoWinnerIdx, opp];
+}
+
+function _resetWsoState() {
+  wsoWinnerIdx  = null;
+  wsoStreak     = 0;
+  wsoFacedOrder = [];
+}
+
+// Update the streak badge above side A. Side A is always the champion when
+// WSO is active. Hides the badge when WSO is off or streak is 0.
+function _renderWsoBadge(pulse = false) {
+  const badge = byId('wso-streak-badge');
+  if (!badge) return;
+  if (!wsoMode || wsoStreak < 1) {
+    badge.style.display = 'none';
+    badge.classList.remove('pulse');
+    return;
+  }
+  const count = badge.querySelector('#wso-streak-count');
+  if (count) count.textContent = wsoStreak;
+  badge.style.display = '';
+  if (pulse) {
+    // Restart animation: remove + reflow + re-add
+    badge.classList.remove('pulse');
+    void badge.offsetWidth; // force reflow so the re-added class re-triggers
+    badge.classList.add('pulse');
+  }
+}
+
+// v1.0.205 — Boot-time cover warmup. _preloadNextBattlePair only fires after
+// a battle renders, so battle 1 has to download covers inline AND battle 2
+// has only ONE pair preloaded — if pickOpponents picks a different pair for
+// battle 2 (rare but possible) the user waits again. This warmup runs once
+// per page load and prefetches 3 additional candidate pairs in the
+// background, so the cache is broadly populated after a few seconds. Random
+// pairs are deliberately preferred over deterministic ones — pickOpponents
+// is random anyway, so a diverse warmup cache covers more possible futures
+// than three predicted-next attempts ever could. Delayed 200ms so the
+// in-flight battle 1 cover downloads get bandwidth priority. Reset to false
+// here would re-fire on every reload via the module-level redeclaration.
+let _bootPrefetchFired = false;
+function _bootPrefetchCovers() {
+  if (_bootPrefetchFired) return;
+  if (settleMode || towerMode || trioMode) return;
+  if (!animeList.length) return;
+  _bootPrefetchFired = true;
+  const PREFETCH_PAIRS = 3;
+  setTimeout(() => {
+    for (let i = 0; i < PREFETCH_PAIRS; i++) {
+      setTimeout(() => {
+        const pair = pickOpponents();
+        if (!pair) return;
+        pair.forEach(idx => {
+          const url = _coverForBattle(animeList[idx]?.cover);
+          if (!url) return;
+          const im = new Image();
+          im.src = url;
+          _preloadedImgs.push(im); // anchor against GC, same as _preloadNextBattlePair
+        });
+      }, i * 100);
+    }
+  }, 200);
 }
 
 function pickWinner(side) {
@@ -2824,6 +3011,12 @@ function pickWinner(side) {
     pairB: currentB,
     matchupKey:  _mKey,
     matchupSnap: matchupStats[_mKey] ? { ...matchupStats[_mKey], wins: { ...matchupStats[_mKey].wins } } : null,
+    // v1.0.207 — preserve WSO state so undo restores champion + streak + faced list
+    wsoState: wsoMode ? {
+      winnerIdx:    wsoWinnerIdx,
+      streak:       wsoStreak,
+      facedOrder:   wsoFacedOrder.slice(),
+    } : null,
   };
 
   // Apply ELO changes and record history
@@ -2869,10 +3062,32 @@ function pickWinner(side) {
   _checkAchievements();
   _maybeSaveTasteSnapshot();
   _syncTasteNewBadge();
+  // v1.0.207 — WSO state update. Side 0 (champion) winning ticks the streak
+  // and adds the opponent to the faced list; side 1 (opponent) winning makes
+  // them the new champion with streak 1 and the previous champion as their
+  // first defeated opponent. _shouldPulse drives the badge animation on
+  // every successful champion win.
+  let _shouldPulseWso = false;
+  if (wsoMode) {
+    if (side === 0) {
+      wsoStreak += 1;
+      if (loserIdx != null && !wsoFacedOrder.includes(loserIdx)) {
+        wsoFacedOrder.push(loserIdx);
+      }
+      _shouldPulseWso = true;
+    } else {
+      wsoWinnerIdx  = winnerIdx;
+      wsoStreak     = 1;
+      wsoFacedOrder = [loserIdx];
+      _shouldPulseWso = true;
+    }
+  }
+
   saveState();
 
   // Pick and show the next pair FIRST — then push a snapshot onto the undo stack
   renderBattle();
+  if (_shouldPulseWso) _renderWsoBadge(true);
   _pushUndoSnapshot({ ...snap, nextA: currentA, nextB: currentB });
 }
 
@@ -2936,11 +3151,19 @@ function undoLast() {
     battleCount = savedCount;
     if (battleHistory.length > 0) battleHistory.shift();
 
+    // v1.0.207 — restore WSO state if this battle was played in WSO mode
+    if (snap.wsoState) {
+      wsoWinnerIdx  = snap.wsoState.winnerIdx;
+      wsoStreak     = snap.wsoState.streak;
+      wsoFacedOrder = snap.wsoState.facedOrder.slice();
+    }
+
     // After undo, if the user re-picks from pairA/pairB, restore the same next pair
     nextPairOverride = [[nextA, nextB], ...(nextPairOverride || [])];
 
     // Show the original pair
     renderPair(pairA, pairB);
+    _renderWsoBadge(false); // v1.0.207 — refresh badge after WSO state restore
     updateProgress();
     saveState();
   }
@@ -11845,23 +12068,41 @@ function dismissKbTip() {
 }
 
 // ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
-function _applyTheme(light) {
-  document.body.classList.toggle('light-mode', light);
+// v1.0.208 — Three-way cycle (Dark → Light → Warm → Dark). Previously a binary
+// Light/Dark toggle. Warm is a dark-base theme with warm-tinted surfaces and
+// text — see body.warm-mode in styles.css. The cycle ordering puts Dark first
+// because it's the existing default; existing users keep their saved 'light'
+// or 'dark' value with no migration needed (anything unrecognised falls back
+// to Dark in _applyTheme).
+const THEMES = ['dark', 'light', 'warm'];
+const THEME_LABELS = {
+  dark:  '🌙 Dark mode',
+  light: '☀️ Light mode',
+  warm:  '🍂 Warm mode',
+};
+
+function _applyTheme(theme) {
+  const t = THEMES.includes(theme) ? theme : 'dark';
+  document.body.classList.remove('light-mode', 'warm-mode');
+  if (t === 'light') document.body.classList.add('light-mode');
+  else if (t === 'warm') document.body.classList.add('warm-mode');
   const btn = byId(IDS.themeToggleBtn);
-  if (btn) btn.textContent = light ? '☀️ Light mode' : '🌙 Dark mode';
+  if (btn) btn.textContent = THEME_LABELS[t];
 }
 
 function toggleTheme() {
-  const isLight = document.body.classList.toggle('light-mode');
-  localStorage.setItem(KESSEN_KEYS.ui.theme, isLight ? 'light' : 'dark');
-  const btn = byId(IDS.themeToggleBtn);
-  if (btn) btn.textContent = isLight ? '☀️ Light mode' : '🌙 Dark mode';
+  const current = localStorage.getItem(KESSEN_KEYS.ui.theme) || 'dark';
+  const idx = THEMES.indexOf(current);
+  // Unknown values cycle to 'light' (idx === -1 → 0 → THEMES[0]='dark'... no, want next-from-dark='light')
+  const next = THEMES[(idx >= 0 ? idx + 1 : 1) % THEMES.length];
+  localStorage.setItem(KESSEN_KEYS.ui.theme, next);
+  _applyTheme(next);
 }
 
 // Apply saved theme immediately on load
 (function () {
-  const saved = localStorage.getItem(KESSEN_KEYS.ui.theme);
-  if (saved === 'light') _applyTheme(true);
+  const saved = localStorage.getItem(KESSEN_KEYS.ui.theme) || 'dark';
+  _applyTheme(saved);
 })();
 
 // ─── SESSION SUMMARY ──────────────────────────────────────────────────────────
@@ -13998,20 +14239,24 @@ function _exitTowerState() {
   if (btn) btn.classList.remove('active-tower');
 }
 
-// Exits any settle/blind/trio mode cleanly — used by startTower() so its
+// Exits any settle/blind/trio/wso mode cleanly — used by startTower() so its
 // flags and DOM state don't linger when entering tower. Without this, a
 // user entering tower while trioMode was true would have both flags set;
 // renderBattle's `if (trioMode)` check fires before tower's, so the trio
 // arena would render over the tower opponent — exactly what users hit when
 // switching from trio to tower.
 function _exitNonTowerModes() {
-  if (!settleMode && !blindMode && !trioMode) return;
+  if (!settleMode && !blindMode && !trioMode && !wsoMode) return;
   settleMode = false;
   blindMode  = false;
   trioMode   = false;
+  wsoMode    = false; // v1.0.207
+  _resetWsoState();
+  _renderWsoBadge(false);
   byId(IDS.settleBanner)?.classList.remove('active');
   byId(IDS.blindBanner)?.classList.remove('active');
   byId(IDS.trioBanner)?.classList.remove('active');
+  byId(IDS.wsoBanner)?.classList.remove('active');
   const screen = byId(IDS.battleScreen);
   if (screen) screen.classList.remove('blind');
   const stdArena  = document.querySelector('.battle-arena');
@@ -14022,11 +14267,11 @@ function _exitNonTowerModes() {
     el.setAttribute('aria-checked', el.dataset.mode === 'normal' ? 'true' : 'false');
   });
   const btn = byId(IDS.modeBtn);
-  if (btn) btn.classList.remove('active-settle', 'active-blind', 'active-trio');
+  if (btn) btn.classList.remove('active-settle', 'active-blind', 'active-trio', 'active-wso');
 }
 
 function setMode(name) {
-  if (!['normal', 'settle', 'blind', 'trio'].includes(name)) name = 'normal';
+  if (!['normal', 'settle', 'blind', 'trio', 'wso'].includes(name)) name = 'normal';
 
   // If currently in tower, exit cleanly first. Tower is mutually exclusive
   // with the standard modes — keeping its flag set would route every battle
@@ -14035,9 +14280,16 @@ function setMode(name) {
 
   const prevSettle = settleMode;
   const prevTrio   = trioMode;
+  const prevWso    = wsoMode;
   settleMode = (name === 'settle');
   blindMode  = (name === 'blind');
   trioMode   = (name === 'trio');
+  wsoMode    = (name === 'wso'); // v1.0.207
+
+  // v1.0.207 — entering WSO is a fresh streak; exiting clears state so
+  // re-entering later doesn't resurrect a stale champion.
+  if (wsoMode && !prevWso) _resetWsoState();
+  if (!wsoMode && prevWso) { _resetWsoState(); _renderWsoBadge(false); }
 
   // Mode button visual state + label (also clears Tower highlight if active)
   const btn = byId(IDS.modeBtn);
@@ -14045,11 +14297,13 @@ function setMode(name) {
     btn.classList.toggle('active-settle', settleMode);
     btn.classList.toggle('active-blind',  blindMode);
     btn.classList.toggle('active-trio',   trioMode);
+    btn.classList.toggle('active-wso',    wsoMode);
     btn.classList.remove('active-tower');
     btn.textContent =
       settleMode ? '🎯 Mode: Settle' :
       blindMode  ? '🙈 Mode: Blind'  :
       trioMode   ? '🎲 Mode: Trio'   :
+      wsoMode    ? '🔥 Mode: Winner Stays' :
                    '⚙ Mode';
   }
 
@@ -14057,6 +14311,7 @@ function setMode(name) {
   byId(IDS.settleBanner)?.classList.toggle('active', settleMode);
   byId(IDS.blindBanner)?.classList.toggle('active', blindMode);
   byId(IDS.trioBanner)?.classList.toggle('active', trioMode);
+  byId(IDS.wsoBanner)?.classList.toggle('active', wsoMode); // v1.0.208
 
   // Blind CSS class on the battle screen
   const screen = byId(IDS.battleScreen);
@@ -14078,8 +14333,10 @@ function setMode(name) {
   // Re-pick immediately on mode switch
   if (settleMode && !prevSettle) { renderBattle(); return; }
   if (trioMode   && !prevTrio)   { renderTrio();   return; }
-  // Exiting trio → back to normal pair
-  if (!trioMode  && prevTrio)    { renderBattle();           }
+  if (wsoMode    && !prevWso)    { renderBattle(); return; } // v1.0.207
+  // Exiting trio or wso → back to normal pair
+  if (!trioMode  && prevTrio)    { renderBattle(); return; }
+  if (!wsoMode   && prevWso)     { renderBattle();           } // v1.0.207
 }
 
 // Toggles the popover. Uses a one-shot outside-click listener (registered on

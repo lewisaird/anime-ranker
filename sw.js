@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.203';
+const APP_VERSION  = '1.0.208';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -144,8 +144,36 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // App shell: cache-first, revalidate in background
-  // Falls back to offline.html for navigation requests when network is unavailable
+  // v1.0.204 — Navigation requests (HTML page loads) use NETWORK-FIRST. The
+  // app shell HTML changes on every release and serving a stale cached copy
+  // means users see an OLD version of the page until the SW updates in the
+  // background and the controller-change reload fires — which on iOS Safari
+  // is unreliable and visibly slow. A confirmed report from a beta tester:
+  // the Guest Mode button (added later in development) was literally absent
+  // from the DOM on first load and only appeared after a manual refresh,
+  // because the SW was serving HTML cached from before Guest Mode existed.
+  // Network-first ensures the HTML is always fresh on a healthy connection
+  // and falls back to the cached copy (or offline.html) only when offline.
+  // Other shell assets — JS, CSS, icons — stay cache-first below.
+  if (request.mode === 'navigate') {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      try {
+        const fresh = await fetch(request);
+        if (fresh && fresh.status === 200) {
+          cache.put(request, fresh.clone());
+        }
+        return fresh;
+      } catch {
+        const cached = await cache.match(request);
+        if (cached) return cached;
+        return cache.match('/offline.html');
+      }
+    })());
+    return;
+  }
+
+  // App shell (JS / CSS / icons): cache-first, revalidate in background
   event.respondWith(
     caches.open(CACHE_NAME).then(async cache => {
       const cached = await cache.match(request);

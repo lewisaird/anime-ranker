@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.203" />
+  <meta name="version" content="1.0.208" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -824,6 +824,13 @@
       <button onclick="setMode('normal')" style="background:none;border:1px solid #c9913a;color:#e3a444;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
+    <!-- v1.0.208 — Winner Stays On banner. Mirrors the trio-banner structure
+         for consistency; orange/peach palette matches the streak badge. -->
+    <div id="wso-banner">
+      <span>🔥 Winner Stays On — the champion keeps fighting</span>
+      <button onclick="setMode('normal')" style="background:none;border:1px solid #c96a3a;color:#ffb38a;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+    </div>
+
 
     <div class="battle-prompt">
       <h2 id="battle-prompt-h2">Which did you enjoy more?</h2>
@@ -835,6 +842,8 @@
 
     <div class="battle-arena">
       <div class="anime-card" id="card-a" onclick="pickWinner(0)">
+        <!-- v1.0.207 — Winner Stays On streak badge. Champion is always rendered as side A so the badge has a stable anchor. -->
+        <div class="wso-streak-badge" id="wso-streak-badge" style="display:none" aria-live="polite" aria-atomic="true">🔥 <span id="wso-streak-count">0</span></div>
         <img id="img-a" src="" alt="" decoding="async" fetchpriority="high" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
         <div class="anime-card-body">
           <div class="title" id="title-a"></div>
@@ -891,6 +900,10 @@
           <button type="button" role="menuitemradio" data-mode="trio" onclick="setMode('trio')" aria-checked="false">
             <span class="mode-icon" aria-hidden="true">🎲</span>
             <span class="mode-text"><span class="mode-name">Trio</span><span class="mode-desc">Rank three at once</span></span>
+          </button>
+          <button type="button" role="menuitemradio" data-mode="wso" onclick="setMode('wso')" aria-checked="false">
+            <span class="mode-icon" aria-hidden="true">🔥</span>
+            <span class="mode-text"><span class="mode-name">Winner Stays</span><span class="mode-desc">Champion takes on a new challenger every round</span></span>
           </button>
           <hr class="mode-popover-divider" />
           <button type="button" class="mode-popover-action" onclick="openTowerModal();_closeModeMenu()">
@@ -1314,7 +1327,7 @@
       <div class="manage-tab-content">
         <div class="manage-section">
           <div class="manage-section-title">Appearance</div>
-          <button id="theme-toggle-btn" class="manage-btn" onclick="toggleTheme()" title="Toggle light/dark mode">🌙 Dark mode</button>
+          <button id="theme-toggle-btn" class="manage-btn" onclick="toggleTheme()" title="Cycle theme: Dark → Light → Warm">🌙 Dark mode</button>
           <button id="lang-toggle-btn" class="manage-btn" onclick="toggleLanguage()" title="Switch between English and Romaji anime titles">🈯 Titles: EN</button>
         </div>
 
@@ -1646,19 +1659,19 @@
       <line x1="256" y1="256" x2="288" y2="256" stroke="#f0c040" stroke-width="3" stroke-linecap="round"/>
     </svg>
     <h2 id="welcome-modal-title">Welcome to Kessen</h2>
-    <p class="welcome-subtitle">Your anime tier list, built battle by battle.</p>
+    <p class="welcome-subtitle">Your anime tier list, built one pick at a time.</p>
     <div class="welcome-steps">
       <div class="welcome-step">
         <div class="welcome-step-num">1</div>
         <div class="welcome-step-text">
           <strong>Pick your favourite</strong>
-          <span>Two anime appear — tap the one you'd rather watch. No right answer.</span>
+          <span>Two anime go head-to-head. Pick the one you'd watch tonight — gut feel only.</span>
         </div>
       </div>
       <div class="welcome-step">
         <div class="welcome-step-num">2</div>
         <div class="welcome-step-text">
-          <strong>Your tier list builds itself</strong>
+          <strong>Your tier list takes shape</strong>
           <span>Each pick updates ELO scores. S–D tiers form automatically from your choices.</span>
         </div>
       </div>
