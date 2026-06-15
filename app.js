@@ -13853,13 +13853,31 @@ function toggleFormat(fmt, scope = 'ranking') {
     return; // ranking-scope filter has no effect on the battle pool
   }
 
+  // v1.0.209 — if the Tower champion-picker modal is open, refresh its list
+  // immediately. populateTowerList already respects hiddenFormatsBattle, but
+  // was only being called on modal-open / search-input — toggling a global
+  // filter while the modal was open left the list stale, including showing
+  // anime the user had just hidden or omitting anime they'd just shown again.
+  // Independent of towerMode (run in progress), which we leave untouched
+  // below.
+  const towerModalOpen = byId(IDS.towerModal)?.classList.contains('open');
+  if (towerModalOpen) {
+    const q = byId(IDS.towerSearch)?.value?.toLowerCase() || '';
+    populateTowerList(q);
+  }
+
   // Battle-scope: immediately swap out any card whose format is now filtered.
   const battleVisible = byId(IDS.battleScreen)?.style.display !== 'none';
   if (!battleVisible || towerMode) return;
 
   if (trioMode) {
     const hasFiltered = currentTrio.some(idx => hiddenFormatsBattle.has(animeList[idx]?.format));
-    if (hasFiltered) renderTrio();
+    // v1.0.209 — also re-render when the trio arena is empty (currentTrio===[])
+    // because filters wiped the pool. Without this, toggling a filter back on
+    // after filtering everything out left the arena hidden forever — same bug
+    // as the standard battle arena had.
+    const trioHidden = currentTrio.length === 0;
+    if (hasFiltered || trioHidden) renderTrio();
   } else {
     const aFiltered = currentA != null && hiddenFormatsBattle.has(animeList[currentA]?.format);
     const bFiltered = currentB != null && hiddenFormatsBattle.has(animeList[currentB]?.format);
@@ -14338,6 +14356,21 @@ function _renderPrediction(media, pred, container) {
 // stops cleanly and tower-specific UI is reset to defaults. This is the bug
 // fix path for "switching from tower to trio (or any other mode) leaves
 // towerMode hot and routes every subsequent pick through pickWinnerTower."
+// v1.0.209 — lock/unlock the global ≡ Filter button for the duration of a
+// tower run. Tower runs are a fixed sequence of 10 pre-picked opponents, so
+// changing filters mid-run would either silently take no effect (the previous
+// behaviour, which produced the "filter does nothing" complaint) or invalidate
+// the matchmaking band that's already in play. Disabling honestly is the
+// cleanest option. Tooltip explains why on hover.
+function _setFilterBtnTowerLock(locked) {
+  const btn = byId(IDS.filterBtn);
+  if (!btn) return;
+  btn.disabled = !!locked;
+  btn.title = locked
+    ? "Filters can't change during a tower run"
+    : 'Filter formats from battle pool';
+}
+
 function _exitTowerState() {
   if (!towerMode) return;
   towerMode      = false;
@@ -14355,6 +14388,7 @@ function _exitTowerState() {
   if (skip) skip.disabled = false;
   const btn = byId(IDS.modeBtn);
   if (btn) btn.classList.remove('active-tower');
+  _setFilterBtnTowerLock(false); // v1.0.209
 }
 
 // Exits any settle/blind/trio/wso mode cleanly — used by startTower() so its
@@ -14454,7 +14488,19 @@ function setMode(name) {
   if (wsoMode    && !prevWso)    { renderBattle(); return; } // v1.0.207
   // Exiting trio or wso → back to normal pair
   if (!trioMode  && prevTrio)    { renderBattle(); return; }
-  if (!wsoMode   && prevWso)     { renderBattle();           } // v1.0.207
+  if (!wsoMode   && prevWso)     { renderBattle(); return; } // v1.0.207
+  // v1.0.209 — exiting Settle: Settle picks pairs differently from the
+  // standard picker (biased toward uncertain matchups), so a re-render is
+  // needed when leaving it. Also catches the "arena was hidden because of an
+  // empty filter pool" case, where the unconditional `display: ''` above
+  // would otherwise re-show the arena with stale / invalid cards.
+  if (!settleMode && prevSettle) { renderBattle(); return; }
+  // v1.0.209 — catch-all for any other transition where the arena was
+  // hidden by an empty pool: re-render so renderBattle gets a chance to
+  // either find a valid pair or re-hide the arena cleanly. Without this,
+  // switching from Blind → Normal (or any pair where neither side mutates
+  // pair-picking) would expose stale cards from before the filter wipe.
+  if (currentA == null && currentB == null && !trioMode) { renderBattle(); }
 }
 
 // Toggles the popover. Uses a one-shot outside-click listener (registered on
@@ -14537,6 +14583,29 @@ function toggleModeMenu(event) {
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
+    // v1.0.209 — pick the direction (open up vs open down) with more space,
+    // then cap max-height to whatever's available in that direction. The
+    // popover normally drops upward (`bottom: calc(100% + 6px)` in CSS),
+    // but on short viewports there's not enough room above and the top
+    // items overflow off-screen. By switching to downward (`top: calc(...)`
+    // via inline style) when below has more room, both ends of the menu
+    // become reachable on short viewports. 120px floor keeps a couple of
+    // options visible at minimum; overflow-y: auto handles internal scroll.
+    const btnRect      = btn.getBoundingClientRect();
+    const viewportH    = window.innerHeight || document.documentElement.clientHeight;
+    const gap          = 22; // 16px breathing room + 6px popover offset
+    const spaceAbove   = btnRect.top - gap;
+    const spaceBelow   = viewportH - btnRect.bottom - gap;
+    const openDown     = spaceBelow > spaceAbove;
+    const cap          = Math.max(120, openDown ? spaceBelow : spaceAbove);
+    pop.style.maxHeight = `${cap}px`;
+    if (openDown) {
+      pop.style.bottom = 'auto';
+      pop.style.top    = 'calc(100% + 6px)';
+    } else {
+      pop.style.top    = 'auto';
+      pop.style.bottom = 'calc(100% + 6px)';
+    }
     setTimeout(() => document.addEventListener('click', _closeModeMenu, { once: true }), 0);
     document.addEventListener('keydown', _modeMenuEscHandler);
   }
@@ -14628,7 +14697,19 @@ function renderTrio() {
   } else {
     trio = pickTrio();
   }
-  if (!trio) { setMode('normal'); return; }
+  if (!trio) {
+    // v1.0.209 — same shape as renderBattle's empty-pair handling: hide the
+    // trio arena when the eligible pool is too small, but stay in Trio mode
+    // (consistent with Blind/WSO/Settle). The user gets their cards back as
+    // soon as they loosen a filter. Previously this called setMode('normal'),
+    // which kicked the user out of Trio whenever filters wiped the pool.
+    const trioArena = byId(IDS.trioArena);
+    if (trioArena) trioArena.style.display = 'none';
+    currentTrio = [];
+    return;
+  }
+  const trioArena = byId(IDS.trioArena);
+  if (trioArena) trioArena.style.display = 'block';
   currentTrio = trio;
   trioOrder   = [];
 
@@ -15063,10 +15144,20 @@ function pickSettlePair() {
     );
 
   if (uncertain.length < 2) {
-    // Fallback to normal if everyone is confident — route through setMode so
-    // the button, banner, and popover radio all reset in lockstep.
-    setMode('normal');
-    return null; // signal to use normal pick
+    // v1.0.209 — distinguish two distinct "uncertain pool is empty" causes:
+    //   (a) everyone has hit TARGET_BATTLES_PER_ANIME (Settle's job is done —
+    //       legitimately fall back to normal mode for future battles)
+    //   (b) everything is filtered out by hiddenFormatsBattle / excludedIds
+    //       (transient — keep Settle on so the user returns to it when they
+    //       loosen a filter, matching Blind/WSO/Tower behavior)
+    // Previously this always called setMode('normal'), kicking the user out
+    // of Settle whenever filters wiped the pool — inconsistent with the
+    // other modes which leave the user in-mode and just hide the arena.
+    const eligibleCount = animeList.filter(a =>
+      !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format)
+    ).length;
+    if (eligibleCount >= 2) setMode('normal'); // case (a) — confidence threshold met
+    return null; // either way, signal to caller
   }
 
   // Pick A randomly from uncertain pool, weighted by fewest comparisons
@@ -15165,6 +15256,7 @@ function startTower(championIdx) {
   _towerStartBattleCount = battleCount;
   const modeBtn  = byId(IDS.modeBtn);
   if (modeBtn) { modeBtn.classList.add('active-tower'); modeBtn.textContent = '⚡ Mode: Tower'; }
+  _setFilterBtnTowerLock(true); // v1.0.209
 
   // v1.0.120 — opponents are picked lazily per-round in renderTowerRound() so
   // the matchmaking band can adapt to the champion's current ELO as it shifts
@@ -15272,6 +15364,7 @@ function finishTower() {
   towerMode = false;
   const modeBtn = byId(IDS.modeBtn);
   if (modeBtn) { modeBtn.classList.remove('active-tower'); modeBtn.textContent = '⚙ Mode'; }
+  _setFilterBtnTowerLock(false); // v1.0.209
   byId(IDS.towerProgressWrap).style.display = 'none';
   byId(IDS.towerStatus).style.display = 'none';
 
