@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.208" />
+  <meta name="version" content="1.0.209" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1146,7 +1146,6 @@
               <div class="taste-identity-label">Your taste type</div>
               <h2 class="taste-identity-type" id="taste-headline"></h2>
             </div>
-            <button id="taste-refresh-btn" class="util-btn" onclick="renderProfileTab()" title="Refresh">↻</button>
           </div>
           <div class="taste-identity-insights" id="taste-identity-insights"></div>
           <div class="taste-meta" id="taste-meta"></div>

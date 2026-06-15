@@ -203,7 +203,6 @@ const IDS = Object.freeze({
   tasteLoading:           'taste-loading',
   tasteLoadingMsg:        'taste-loading-msg',
   tasteMeta:              'taste-meta',
-  tasteRefreshBtn:        'taste-refresh-btn',
   thSc:                   'th-sc',
   titleA:                 'title-a',
   titleB:                 'title-b',
@@ -1860,7 +1859,7 @@ function _saveStateNow() {
       // migrations cleanly. Bump _schema whenever the on-disk shape
       // changes; older saves load with _schema absent (treated as 0) and
       // the migration block in loadState fills in defaults.
-      _schema: 4,
+      _schema: 5,
       animeList: list, battleCount, currentA, currentB, battleHistory,
       excludedIds: [...excludedIds],
       hiddenFormatsBattle:   [...hiddenFormatsBattle],
@@ -1881,6 +1880,16 @@ function _saveStateNow() {
       wsoWinnerIdx,
       wsoStreak,
       wsoFacedOrder,
+      // v1.0.209 — round-trip the tasteStorySeen list through cloud sync so
+      // milestones a user has seen on one device don't pop again on another.
+      // Read from localStorage at save time; merged with union semantics on
+      // the receiving device (see _mergeTasteStorySeen).
+      tasteStorySeen: _readTasteStorySeen(),
+      // v1.0.209 — same round-trip for the "How you've changed" snapshots.
+      // Previously these were local-only, so the timeline rendered empty on
+      // any device that hadn't been present when the milestones were crossed.
+      // Cap (40 entries) is enforced both at save time and at merge time.
+      tasteSnapshots: _readTasteSnapshots(),
       _owner: owner, // { source, id } or null — used to detect collisions on next load
     });
   };
@@ -2217,6 +2226,15 @@ function _applyCloudSaveToMemory(cloud) {
   achievements    = cloud.achievements   ?? {};
   comparedFriends = new Set(cloud.comparedFriends ?? []);
   matchupStats    = cloud.matchupStats   ?? {};
+  // v1.0.209 — merge cloud's seen taste-story milestones into this device's
+  // localStorage list. Without this, a device cloud-syncing into the middle
+  // of a battle history (e.g. phone first sign-in at battle 1306) had an
+  // empty local seen list and the catch-up logic in checkMilestone fired
+  // already-seen milestones as fresh popups on the next battle.
+  _mergeTasteStorySeen(cloud.tasteStorySeen);
+  // v1.0.209 — and same merge for the "How you've changed" snapshots, so
+  // the timeline reflects the user's full history across devices.
+  _mergeTasteSnapshots(cloud.tasteSnapshots);
 
   // Migrate old data fields
   const _cloudAvgBattles = Math.round((cloud.battleCount || 0) * 2 / Math.max(cloud.animeList.length, 1));
@@ -2453,6 +2471,11 @@ function loadState(username, source = 'anilist') {
     wsoWinnerIdx    = (typeof s.wsoWinnerIdx === 'number') ? s.wsoWinnerIdx : null;
     wsoStreak       = (typeof s.wsoStreak === 'number') ? s.wsoStreak : 0;
     wsoFacedOrder   = Array.isArray(s.wsoFacedOrder) ? s.wsoFacedOrder.slice() : [];
+    // v1.0.209 — merge seen taste-story milestones from this save with whatever
+    // already lives in localStorage. Older saves predate this field and load
+    // with no-op (incoming undefined → merge is a no-op).
+    _mergeTasteStorySeen(s.tasteStorySeen);
+    _mergeTasteSnapshots(s.tasteSnapshots);
     // Migrate old saves that predate titleEn/titleRo/description/format fields
     const _avgBattles = Math.round((s.battleCount || 0) * 2 / Math.max(animeList.length, 1));
     animeList.forEach(a => {
@@ -2608,11 +2631,13 @@ function pickOpponents() {
     }
   }
 
-  // Fallback: if almost everything is excluded, use first two available
-  if (activeCount < 2) {
-    const fallback = animeList.map((_, i) => i).filter(i => weights[i] > 0);
-    return [fallback[0] ?? 0, fallback[1] ?? 1];
-  }
+  // v1.0.209 — no valid battle pair available (list too small or everything
+  // filtered out). Return null so the caller can hide the battle arena and
+  // leave the warning banner alone. Previously this fell back to
+  // [animeList[0], animeList[1]], which rendered filtered-out anime as a
+  // battle pair right below the "All anime are filtered out" warning —
+  // confusing and arguably broken (those anime weren't supposed to appear).
+  if (activeCount < 2) return null;
 
   function weightedPick(exclude) {
     let r = Math.random() * totalW;
@@ -2788,22 +2813,39 @@ function renderBattle() {
     h2.textContent = 'Which did you enjoy more?';
   }
 
-  let ia, ib;
+  // v1.0.209 — collect the pair into a single nullable variable so we can
+  // handle "no valid pair" (everything filtered out) in one place. Previously
+  // every branch destructured directly, which crashed on null and led to the
+  // workaround in pickOpponents that rendered filtered anime anyway.
+  let pair;
   if (nextPairOverride && nextPairOverride.length > 0) {
-    [ia, ib] = nextPairOverride.shift();
+    pair = nextPairOverride.shift();
     if (nextPairOverride.length === 0) nextPairOverride = null;
   } else if (wsoMode) {
     // v1.0.207 — Winner Stays On: champion (side A) returns from previous
     // battle; opponent (side B) is fresh. Preload is bypassed because
     // pickWsoPair has its own deterministic rules and the preloader picks
     // randomly via pickOpponents.
-    [ia, ib] = pickWsoPair();
+    pair = pickWsoPair();
   } else if (settleMode) {
-    const pair = pickSettlePair();
-    [ia, ib] = pair ?? pickOpponents();
+    pair = pickSettlePair() ?? pickOpponents();
   } else {
-    [ia, ib] = _takeValidPreloadedPair() ?? pickOpponents();
+    pair = _takeValidPreloadedPair() ?? pickOpponents();
   }
+  const arena = document.querySelector('.battle-arena');
+  if (!pair) {
+    // v1.0.209 — no valid pair: hide the battle arena entirely so the
+    // "All anime are filtered out" warning (already shown by pickOpponents)
+    // stands alone, rather than sitting above a stale or filtered-out card
+    // pair. Next renderBattle (e.g. after the user loosens a filter) will
+    // either get a valid pair and re-show the arena, or repeat this branch.
+    if (arena) arena.style.display = 'none';
+    currentA = null;
+    currentB = null;
+    return;
+  }
+  if (arena) arena.style.display = '';
+  const [ia, ib] = pair;
   renderPair(ia, ib);
   _renderWsoBadge(false); // v1.0.207 — refresh badge on every render; no pulse here, pickWinner pulses on increment
   saveState();
@@ -2856,7 +2898,12 @@ function _preloadNextBattlePair() {
   if (settleMode || towerMode || trioMode) return;
   setTimeout(() => {
     if (settleMode || towerMode || trioMode) return;
-    _preloadedPair = pickOpponents();
+    // v1.0.209 — pickOpponents now returns null when everything is filtered
+    // out. Bail out of the preload in that case rather than crashing on
+    // .map() of null. Next renderBattle will retry once filters relax.
+    const pair = pickOpponents();
+    if (!pair) { _preloadedPair = null; _preloadedImgs = null; return; }
+    _preloadedPair = pair;
     _preloadedImgs = _preloadedPair.map(i => {
       const url = _coverForBattle(animeList[i]?.cover);
       if (!url) return null;
@@ -2915,8 +2962,12 @@ function _pickWsoOpponent() {
 
 function pickWsoPair() {
   if (!_wsoChampionValid()) {
-    // Fresh start — let pickOpponents seed both, take side A as champion
-    const [a, b] = pickOpponents();
+    // Fresh start — let pickOpponents seed both, take side A as champion.
+    // v1.0.209 — null if everything filtered out; propagate so renderBattle
+    // can hide the arena rather than render an invalid pair.
+    const seed = pickOpponents();
+    if (!seed) return null;
+    const [a, b] = seed;
     wsoWinnerIdx  = a;
     wsoStreak     = 0;
     wsoFacedOrder = [b];
@@ -10716,6 +10767,59 @@ function _tasteArchetypeIndex(milestone) {
        + Math.round((milestone - TASTE_STORY_REPEAT_FROM) / TASTE_STORY_REPEAT_INTERVAL) - 1;
 }
 
+// v1.0.209 — tasteStorySeen helpers. Previously this list lived only in
+// localStorage, so a fresh device that cloud-synced into the middle of a
+// battle history (e.g. phone first sign-in at battle 1306) had `seen = []`
+// and the catch-up logic in checkMilestone fired the most recent milestone
+// as a "haven't seen this" popup, even though the user had already seen it
+// on another device. The fix is to round-trip the seen list through cloud
+// sync, merging with `union` semantics so a device that showed a milestone
+// while offline doesn't lose its local record when remote state arrives.
+function _readTasteStorySeen() {
+  try { return JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]'); }
+  catch { return []; }
+}
+function _mergeTasteStorySeen(incoming) {
+  if (!Array.isArray(incoming) || incoming.length === 0) return;
+  try {
+    const local = _readTasteStorySeen();
+    const merged = Array.from(new Set([...local, ...incoming])).sort((a, b) => a - b);
+    if (merged.length !== local.length) {
+      localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(merged));
+    }
+  } catch { /* ignore — sync failure shouldn't break the app */ }
+}
+
+// v1.0.209 — tasteSnapshots helpers. Same architectural shape as
+// tasteStorySeen above: snapshots lived only in localStorage, so the
+// "How you've changed" timeline appeared empty on any device that didn't
+// happen to be present when each 50-battle milestone was crossed. Now we
+// round-trip the snapshots through cloud sync, merging by battleCount key
+// with `local wins` semantics on collision (the local snapshot's id-list
+// came from this device's resolved animeList, which is consistent with what
+// will render at paint time). Snapshots are capped at 40 entries (8 KB
+// upper bound) — well within the cloud payload budget.
+function _readTasteSnapshots() {
+  try { return JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]'); }
+  catch { return []; }
+}
+function _mergeTasteSnapshots(incoming) {
+  if (!Array.isArray(incoming) || incoming.length === 0) return;
+  try {
+    const local = _readTasteSnapshots();
+    const byBattle = new Map();
+    // Incoming first so locals overwrite on collision
+    incoming.forEach(s => { if (s && typeof s.battleCount === 'number') byBattle.set(s.battleCount, s); });
+    local.forEach(s    => { if (s && typeof s.battleCount === 'number') byBattle.set(s.battleCount, s); });
+    const merged = [...byBattle.values()].sort((a, b) => a.battleCount - b.battleCount);
+    // Re-impose the 40-entry cap (keep most recent — same as _maybeSaveTasteSnapshot)
+    const capped = merged.length > 40 ? merged.slice(merged.length - 40) : merged;
+    if (capped.length !== local.length) {
+      localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(capped));
+    }
+  } catch { /* ignore — sync failure shouldn't break the app */ }
+}
+
 function checkMilestone(before, after) {
   // Taste story — check before the regular milestone so it appears first
   let tasteHit = _findTasteStoryMilestone(before, after);
@@ -13378,32 +13482,42 @@ function _paintTasteEvolution(el) {
     const currentTop = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 10).map(a => a.id);
     const allPoints  = [...allSnaps, { battleCount, top10: currentTop, isCurrent: true }];
 
-    // Cap display at 7 cards: always include first + last (now), spread the rest
-    const MAX_DISPLAY = 7;
-    let points;
-    if (allPoints.length <= MAX_DISPLAY) {
-      points = allPoints;
-    } else {
-      points = [allPoints[0]];
-      const step = (allPoints.length - 2) / (MAX_DISPLAY - 2);
-      for (let i = 1; i <= MAX_DISPLAY - 2; i++) {
-        points.push(allPoints[Math.round(i * step)]);
-      }
-      points.push(allPoints[allPoints.length - 1]);
-    }
+    // v1.0.209 — show every snapshot. Previously capped at 7 cards with even
+    // subsampling, which felt like "data is missing" to users with 8+
+    // snapshots (e.g. a 412-battle account has 8 saved + Now = 9, and the
+    // subsampler dropped the cards at battles 150 and 300). The list scrolls
+    // horizontally on every viewport already, so showing all of them adds no
+    // layout problem — the hard cap at 40 saved snapshots in
+    // _maybeSaveTasteSnapshot keeps the upper bound reasonable for very
+    // heavy users (2000+ battles).
+    const points = allPoints;
 
     // Detect gaps in the milestone sequence (saved snapshots more than 50
     // battles apart, or marked gapBefore). Used to render a subtle indicator
     // between cards so the user understands why some milestones are missing
     // rather than thinking the timeline is broken.
+    //
+    // v1.0.209 — was a naive `(b - a) > 75` distance check, which fired on
+    // *every* pair of displayed cards more than ~75 battles apart. That's
+    // misleading whenever the subsampler drops middle cards from a complete
+    // timeline (e.g. for 9 snapshots capped at 7 cards, snapshots 150 and 300
+    // get subsampled out and the previous logic flagged 100→200 and 250→350
+    // as "missing milestones" even though they were saved). Now we check the
+    // underlying allSnaps for every expected 50-battle milestone between the
+    // two displayed cards; only a truly missing milestone counts as a gap.
+    const savedBattleCounts = new Set(allSnaps.map(s => s.battleCount));
     const isGap = (snap, prev) => {
       if (!prev) return false;
       if (snap.gapBefore) return true;
-      // For points coming from the in-memory subsample we may not have the
-      // gapBefore flag — fall back to comparing battle counts directly.
       const a = prev.battleCount || 0;
       const b = snap.isCurrent ? battleCount : (snap.battleCount || 0);
-      return (b - a) > 75; // > 50 + small slack for the trio +3 jump
+      // Walk the expected 50-battle milestones strictly between a and b. If
+      // any one is missing from the saved set, there's a real recording gap.
+      // Subsampling-only "gaps" hit every expected milestone in savedBattleCounts.
+      for (let m = a + 50; m < b; m += 50) {
+        if (!savedBattleCounts.has(m)) return true;
+      }
+      return false;
     };
 
     const cards = points.map((snap, i) => {
@@ -13435,12 +13549,9 @@ function _paintTasteEvolution(el) {
       return arrow + card;
     }).join('');
 
-    const totalSnaps = allSnaps.length;
-    const note = totalSnaps > MAX_DISPLAY - 1
-      ? `<p class="taste-drift-placeholder" style="margin-top:10px">Showing ${points.length} of ${totalSnaps + 1} snapshots — evenly spread across your ${battleCount} battles.</p>`
-      : '';
-
-    el.innerHTML = `<div class="evo-timeline">${timeline}</div>${note}`;
+    // v1.0.209 — subsampling removed, so the "Showing N of M" notice is no
+    // longer needed. The timeline now reflects every saved snapshot directly.
+    el.innerHTML = `<div class="evo-timeline">${timeline}</div>`;
   } catch {
     el.innerHTML = '';
   }
@@ -13752,7 +13863,14 @@ function toggleFormat(fmt, scope = 'ranking') {
   } else {
     const aFiltered = currentA != null && hiddenFormatsBattle.has(animeList[currentA]?.format);
     const bFiltered = currentB != null && hiddenFormatsBattle.has(animeList[currentB]?.format);
-    if (aFiltered || bFiltered) renderBattle();
+    // v1.0.209 — also re-render when the arena is currently hidden because
+    // there were no valid pairs (currentA/currentB === null). Without this,
+    // toggling a format back on after filtering everything out left the
+    // arena hidden forever — renderBattle was only triggered when the
+    // visible cards themselves were filtered, but null cards can't trip
+    // that check.
+    const arenaHidden = currentA === null && currentB === null;
+    if (aFiltered || bFiltered || arenaHidden) renderBattle();
   }
 }
 
@@ -15165,6 +15283,11 @@ function finishTower() {
   // called — the tower already has its own summary screen.
   checkMilestone(_towerStartBattleCount, battleCount);
   _checkAchievements();
+  // v1.0.209 — also save a taste snapshot if the tower run crossed a
+  // 50-battle milestone. Without this, a user whose first 50 battles were
+  // all in tower mode never got a baseline snapshot, so the "How you've
+  // changed" timeline rendered empty even after they crossed the threshold.
+  _maybeSaveTasteSnapshot();
   byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
   byId(IDS.battlePromptP).textContent  = 'Click your favourite — or skip if you can\'t decide.';
   byId(IDS.undoBtn).disabled = true;

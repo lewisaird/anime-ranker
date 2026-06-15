@@ -25,6 +25,15 @@
       /* `--border-color` referenced by .social-play-card rules — alias to
          the standard border so the cards actually have a visible edge. */
       --border-color:     var(--border-default);
+      /* v1.0.209 — hover tint backgrounds. Previously these tints were
+         hard-coded at every hover site (`background: #1c2940`, etc), which
+         clashed with the warm theme's brown palette. Hoisted here so warm-mode
+         can override with warmer-toned equivalents. Dark theme keeps the
+         original blue/red/amber tints since they harmonize with cool-grey
+         surfaces. */
+      --hover-blue-bg:    #1c2940;
+      --hover-red-bg:     #3d0f0a;
+      --hover-amber-bg:   #2d1b00;
       /* Tells browsers to render native form controls (select, scrollbar,
          checkbox, date picker) in dark theme. Without this, macOS Chrome
          renders <select> in light-mode regardless of CSS color values —
@@ -68,7 +77,9 @@
       --bg-tertiary:      #251f18;
       --border-subtle:    #2a251f;
       --border-default:   #3a322a;
-      --text-muted:       #7d7568;
+      /* v1.0.209 — was #7d7568, ~3.0:1 contrast on bg-primary (below WCAG AA
+         for body text). Lifted to ~4.5:1 while staying warm-tinted. */
+      --text-muted:       #9a8f7e;
       --text-secondary:   #a99e8c;
       --text-primary:     #d6cebd;
       --text-bright:      #f5ede2;
@@ -80,6 +91,12 @@
       --accent-amber:     #ffb38a;
       --accent-primary:   var(--accent-blue);
       --border-color:     var(--border-default);
+      /* v1.0.209 — warmer hover tints so blue / red / amber hover backgrounds
+         don't clash against the brown-tinted warm palette. Same hue families,
+         shifted toward orange-brown. */
+      --hover-blue-bg:    #2a2419;
+      --hover-red-bg:     #3a1610;
+      --hover-amber-bg:   #2e1d05;
       color-scheme: dark;
     }
 
@@ -363,9 +380,12 @@
        toggles these classes but they were never styled, so the Mode button
        didn't visually reflect which mode was active — inconsistent with
        Settle/Blind. Amber for Trio matches its banner; flame-orange for WSO
-       matches its banner + streak badge. */
+       matches its banner + streak badge.
+       v1.0.209 — bumped WSO border saturation to push it further into red
+       territory so it's distinguishable from Trio's amber on AMOLED phones in
+       bright sunlight. (Trio: yellow-amber. WSO: orange-red.) */
     #mode-btn.active-trio   { background: #2a1d0a; border-color: #c9913a; color: #e3a444; }
-    #mode-btn.active-wso    { background: #2a1808; border-color: #c96a3a; color: #ffb38a; }
+    #mode-btn.active-wso    { background: #2a1004; border-color: #e85a20; color: #ffb38a; }
     #filter-btn.has-filter  { border-color: #d29922; color: #e3b341; }
 
     #filter-popover {
@@ -418,7 +438,11 @@
       font-size: 0.85rem;
       font-family: inherit;
     }
-    #mode-popover button[role="menuitemradio"]:hover  { background: var(--border-subtle); }
+    /* v1.0.209 — guarded behind hover-capable pointer so taps on hybrid
+       touch laptops don't leave a stuck hover background after the tap. */
+    @media (hover: hover) {
+      #mode-popover button[role="menuitemradio"]:hover  { background: var(--border-subtle); }
+    }
     #mode-popover button[role="menuitemradio"]:focus  { outline: 2px solid var(--accent-blue-dark); outline-offset: -2px; }
     #mode-popover button[aria-checked="true"]         { background: #1f2937; }
     #mode-popover .mode-icon { font-size: 1.1rem; flex: 0 0 auto; }
@@ -432,7 +456,7 @@
       background: none; border: none; cursor: pointer; color: var(--text-bright);
       text-align: left;
     }
-    .mode-popover-action:hover { background: var(--border-subtle); }
+    @media (hover: hover) { .mode-popover-action:hover { background: var(--border-subtle); } }
     #mode-btn.active-tower { background: #1c1a0a; border-color: #9e6a03; color: #e3b341; }
 
     .btn-danger {
@@ -525,6 +549,11 @@
         transform: translateY(-3px);
         box-shadow: 0 8px 24px rgba(88, 166, 255, 0.15);
       }
+      /* v1.0.209 — drop the streak-badge shadow during card hover so the
+         card's own shadow doesn't double-paint with the badge's. Both fired
+         at the same time during hover-in/out which caused a visible flicker
+         on desktop pointer speed. */
+      .anime-card:hover .wso-streak-badge { box-shadow: none; }
     }
     .anime-card:active { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(88,166,255,0.2); }
 
@@ -639,18 +668,35 @@
       cursor: pointer;
       transition: all 0.15s;
     }
+    /* v1.0.209 — de-nested duplicate `@media (hover: hover)` wrapper. */
     @media (hover: hover) {
-      @media (hover: hover) {
-      .util-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
-      }
-      @media (hover: hover) {
-      .util-btn.util-danger:hover { border-color: var(--accent-red); color: var(--accent-red); background: #3d0f0a; }
-      }
+      .util-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--hover-blue-bg); }
+      .util-btn.util-danger:hover { border-color: var(--accent-red); color: var(--accent-red); background: var(--hover-red-bg); }
     }
 
-    /* MANAGE TAB */
-    .manage-tab-content { display: flex; flex-direction: column; gap: 24px; max-width: 480px; }
-    .manage-section { display: flex; flex-direction: column; gap: 8px; }
+    /* MANAGE TAB
+       v1.0.209 — was a 480px single column on every viewport, wasting desktop
+       space and producing a long scroll. Now an auto-fill card grid: each
+       .manage-section is a card, columns flow naturally (1 on phones, 2 on
+       tablets, 3 on wide desktops) without breakpoint-specific overrides.
+       The 300px minmax keeps cards readable; the 1100px max-width stops the
+       grid sprawling across ultrawide monitors. */
+    .manage-tab-content {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+      max-width: 1100px;
+      align-items: start; /* cards size to their content instead of stretching to row height */
+    }
+    .manage-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 12px;
+      padding: 16px;
+    }
     .manage-section-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
       letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 2px; }
     .manage-btn {
@@ -659,15 +705,15 @@
       text-align: left; transition: border-color 0.15s, background 0.15s;
     }
     @media (hover: hover) {
-    .manage-btn:hover { border-color: var(--accent-blue); background: #1c2940; }
+    .manage-btn:hover { border-color: var(--accent-blue); background: var(--hover-blue-bg); }
     }
     .manage-btn-anilist { border-color: #1a6fd4; color: var(--accent-blue); }
     @media (hover: hover) {
-    .manage-btn-anilist:hover { background: #1c2940; border-color: var(--accent-blue); }
+    .manage-btn-anilist:hover { background: var(--hover-blue-bg); border-color: var(--accent-blue); }
     }
     .manage-btn-danger { border-color: #6e3232; color: var(--accent-red); }
     @media (hover: hover) {
-    .manage-btn-danger:hover { border-color: var(--accent-red); background: #3d0f0a; }
+    .manage-btn-danger:hover { border-color: var(--accent-red); background: var(--hover-red-bg); }
     }
     .manage-danger-box { background: #1a0d0d; border: 1px solid #6e3232; border-radius: 10px; padding: 16px; }
 
@@ -1778,7 +1824,11 @@
 
     /* ── Drift ──────────────────────────────────────────────────────────── */
     /* TASTE EVOLUTION */
-    .evo-timeline { display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+    /* v1.0.209 — scroll-snap so flick-scrolling on touch lands on a card rather
+       than mid-card. `proximity` is friendlier than `mandatory` (still lets users
+       free-scroll if they're moving fast) and matches the natural reading rhythm
+       of the timeline. */
+    .evo-timeline { display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
     .evo-arrow { color: var(--border-default); font-size: 1.2rem; padding-top: 32px; flex-shrink: 0; }
     /* Gap-arrow: shown between non-consecutive snapshots so the user knows
        intermediate milestones weren't recorded (rather than thinking the
@@ -1789,7 +1839,7 @@
       letter-spacing: -1px;
       cursor: help;
     }
-    .evo-card { background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 10px; padding: 12px; min-width: 150px; flex-shrink: 0; }
+    .evo-card { background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 10px; padding: 12px; min-width: 150px; flex-shrink: 0; scroll-snap-align: start; }
     .evo-card-current { border-color: var(--accent-blue); }
     .evo-card-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 10px; }
     .evo-card-current .evo-card-label { color: var(--accent-blue); }
@@ -1928,7 +1978,11 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
       border-radius: 16px;
-      max-width: 560px;
+      /* v1.0.209 — raised 560 → 720. With the side-by-side cover + text layout
+         the description column was squeezed to ~350 px next to the sticky
+         140 px cover. 720 gives the text ~520 px to breathe on desktop and
+         the mobile breakpoint below already flips to column for narrow widths. */
+      max-width: 720px;
       margin: 0 auto;
       padding: 24px;
       position: relative;
@@ -2126,10 +2180,9 @@
       background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
       font-size: 0.7rem; padding: 3px 8px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
     }
+    /* v1.0.209 — de-nested duplicate `@media (hover: hover)` wrapper. */
     @media (hover: hover) {
-      @media (hover: hover) {
       .exclude-btn:hover { border-color: var(--accent-red); color: var(--accent-red); background: #2a0a0a; }
-      }
     }
 
     /* EXCLUDED SECTION */
@@ -2517,6 +2570,11 @@
       align-items: center;
       gap: 8px;
       justify-content: space-between;
+      /* v1.0.209 — wrap on narrow phones so the Stop button drops to a new
+         line instead of clipping the descriptive text. Affects all four
+         mode banners (settle / blind / trio / wso) — same rule applied
+         below for visual consistency. */
+      flex-wrap: wrap;
     }
     #settle-banner.active { display: flex; }
 
@@ -2532,6 +2590,7 @@
       align-items: center;
       gap: 8px;
       justify-content: space-between;
+      flex-wrap: wrap; /* v1.0.209 — see settle-banner */
     }
     #blind-banner.active { display: flex; }
 
@@ -2892,7 +2951,7 @@
       border: 1px solid var(--border-default); border-radius: 8px; cursor: pointer;
       transition: border-color 0.15s;
     }
-    .tower-anime-item:hover { border-color: var(--accent-amber); }
+    @media (hover: hover) { .tower-anime-item:hover { border-color: var(--accent-amber); } }
     .tower-anime-item img { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; }
     .tower-anime-item span { font-size: 0.85rem; flex: 1; }
     .tower-anime-elo { font-size: 0.75rem; color: var(--text-secondary); }
@@ -4102,7 +4161,30 @@
       #progress-info { font-size: 0.75rem; }
 
       /* ── Manage tab ── */
-      .manage-btn { width: 100%; }
+      /* v1.0.209 — center the button text on mobile. Desktop keeps the
+         left-aligned settings-panel pattern, but with width:100% on phones
+         the icon + label hugged the left edge with a large dead zone to
+         the right of long buttons ("Save to cloud now", etc). Centering
+         feels more like a CTA at full width. */
+      .manage-btn { width: 100%; text-align: center; }
+      /* v1.0.209 — force single column on narrow phones. The card grid's
+         `minmax(300px, 1fr)` on the desktop version forces each card wider
+         than a 320–360 px viewport, clipping the right edge. */
+      .manage-tab-content { grid-template-columns: 1fr; }
+
+      /* v1.0.209 — Winner Stays On streak badge: anchor over the cover image
+         (left side of the row-flipped card) instead of centered over the full
+         card width. On mobile .anime-card is row-flipped (image left, title
+         right) so the desktop centered badge sits between the two and looks
+         visually disconnected from the champion. Separate mobile keyframes
+         because the desktop ones bake `translateX(-50%)` into the transform. */
+      .wso-streak-badge { left: 12px; transform: none; }
+      .wso-streak-badge.pulse { animation-name: wso-pulse-mobile; }
+      @keyframes wso-pulse-mobile {
+        0%   { transform: scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+        40%  { transform: scale(1.18); box-shadow: 0 2px 12px rgba(255, 138, 0, 0.45); }
+        100% { transform: scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+      }
     }
 
     /* ── Touch-device tap targets ──────────────────────────────────────────────
@@ -4290,6 +4372,7 @@
       align-items: center;
       gap: 8px;
       justify-content: space-between;
+      flex-wrap: wrap; /* v1.0.209 — see settle-banner */
     }
     #trio-banner.active { display: flex; }
 
@@ -4307,6 +4390,7 @@
       align-items: center;
       gap: 8px;
       justify-content: space-between;
+      flex-wrap: wrap; /* v1.0.209 — see settle-banner */
     }
     #wso-banner.active { display: flex; }
 
@@ -4326,10 +4410,15 @@
       padding: 14px 12px;
     }
 
-    /* Shrink the cover image to fit 3 across */
+    /* v1.0.209 — match the cover size to the standard battle arena (160x225)
+       so switching from Classic/Settle into Trio doesn't feel like a visible
+       step-down. Originally 110x155 to "fit 3 across" but the math at the
+       1000px main cap leaves ~315px per column with only 24px horizontal
+       padding, so a 160px cover sits centered with ~65px to spare on each
+       side. No crowding. */
     .trio-grid .anime-card img {
-      width: 110px;
-      height: 155px;
+      width: 160px;
+      height: 225px;
     }
 
     /* Gold/silver/bronze border when ranked */
