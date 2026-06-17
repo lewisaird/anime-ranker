@@ -25,15 +25,20 @@
       /* `--border-color` referenced by .social-play-card rules — alias to
          the standard border so the cards actually have a visible edge. */
       --border-color:     var(--border-default);
-      /* v1.0.209 — hover tint backgrounds. Previously these tints were
-         hard-coded at every hover site (`background: #1c2940`, etc), which
-         clashed with the warm theme's brown palette. Hoisted here so warm-mode
-         can override with warmer-toned equivalents. Dark theme keeps the
-         original blue/red/amber tints since they harmonize with cool-grey
-         surfaces. */
+      /* v1.0.209 — hover/accent tint backgrounds. Previously these tints were
+         hard-coded at every site (`background: #1c2940`, etc), which clashed
+         with the warm theme's brown palette and (worse) with light mode where
+         the tints were never overridden — leaving ~20 surfaces unreadable
+         dark-on-dark on a white page. Hoisted here so each theme can override
+         with palette-appropriate equivalents. Used by hover backgrounds,
+         active states (sort/format buttons, mode highlights), and accent
+         pills (confidence, tier, status, sync-score badges). */
       --hover-blue-bg:    #1c2940;
       --hover-red-bg:     #3d0f0a;
       --hover-amber-bg:   #2d1b00;
+      --hover-green-bg:   #1a2d1a;
+      --hover-purple-bg:  #1a1230;
+      --hover-orange-bg:  #2a1004;
       /* Tells browsers to render native form controls (select, scrollbar,
          checkbox, date picker) in dark theme. Without this, macOS Chrome
          renders <select> in light-mode regardless of CSS color values —
@@ -59,6 +64,17 @@
       --accent-amber:     #9a6700;
       --accent-primary:   var(--accent-blue);
       --border-color:     var(--border-default);
+      /* v1.0.209 — light-mode hover/accent tints. These are the values that
+         made ~half the data-viz surfaces (mode highlights, confidence/fuzzy
+         pills, tower intro tip, status badges, "N entries" badge, sync-score
+         chips) unreadable in light mode before — they had no override and
+         inherited the dark hexes verbatim. */
+      --hover-blue-bg:    #dbeafe;
+      --hover-red-bg:     #fff0f0;
+      --hover-amber-bg:   #fff8e1;
+      --hover-green-bg:   #e8f5e9;
+      --hover-purple-bg:  #ede7f6;
+      --hover-orange-bg:  #ffece0;
       color-scheme: light;
     }
 
@@ -97,6 +113,9 @@
       --hover-blue-bg:    #2a2419;
       --hover-red-bg:     #3a1610;
       --hover-amber-bg:   #2e1d05;
+      --hover-green-bg:   #1f2316;
+      --hover-purple-bg:  #251c2e;
+      --hover-orange-bg:  #2a1604;
       color-scheme: dark;
     }
 
@@ -367,15 +386,21 @@
       background: var(--border-subtle);
       color: var(--text-bright);
       border: 1px solid var(--border-default);
+      /* v1.0.211 — Tactile press feedback on the battle action buttons
+         (Undo / Skip / Rankings / Mode / Filter etc). Smooth border-color
+         transition + 1px translateY on :active gives them the same
+         "pressed" feel as the sort buttons. */
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
     }
     @media (hover: hover) {
-    .btn-secondary:hover { background: var(--border-default); }
+      .btn-secondary:hover { background: var(--border-default); border-color: var(--border-strong, var(--accent-blue)); }
+      .btn-secondary:active { transform: translateY(1px); }
     }
     /* Mode toggle — single button replaces the old settle-btn + blind-btn pair (§5.2.3).
        Colour-coded when a mode is active so the battle bar reflects the current state
        at a glance. The popover lives in .mode-control; see #mode-popover below. */
-    #mode-btn.active-settle { background: #1a2d1a; border-color: var(--accent-green-dark); color: var(--accent-green); }
-    #mode-btn.active-blind  { background: #1a1230; border-color: #6e40c9; color: #a371f7; }
+    #mode-btn.active-settle { background: var(--hover-green-bg); border-color: var(--accent-green-dark); color: var(--accent-green); }
+    #mode-btn.active-blind  { background: var(--hover-purple-bg); border-color: #6e40c9; color: #a371f7; }
     /* v1.0.208 — Trio + WSO highlight states. The setMode() JS already
        toggles these classes but they were never styled, so the Mode button
        didn't visually reflect which mode was active — inconsistent with
@@ -384,8 +409,8 @@
        v1.0.209 — bumped WSO border saturation to push it further into red
        territory so it's distinguishable from Trio's amber on AMOLED phones in
        bright sunlight. (Trio: yellow-amber. WSO: orange-red.) */
-    #mode-btn.active-trio   { background: #2a1d0a; border-color: #c9913a; color: #e3a444; }
-    #mode-btn.active-wso    { background: #2a1004; border-color: #e85a20; color: #ffb38a; }
+    #mode-btn.active-trio   { background: var(--hover-amber-bg); border-color: #c9913a; color: #e3a444; }
+    #mode-btn.active-wso    { background: var(--hover-orange-bg); border-color: #e85a20; color: #ffb38a; }
     #filter-btn.has-filter  { border-color: #d29922; color: #e3b341; }
 
     #filter-popover {
@@ -403,9 +428,25 @@
       border: 1px solid var(--border-default); background: var(--border-subtle); color: var(--text-bright);
       transition: all 0.1s;
     }
-    .filter-fmt-btn.active { background: #1f4070; border-color: var(--accent-blue-dark); color: #79b8ff; }
+    .filter-fmt-btn.active { background: var(--hover-blue-bg); border-color: var(--accent-blue-dark); color: #79b8ff; }
     .filter-fmt-btn.hidden-fmt { background: var(--border-subtle); border-color: var(--border-default); color: var(--text-muted); text-decoration: line-through; }
     .filter-popover-hint { font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
+    /* v1.0.211 — Divider between format buttons and the avoid-same-franchise
+       toggle. Subtle border so the popover still reads as one panel. */
+    .filter-divider {
+      height: 1px; background: var(--border-default);
+      margin: 12px -12px 10px;
+    }
+    .filter-toggle-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 4px 0; cursor: pointer; user-select: none;
+    }
+    .filter-toggle-row input[type="checkbox"] {
+      margin: 3px 0 0; flex-shrink: 0; accent-color: var(--accent-primary);
+      width: 16px; height: 16px;
+    }
+    .filter-toggle-text { display: flex; flex-direction: column; font-size: 0.82rem; color: var(--text-bright); line-height: 1.3; }
+    .filter-toggle-sub  { font-size: 0.7rem; color: var(--text-muted); margin-top: 1px; }
     .mode-control { position: relative; display: inline-flex; align-items: stretch; }
     #mode-popover {
       display: none;
@@ -457,7 +498,7 @@
       text-align: left;
     }
     @media (hover: hover) { .mode-popover-action:hover { background: var(--border-subtle); } }
-    #mode-btn.active-tower { background: #1c1a0a; border-color: #9e6a03; color: #e3b341; }
+    #mode-btn.active-tower { background: var(--hover-amber-bg); border-color: #9e6a03; color: #e3b341; }
 
     .btn-danger {
       background: #da3633;
@@ -676,17 +717,19 @@
 
     /* MANAGE TAB
        v1.0.209 — was a 480px single column on every viewport, wasting desktop
-       space and producing a long scroll. Now an auto-fill card grid: each
-       .manage-section is a card, columns flow naturally (1 on phones, 2 on
-       tablets, 3 on wide desktops) without breakpoint-specific overrides.
-       The 300px minmax keeps cards readable; the 1100px max-width stops the
-       grid sprawling across ultrawide monitors. */
+       space and producing a long scroll. Switched to CSS multi-column for
+       masonry-style flow: cards pack top-to-bottom in each column with
+       heights auto-balancing across columns, no gaps from uneven content
+       (the previous CSS grid layout left empty cells under shorter cards).
+       Reading order becomes column-by-column rather than row-by-row, which
+       is fine for a settings panel — users scan rather than read sequentially.
+       `column-width: 300px` gives auto-fill behaviour: 1 column on phones,
+       2 on tablets, 3 on wide desktops. */
     .manage-tab-content {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 20px;
+      column-width: 300px;
+      column-gap: 20px;
+      column-fill: balance;
       max-width: 1100px;
-      align-items: start; /* cards size to their content instead of stretching to row height */
     }
     .manage-section {
       display: flex;
@@ -696,9 +739,24 @@
       border: 1px solid var(--border-default);
       border-radius: 12px;
       padding: 16px;
+      /* v1.0.209 — prevent a card from being split across columns, and add
+         bottom spacing so adjacent cards in the same column don't touch. */
+      break-inside: avoid;
+      margin-bottom: 20px;
+      /* v1.0.211 — Subtle hover lift matches the rank-card treatment so all
+         card-style containers across the app share the same tactile feel. */
+      transition: border-color 0.15s ease, box-shadow 0.18s ease;
     }
-    .manage-section-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 2px; }
+    @media (hover: hover) {
+      .manage-section:hover {
+        border-color: var(--border-strong, rgba(88,166,255,0.35));
+        box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+      }
+    }
+    .manage-section-title {
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px;
+    }
     .manage-btn {
       background: var(--border-subtle); border: 1px solid var(--border-default); color: var(--text-bright);
       border-radius: 8px; padding: 10px 16px; font-size: 0.9rem; cursor: pointer;
@@ -767,7 +825,7 @@
       transition: all 0.15s;
     }
     @media (hover: hover) {
-    .synopsis-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
+    .synopsis-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--hover-blue-bg); }
     }
     .synopsis-panel {
       background: var(--bg-primary);
@@ -789,7 +847,7 @@
        Pulls the kb-first-tip aesthetic but inline (not fixed-position) so it
        flows above the anime list inside the existing modal. */
     #tower-first-tip {
-      background: #0d1a2d;
+      background: var(--hover-blue-bg);
       border: 1px solid var(--accent-blue-dark);
       border-radius: 8px;
       padding: 12px 14px;
@@ -855,6 +913,10 @@
       width: 100%;
       padding: 24px;
       position: relative;
+      transition: border-color 0.15s ease; /* v1.0.211 */
+    }
+    @media (hover: hover) {
+      .session-summary-box:hover { border-color: rgba(88,166,255,0.30); }
     }
     .session-summary-box h3 { font-size: 1.05rem; color: var(--accent-blue); margin-bottom: 4px; }
     .session-mover {
@@ -877,6 +939,16 @@
       border-radius: 10px;
       padding: 14px;
       margin-bottom: 20px;
+      /* v1.0.211 — Use box-shadow rather than border-color on hover. On a
+         wide full-width box the border-color flip reads as a hard outline
+         change; the layered shadow + faint ring is softer and matches the
+         perceived weight of the narrower stats lists below it. */
+      transition: box-shadow 0.18s ease;
+    }
+    @media (hover: hover) {
+      #rivalry-section:hover {
+        box-shadow: 0 0 0 1px rgba(88,166,255,0.22);
+      }
     }
     #rivalry-section h3 { font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 6px; }
     .rivalry-item {
@@ -1108,6 +1180,18 @@
       position: relative;
       content-visibility: auto;
       contain-intrinsic-block-size: 340px;
+      /* v1.0.211 — Subtle hover lift + shadow so the cards feel tactile.
+         Transitions on transform + border + shadow are GPU-cheap and the
+         translateY is small enough not to cause virtual-scroll reflow. */
+      transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.18s ease;
+    }
+    @media (hover: hover) {
+      .rank-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--border-strong, var(--accent-blue));
+        box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      }
+      .franchise-grid-card:hover img { filter: brightness(1.05); }
     }
 
     /* Global image fallback — grey background shown while loading or if src fails */
@@ -1150,12 +1234,20 @@
     }
     .franchise-detail-members { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
     .franchise-detail-member {
-      display: flex; align-items: center; gap: 10px;
-      background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px;
-      padding: 8px 10px; cursor: pointer;
+      display: flex; align-items: center; gap: 12px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.1s ease, background 0.15s ease;
     }
     @media (hover: hover) {
-    .franchise-detail-member:hover { background: var(--bg-tertiary); }
+      .franchise-detail-member:hover {
+        background: var(--bg-tertiary);
+        border-color: var(--accent-blue);
+        transform: translateX(2px);
+      }
     }
     .franchise-detail-member img { width: 36px; height: 50px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
     .franchise-detail-member-info { flex: 1; min-width: 0; }
@@ -1202,7 +1294,26 @@
     .franchise-name { font-size: 0.9rem; font-weight: 600; color: var(--text-bright); margin-bottom: 4px; }
     .franchise-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .franchise-elo { font-size: 0.78rem; color: var(--text-secondary); }
-    .franchise-count { font-size: 0.75rem; color: var(--accent-blue); background: #1a2d4d; border-radius: 10px; padding: 1px 7px; }
+    .franchise-count { font-size: 0.75rem; color: var(--accent-blue); background: var(--hover-blue-bg); border-radius: 10px; padding: 1px 7px; }
+    /* v1.0.211 — Peak ELO pill. Gold accent (matches the #1 gold rank style)
+       so the eye picks out franchises with at least one top-tier entry even
+       when the average doesn't look impressive. The sub-label clarifies the
+       primary number is an average — easy to miss without context. */
+    .franchise-peak {
+      font-size: 0.75rem; color: #f0883e;
+      background: rgba(240, 136, 62, 0.12);
+      border: 1px solid rgba(240, 136, 62, 0.30);
+      border-radius: 10px; padding: 1px 7px;
+      font-weight: 600;
+    }
+    .franchise-elo-sub {
+      font-size: 0.62rem; color: var(--text-muted);
+      margin-left: 4px; font-weight: 400; vertical-align: middle;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    body.light-mode .franchise-peak {
+      color: #b06000; background: #fff4e0; border-color: #f0a040;
+    }
     /* v1.0.165 — Fuzzy-member count pill on franchise cards. Same shape as
        .franchise-count but amber so users skimming the rankings can
        immediately spot franchises with uncertain entries. Margin-left keeps
@@ -1210,7 +1321,7 @@
     .franchise-fuzzy-count {
       font-size: 0.75rem;
       color: var(--accent-amber);
-      background: #2d1b00;
+      background: var(--hover-amber-bg);
       border-radius: 10px;
       padding: 1px 7px;
       margin-left: 6px;
@@ -1263,6 +1374,11 @@
       position: absolute;
       top: 10px;
       left: 10px;
+      /* v1.0.211 — z-index above the cover image. The franchise-card hover
+         applies `filter: brightness` to the cover, which creates a new
+         stacking context — without an explicit z-index here the rank
+         number and tier badge slid behind the brightened cover on hover. */
+      z-index: 2;
       background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
       border-radius: 6px;
       font-size: 0.85rem;
@@ -1305,8 +1421,8 @@
       margin-top: 2px;
       margin-left: 3px;
     }
-    .status-badge.watching   { background: #1a2d1a; border: 1px solid var(--accent-green-dark); color: var(--accent-green); }
-    .status-badge.rewatching { background: #1a2237; border: 1px solid var(--accent-blue-dark); color: var(--accent-blue); }
+    .status-badge.watching   { background: var(--hover-green-bg); border: 1px solid var(--accent-green-dark); color: var(--accent-green); }
+    .status-badge.rewatching { background: var(--hover-blue-bg); border: 1px solid var(--accent-blue-dark); color: var(--accent-blue); }
 
     /* BATTLE ACTIONS ROW */
     .battle-actions {
@@ -1332,9 +1448,9 @@
       border-radius: 20px;
       font-weight: 500;
     }
-    .confidence.uncertain { background: #2d1b00; color: var(--accent-amber); }
-    .confidence.settling  { background: #1f2a00; color: #9acd32; }
-    .confidence.confident { background: #0d2a1a; color: var(--accent-green); }
+    .confidence.uncertain { background: var(--hover-amber-bg); color: var(--accent-amber); }
+    .confidence.settling  { background: var(--hover-green-bg); color: #9acd32; }
+    .confidence.confident { background: var(--hover-green-bg); color: var(--accent-green); }
 
     /* ERROR */
     #error-msg {
@@ -1440,9 +1556,9 @@
        user taps elsewhere, which made the fuzzy toggle look unable to
        deselect because :hover and .active had identical styles. */
     @media (hover: hover) {
-      .fuzzy-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); background: #2d1b00; }
+      .fuzzy-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); background: var(--hover-amber-bg); }
     }
-    .fuzzy-btn.active { border-color: var(--accent-amber); color: var(--accent-amber); background: #2d1b00; }
+    .fuzzy-btn.active { border-color: var(--accent-amber); color: var(--accent-amber); background: var(--hover-amber-bg); }
     .card-anilist-link {
       color: var(--text-secondary);
       font-size: 0.7rem;
@@ -1453,14 +1569,14 @@
       transition: all 0.15s;
     }
     @media (hover: hover) {
-    .card-anilist-link:hover { color: var(--accent-blue); border-color: var(--accent-blue); background: #1c2940; }
+    .card-anilist-link:hover { color: var(--accent-blue); border-color: var(--accent-blue); background: var(--hover-blue-bg); }
     }
 
     /* FUZZY TAG on rank cards */
     .fuzzy-tag {
       font-size: 0.7rem;
       color: var(--accent-amber);
-      background: #2d1b00;
+      background: var(--hover-amber-bg);
       padding: 2px 8px;
       border-radius: 20px;
     }
@@ -1515,7 +1631,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      background: #2d1b00;
+      background: var(--hover-amber-bg);
       border: 1px solid var(--accent-amber);
       color: var(--accent-amber);
       border-radius: 8px;
@@ -1687,19 +1803,277 @@
     @media (max-width: 700px) { .stats-breakdown { grid-template-columns: 1fr; } }
 
     /* SEARCH */
-    #search-wrap { margin-bottom: 20px; }
+    #search-wrap { margin-bottom: 20px; position: relative; }
     #search-input {
       width: 100%;
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
       border-radius: 8px;
       color: var(--text-bright);
-      padding: 10px 16px;
+      padding: 10px 44px 10px 16px; /* right padding leaves room for help "?" */
       font-size: 0.95rem;
       outline: none;
       transition: border-color 0.2s;
     }
     #search-input:focus { border-color: var(--accent-blue); }
+
+    /* v1.0.211 — Token-syntax help. The "?" sits inside the search bar's
+       right edge; the popover opens directly below, full-width to match
+       the search input so multi-line token examples wrap cleanly. */
+    .search-help-btn {
+      position: absolute;
+      top: 50%;
+      right: 6px;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--border-default);
+      background: transparent;
+      color: var(--text-secondary);
+      border-radius: 50%;
+      font-size: 0.85rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .search-help-btn:hover,
+    .search-help-btn[aria-expanded="true"] {
+      color: var(--accent-blue);
+      border-color: var(--accent-blue);
+      background: rgba(88, 166, 255, 0.08);
+    }
+    .search-help-popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      padding: 12px 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      z-index: 50;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+    .search-help-popover strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text-bright);
+      font-size: 0.9rem;
+    }
+    .search-help-popover ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .search-help-popover code {
+      background: rgba(110, 118, 129, 0.18);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: var(--text-bright);
+      font-size: 0.82rem;
+    }
+
+    /* v1.0.211 — Chip-based filter picker. The row sits below the search
+       input; each button opens the shared popover anchored to that button.
+       Selected values render as removable chips in a separate row below. */
+    .search-picker-row {
+      position: relative;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 8px;
+      margin-bottom: 8px;
+    }
+    /* v1.0.211 — Small "Filters:" label matching the old Formats:/Length:
+       label vocabulary so the row reads as a filter strip, not a sort row. */
+    .search-picker-label {
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 4px;
+    }
+    .search-pick-btn {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .search-pick-btn:hover,
+    .search-pick-btn[aria-expanded="true"] {
+      border-color: var(--accent-blue);
+      color: var(--text-bright);
+      background: rgba(88, 166, 255, 0.08);
+    }
+    .search-clear-btn {
+      background: transparent;
+      border: 1px solid var(--accent-amber);
+      color: var(--accent-amber);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      margin-left: auto; /* push to the right so it visually anchors the row */
+    }
+    .search-clear-btn:hover {
+      background: rgba(245, 159, 0, 0.10);
+    }
+    .search-picker-popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      min-width: 240px;
+      max-width: 360px;
+      max-height: 360px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 10px;
+      padding: 10px 8px 10px 12px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.40);
+      z-index: 60;
+    }
+    /* v1.0.211 hotfix — the `display: flex` rule above overrode the
+       user-agent default for [hidden] elements, so the empty popover
+       was rendering as a faint outline between the picker row and the
+       Formats row. Re-assert `display: none` so the closed state really
+       is closed. */
+    .search-picker-popover[hidden] { display: none; }
+    .search-picker-header {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+      padding: 0 4px;
+    }
+    .search-picker-range {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 4px 10px;
+      border-bottom: 1px solid var(--border-default);
+      margin-bottom: 8px;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      flex-wrap: wrap;
+    }
+    .search-picker-range input {
+      width: 64px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-default);
+      color: var(--text-bright);
+      padding: 4px 6px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+    }
+    .search-picker-range-apply,
+    .search-picker-range-clear {
+      background: var(--accent-blue);
+      color: #fff;
+      border: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    .search-picker-range-clear {
+      background: transparent;
+      color: var(--accent-amber);
+      border: 1px solid var(--accent-amber);
+    }
+    .search-picker-list {
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .search-picker-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 4px;
+      font-size: 0.86rem;
+      color: var(--text-bright);
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .search-picker-item:hover {
+      background: rgba(88, 166, 255, 0.08);
+    }
+    .search-picker-item input[type="checkbox"] {
+      accent-color: var(--accent-blue);
+      flex-shrink: 0;
+    }
+    .search-picker-empty {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      padding: 4px;
+      margin: 0;
+    }
+    .search-picker-loading {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      padding: 16px 12px;
+      text-align: center;
+    }
+
+    .search-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .search-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(88, 166, 255, 0.10);
+      border: 1px solid rgba(88, 166, 255, 0.35);
+      color: var(--text-bright);
+      padding: 4px 4px 4px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+    }
+    .search-chip-icon { font-size: 0.85rem; opacity: 0.9; }
+    .search-chip-label { white-space: nowrap; }
+    .search-chip-remove {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .search-chip-remove:hover {
+      background: rgba(248, 81, 73, 0.18);
+      color: var(--accent-red);
+    }
+
+    /* v1.0.211 — Empty-state banner was removed entirely; the picker row's
+       Clear filters button and the chips themselves above the list cover
+       the same recovery affordance without an extra strip. */
 
     /* STATS SECTION */
     #stats-section { margin: 24px 0; }
@@ -1716,9 +2090,41 @@
       border-radius: 10px;
       padding: 16px;
       text-align: center;
+      /* v1.0.211 — Default stat tiles are purely informational. A faint
+         border tint on hover keeps them feeling "alive" without faking a
+         clickable affordance — no lift, no shadow. Tiles that ARE
+         clickable (.stat-box.clickable) opt into the stronger treatment
+         below so the hover signal stays honest. */
+      transition: border-color 0.15s ease;
     }
-    .stat-number { font-size: 1.8rem; font-weight: 700; color: var(--accent-blue); }
-    .stat-label  { font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px; }
+    @media (hover: hover) {
+      .stat-box:hover {
+        border-color: var(--border-default-strong, rgba(88,166,255,0.30));
+      }
+    }
+    /* v1.0.211 — Clickable stat tiles get the full tactile treatment
+       (lift + shadow + accent border + pointer cursor) so users learn
+       which tiles do something on click. */
+    .stat-box.clickable {
+      cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.12s ease, box-shadow 0.18s ease;
+    }
+    @media (hover: hover) {
+      .stat-box.clickable:hover {
+        border-color: var(--accent-blue);
+        transform: translateY(-1px);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+      }
+      .stat-box.clickable:active { transform: translateY(0); }
+    }
+    .stat-number {
+      font-size: 1.8rem; font-weight: 700; color: var(--accent-blue);
+      letter-spacing: -0.02em;
+    }
+    .stat-label {
+      font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;
+      text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+    }
     .stats-lists {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1729,6 +2135,11 @@
       border: 1px solid var(--border-default);
       border-radius: 10px;
       padding: 14px;
+      transition: border-color 0.15s ease; /* v1.0.211 */
+    }
+    @media (hover: hover) {
+      .stats-list-section:hover { border-color: rgba(88,166,255,0.30); }
+      .compat-col:hover { border-color: rgba(88,166,255,0.30); }
     }
     .stats-list-section h4 { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 10px; }
     .stat-anime-row {
@@ -1794,6 +2205,15 @@
       background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
       border: 1px solid var(--border-default); border-radius: 16px;
       padding: 22px; margin-bottom: 18px;
+      /* v1.0.211 — Match the hover treatment of .taste-section / .manage-section
+         so the headline card doesn't read as a different visual tier. */
+      transition: border-color 0.15s ease, box-shadow 0.18s ease;
+    }
+    @media (hover: hover) {
+      .taste-identity-card:hover {
+        border-color: rgba(88,166,255,0.35);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+      }
     }
     .taste-identity-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
     .taste-identity-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 600; margin-bottom: 4px; }
@@ -1876,11 +2296,21 @@
       border-radius: 12px;
       padding: 18px;
       margin-bottom: 18px;
+      /* v1.0.211 — Subtle hover lift matches Manage / Rank / Stat card style. */
+      transition: border-color 0.15s ease, box-shadow 0.18s ease;
+    }
+    @media (hover: hover) {
+      .taste-section:hover {
+        border-color: rgba(88,166,255,0.35);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+      }
     }
     .taste-section h3 {
-      margin: 0 0 4px;
+      margin: 0 0 6px;
       font-size: 1rem;
       color: var(--text-bright);
+      font-weight: 700;
+      letter-spacing: -0.01em;
     }
     .taste-sub {
       color: var(--text-secondary);
@@ -2009,6 +2439,27 @@
       cursor: pointer;
     }
     .modal-close:hover { color: var(--accent-red); border-color: var(--accent-red); }
+    /* v1.0.211 — Back-to-franchise button. Sits in the top-right next to the
+       close button (the top-left is taken by the cover image, which would
+       overlap any left-side placement). Uses blue accent because it's a
+       navigation action (not destructive). Display:none in HTML, JS sets
+       display:'' to show it when navigating from a franchise. */
+    .modal-back {
+      position: absolute;
+      top: 12px; right: 50px; /* sits left of the 28px close button + 10px gap */
+      background: var(--border-subtle);
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary);
+      font-size: 0.78rem; font-weight: 600;
+      padding: 5px 11px;
+      border-radius: 14px;
+      cursor: pointer;
+      line-height: 1;
+      z-index: 5; /* above the cover image */
+    }
+    @media (hover: hover) {
+      .modal-back:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
+    }
     #modal-cover {
       width: 110px; height: 155px;
       object-fit: cover;
@@ -2026,12 +2477,23 @@
     }
     .modal-stat {
       background: var(--bg-primary);
-      border-radius: 8px;
-      padding: 8px 4px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 10px 4px 8px;
       text-align: center;
+      transition: border-color 0.15s ease, transform 0.1s ease;
     }
-    .modal-stat .val { font-size: 1rem; font-weight: 700; color: var(--text-bright); display: block; }
-    .modal-stat label { font-size: 0.62rem; color: var(--text-secondary); }
+    @media (hover: hover) {
+      .modal-stat:hover { border-color: var(--accent-blue); }
+    }
+    .modal-stat .val {
+      font-size: 1.15rem; font-weight: 700; color: var(--text-bright); display: block;
+      letter-spacing: -0.01em;
+    }
+    .modal-stat label {
+      font-size: 0.62rem; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    }
     .modal-anilist-btn {
       display: inline-block;
       background: #02a9ff;
@@ -2043,9 +2505,36 @@
       margin-bottom: 14px;
     }
     .modal-anilist-btn:hover { background: #0090d9; }
+
+    /* v1.0.211 — ⚔ Battle Next chip in the anime detail modal. Distinct from
+       the AniList link (which is an outbound action) — this is a primary
+       in-app action, so it uses the accent gradient + lift on hover and
+       sits visually as a "do something with this anime" button. */
+    .modal-battle-next-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: linear-gradient(135deg, #1f6feb, var(--accent-blue-dark));
+      color: #fff;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .modal-battle-next-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(88, 166, 255, 0.30);
+    }
+    .modal-battle-next-btn:focus-visible {
+      outline: 2px solid var(--accent-primary);
+      outline-offset: 2px;
+    }
     #modal-unfuzzy-btn {
       margin-left: 8px;
-      background: #2d1b00;
+      background: var(--hover-amber-bg);
       border: 1px solid var(--accent-amber);
       color: var(--accent-amber);
       font-size: 0.8rem;
@@ -2093,6 +2582,7 @@
       position: absolute; top: 10px; right: 10px; width: 22px; height: 22px;
       border-radius: 4px; font-size: 0.68rem; font-weight: 800;
       display: flex; align-items: center; justify-content: center;
+      z-index: 2; /* v1.0.211 — see .rank-number for why */
     }
     /* In table cells, reset positioning so the badge is visible inline */
     td .tier-badge {
@@ -2182,7 +2672,7 @@
     }
     /* v1.0.209 — de-nested duplicate `@media (hover: hover)` wrapper. */
     @media (hover: hover) {
-      .exclude-btn:hover { border-color: var(--accent-red); color: var(--accent-red); background: #2a0a0a; }
+      .exclude-btn:hover { border-color: var(--accent-red); color: var(--accent-red); background: var(--hover-red-bg); }
     }
 
     /* EXCLUDED SECTION */
@@ -2214,14 +2704,64 @@
     /* SORT + FILTER ROW */
     .list-controls {
       display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;
+      /* v1.0.211 — Soft hairline above the sort row separates it from the
+         Format / Length filter section so the two areas read as distinct. */
+      padding-top: 12px;
+      border-top: 1px solid var(--border-subtle);
+      margin-top: 4px;
     }
     .sort-btn {
-      background: var(--border-subtle); border: 1px solid var(--border-default); color: var(--text-secondary);
-      font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+      background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+      font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
       line-height: 1; display: inline-flex; align-items: center;
     }
-    @media (hover: hover) { .sort-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); } }
-    .sort-btn.active { background: #1c2940; border-color: var(--accent-blue); color: var(--accent-blue); font-weight: 600; }
+    @media (hover: hover) {
+      .sort-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: rgba(56,139,253,0.05); }
+      .sort-btn:active { transform: translateY(1px); }
+    }
+    /* v1.0.211 — Stronger "selected" state on the active sort button —
+       filled tint + shadow so it reads as pressed-in rather than just
+       outlined like its inactive neighbours. */
+    .sort-btn.active {
+      background: var(--hover-blue-bg);
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+      font-weight: 600;
+      box-shadow: inset 0 0 0 1px var(--accent-blue);
+    }
+    /* v1.0.211 — Franchise sort sub-row. Sits underneath the main sort row,
+       only visible when franchise mode is on (body.franchise-mode-on). The
+       label + faint blue left-border tie the row to the franchise theme so
+       users can see at a glance "these sorts only matter when grouped".
+       Buttons inside use the standard .sort-btn style — no extra tint needed,
+       the row itself does the visual grouping. */
+    .franchise-sort-row { display: none; }
+    body.franchise-mode-on .franchise-sort-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: -4px; /* tuck just under the main sort row */
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      border-left: 3px solid var(--accent-blue);
+      background: rgba(56,139,253,0.05);
+      border-radius: 0 6px 6px 0;
+      flex-wrap: wrap;
+    }
+    .franchise-sort-label {
+      font-size: 0.7rem;
+      color: var(--accent-blue);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 8px;
+    }
+    body.light-mode .franchise-sort-row {
+      background: #f0f6ff;
+      border-left-color: #0969da;
+    }
+    body.light-mode .franchise-sort-label { color: #0969da; }
     #ranking-controls-right {
       display: flex; align-items: center; gap: 6px; margin-left: auto;
     }
@@ -2231,19 +2771,30 @@
       line-height: 1; display: inline-flex; align-items: center; gap: 4px;
     }
     @media (hover: hover) { .fuzzy-filter-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); } }
-    .fuzzy-filter-btn.active { background: #2d1b00; border-color: var(--accent-amber); color: var(--accent-amber); }
+    .fuzzy-filter-btn.active { background: var(--hover-amber-bg); border-color: var(--accent-amber); color: var(--accent-amber); }
 
     /* FORMAT FILTER BUTTONS */
     .format-row {
-      display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;
+      display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;
     }
-    .format-row-label { font-size: 0.72rem; color: var(--text-secondary); margin-right: 4px; }
+    /* v1.0.211 — Unified small-caps label style. Matches .franchise-sort-label
+       so all three row prefixes (Formats / Length / Franchise sorts) read as
+       a coherent set of section markers. */
+    .format-row-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 8px;
+      min-width: 52px;
+    }
     .format-btn {
       background: var(--border-subtle); border: 1px solid var(--border-default); color: var(--text-secondary);
       font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
     }
     @media (hover: hover) { .format-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); } }
-    .format-btn.active { background: #1c2940; border-color: var(--accent-blue); color: var(--accent-blue); font-weight: 600; }
+    .format-btn.active { background: var(--hover-blue-bg); border-color: var(--accent-blue); color: var(--accent-blue); font-weight: 600; }
     .format-btn.hidden-fmt { background: var(--border-subtle); border-color: var(--border-default); color: #484f58; text-decoration: line-through; }
 
     /* DISAGREEMENTS SECTION */
@@ -2251,6 +2802,10 @@
     .predictor-result {
       display: flex; gap: 14px; align-items: flex-start;
       background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 12px; padding: 16px;
+      transition: border-color 0.15s ease; /* v1.0.211 */
+    }
+    @media (hover: hover) {
+      .predictor-result:hover { border-color: rgba(88,166,255,0.30); }
     }
     .predictor-cover { width: 64px; min-width: 64px; border-radius: 6px; aspect-ratio: 2/3; object-fit: cover; }
     .predictor-body { flex: 1; min-width: 0; }
@@ -2259,11 +2814,11 @@
       display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 1rem;
       font-weight: 800; letter-spacing: 1px; margin-bottom: 8px;
     }
-    .predictor-tier-badge.t-s { background:#2d1b69; color:#b388ff; border:1px solid #7c4dff; }
-    .predictor-tier-badge.t-a { background:#1a2d1a; color:#69f0ae; border:1px solid #00e676; }
-    .predictor-tier-badge.t-b { background:#1a2237; color:#82b1ff; border:1px solid #448aff; }
-    .predictor-tier-badge.t-c { background:#2d2200; color:#ffd54f; border:1px solid #ffc107; }
-    .predictor-tier-badge.t-d { background:#2d1a1a; color:#ff8a80; border:1px solid #ff5252; }
+    .predictor-tier-badge.t-s { background: var(--hover-purple-bg); color:#b388ff; border:1px solid #7c4dff; }
+    .predictor-tier-badge.t-a { background: var(--hover-green-bg);  color:#69f0ae; border:1px solid #00e676; }
+    .predictor-tier-badge.t-b { background: var(--hover-blue-bg);   color:#82b1ff; border:1px solid #448aff; }
+    .predictor-tier-badge.t-c { background: var(--hover-amber-bg);  color:#ffd54f; border:1px solid #ffc107; }
+    .predictor-tier-badge.t-d { background: var(--hover-red-bg);    color:#ff8a80; border:1px solid #ff5252; }
     .predictor-reasons { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6; }
     .predictor-reasons span { color: var(--text-primary); }
     .predictor-already { color: var(--accent-green); font-size: 0.88rem; padding: 8px 0; }
@@ -2502,6 +3057,47 @@
     @media (hover: hover) {
     .confirm-btn-danger:hover  { background: var(--accent-red); }
     }
+    /* v1.0.210 — "What's new" modal, opened from the app_update bell entry.
+       Uses display:flex inline-style to open (set by ncActionShowWhatsNew),
+       same pattern as other bell-action modals — no .open class toggling. */
+    #whats-new-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); z-index: 9999;
+      align-items: center; justify-content: center; padding: 16px;
+    }
+    .whats-new-box {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 12px;
+      padding: 22px 22px 18px;
+      max-width: 480px; width: 100%;
+      max-height: 80vh; overflow-y: auto;
+    }
+    .whats-new-box h3 {
+      font-size: 1.05rem; color: var(--text-bright); margin: 0 0 14px;
+    }
+    .whats-new-bullets {
+      list-style: none; padding: 0; margin: 0 0 18px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .whats-new-bullets li {
+      font-size: 0.86rem; line-height: 1.5;
+      color: var(--text-primary);
+      background: var(--border-subtle);
+      border-radius: 8px;
+      padding: 9px 12px;
+    }
+    .whats-new-actions { display: flex; justify-content: flex-end; }
+    .whats-new-close-btn {
+      padding: 8px 18px; border-radius: 6px; border: none;
+      background: var(--accent-primary); color: #fff;
+      cursor: pointer; font-size: 0.86rem; font-weight: 600;
+    }
+    @media (hover: hover) {
+      .whats-new-close-btn:hover { filter: brightness(1.08); }
+    }
+    body.light-mode .whats-new-box { background: #fff; }
+    body.light-mode .whats-new-bullets li { background: #f1f5f9; color: #0f172a; }
     .sync-preview-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-bottom: 20px; }
     .sync-preview-table th {
       text-align: left; font-size: 0.72rem; color: var(--text-secondary); font-weight: 600;
@@ -2514,13 +3110,13 @@
       display: inline-block; padding: 2px 8px; border-radius: 10px;
       font-weight: 700; font-size: 0.78rem;
     }
-    .sync-score-10 { background: #1a3a1a; color: var(--accent-green); }
-    .sync-score-9  { background: #1a3a1a; color: #56d364; }
-    .sync-score-8  { background: #1f2f14; color: #a5d96a; }
-    .sync-score-7  { background: #2a2614; color: #e3c96a; }
-    .sync-score-6  { background: #2a2010; color: var(--accent-amber); }
-    .sync-score-5  { background: #2a1a10; color: #f0883e; }
-    .sync-score-low { background: #3d0f0a; color: var(--accent-red); }
+    .sync-score-10 { background: var(--hover-green-bg); color: var(--accent-green); }
+    .sync-score-9  { background: var(--hover-green-bg); color: #56d364; }
+    .sync-score-8  { background: var(--hover-green-bg); color: #a5d96a; }
+    .sync-score-7  { background: var(--hover-amber-bg); color: #e3c96a; }
+    .sync-score-6  { background: var(--hover-amber-bg); color: var(--accent-amber); }
+    .sync-score-5  { background: var(--hover-orange-bg); color: #f0883e; }
+    .sync-score-low { background: var(--hover-red-bg); color: var(--accent-red); }
     .sync-progress-wrap { margin: 16px 0; }
     .sync-progress-bar-track {
       width: 100%; height: 8px; background: var(--border-subtle); border-radius: 4px; overflow: hidden; margin-bottom: 8px;
@@ -2791,7 +3387,7 @@
       cursor: pointer;
       transition: border-color 0.15s, background 0.15s;
     }
-    .nc-action-btn:hover { border-color: var(--accent-blue); background: #1c2940; }
+    .nc-action-btn:hover { border-color: var(--accent-blue); background: var(--hover-blue-bg); }
 
     .nc-dismiss-btn {
       background: none;
@@ -2980,8 +3576,8 @@
       padding: 10px 14px; border-radius: 10px;
       border: 1px solid var(--border-default);
     }
-    .tower-result-row.won  { background: #0d2a0d; border-color: var(--accent-green-dark); }
-    .tower-result-row.lost { background: #2a0d0d; border-color: #da3633; }
+    .tower-result-row.won  { background: var(--hover-green-bg); border-color: var(--accent-green-dark); }
+    .tower-result-row.lost { background: var(--hover-red-bg); border-color: #da3633; }
     .tower-result-row img  { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
     .tower-result-info { flex: 1; }
     .tower-result-info .name { font-size: 0.85rem; font-weight: 600; }
@@ -2991,7 +3587,28 @@
     /* LIST VIEW */
     .ranking-table {
       width: 100%; border-collapse: collapse; font-size: 0.82rem;
+      /* v1.0.211 — table-layout: fixed so column widths stay stable as
+         virtualized rows scroll in and out. Without this, browsers
+         auto-size columns based on the currently-visible rows' content;
+         each batch of recycled rows had different title lengths, so the
+         column widths (and therefore the sticky headers' positions)
+         shifted horizontally on every scroll. */
+      table-layout: fixed;
     }
+    /* v1.0.211 — Explicit column widths pair with table-layout: fixed.
+       Title gets the remaining space (no width set). Numbers stay compact;
+       Confidence is widest because of the pill. */
+    .ranking-table th:nth-child(1), .ranking-table td:nth-child(1) { width: 36px; }   /* # */
+    .ranking-table th:nth-child(2), .ranking-table td:nth-child(2) { width: 50px; }   /* cover */
+    .ranking-table th:nth-child(3), .ranking-table td:nth-child(3) {
+      width: auto; overflow: hidden; text-overflow: ellipsis;
+    } /* title */
+    .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 70px; }   /* ELO */
+    .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 80px; }   /* Win Rate */
+    .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 70px; }   /* Battles */
+    .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 90px; }   /* AniList Avg */
+    .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 56px; }   /* Tier */
+    .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 130px; }  /* Confidence */
     .ranking-table th {
       text-align: left; padding: 8px 10px;
       color: var(--text-secondary); border-bottom: 1px solid var(--border-default);
@@ -3033,7 +3650,7 @@
       line-height: 1; display: inline-flex; align-items: center; justify-content: center;
     }
     @media (hover: hover) { .view-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--bg-tertiary); } }
-    .view-btn.active { background: #1c2940; border-color: var(--accent-blue); color: var(--accent-blue); }
+    .view-btn.active { background: var(--hover-blue-bg); border-color: var(--accent-blue); color: var(--accent-blue); }
 
     /* DESCRIPTION in detail modal */
     .modal-description {
@@ -3133,7 +3750,7 @@
       font-size: 0.88rem;
       transition: all 0.2s;
     }
-    .mal-drop-zone:hover, .mal-drop-zone.drag-over { border-color: var(--accent-blue); color: var(--accent-blue); background: #1c2940; }
+    .mal-drop-zone:hover, .mal-drop-zone.drag-over { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--hover-blue-bg); }
     .mal-drop-zone input[type="file"] { display: none; }
     /* MANAGE SUB-TABS (Settings / Achievements) */
     #tab-panel-manage .source-tabs {
@@ -3326,6 +3943,18 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      /* v1.0.211 — Hover uses box-shadow + transform rather than border-color
+         because unlocked cards already use their tier color (bronze/silver/
+         gold) on the border — overwriting that would visually "downgrade"
+         them. The translateY + drop shadow gives the same tactile lift as
+         rank cards; the outer ring adds the brand accent on top. */
+      transition: transform 0.15s ease, box-shadow 0.18s ease;
+    }
+    @media (hover: hover) {
+      .achievement-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 14px rgba(0,0,0,0.20), 0 0 0 1px rgba(88,166,255,0.30);
+      }
     }
     .achievement-card.has-bronze { border-color: #cd7f32; }
     .achievement-card.has-silver { border-color: #a0a0a0; }
@@ -3354,6 +3983,33 @@
     .ach-tier.unlocked.gold   .ach-label { color: #ffd700; }
     .ach-tier.unlocked .ach-req { color: var(--text-secondary); }
     .achievement-unlock-date { font-size: 0.65rem; color: var(--text-muted); margin-top: 2px; }
+    /* v1.0.211 — Per-tier progress bar on locked achievements. Shows the
+       current value vs the target so users can see how close they are to
+       the next tier rather than just seeing 🔒 + req text. Width tracks
+       the green progress fill; the count label sits centred on top. */
+    .ach-progress-wrap {
+      position: relative;
+      width: 100%;
+      height: 14px;
+      margin-top: 4px;
+      background: var(--border-subtle);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .ach-progress-fill {
+      position: absolute; inset: 0 auto 0 0;
+      background: linear-gradient(90deg, #2ea043, #3fb950);
+      transition: width 0.3s ease;
+    }
+    .ach-progress-text {
+      position: relative; z-index: 1;
+      display: block; line-height: 14px;
+      font-size: 0.62rem;
+      color: var(--text-bright);
+      font-weight: 600;
+      text-align: center;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
     .achievements-summary {
       text-align: center; padding: 12px 0 4px;
       font-size: 0.8rem; color: var(--text-secondary);
@@ -3368,6 +4024,10 @@
       display: flex; align-items: center; gap: 10px;
       background: var(--bg-secondary); border: 1px solid var(--border-default);
       border-radius: 8px; padding: 8px 12px;
+      transition: border-color 0.15s ease; /* v1.0.211 */
+    }
+    @media (hover: hover) {
+      .saved-comp-card:hover { border-color: rgba(88,166,255,0.30); }
     }
     .saved-comp-card .scc-name  { font-size: 0.85rem; color: var(--text-primary); font-weight: 600; }
     .saved-comp-card .scc-meta  { font-size: 0.72rem; color: var(--text-secondary); }
@@ -3918,6 +4578,10 @@
       border: 1px solid var(--border-default);
       border-radius: 14px;
       margin-bottom: 20px;
+      transition: border-color 0.15s ease; /* v1.0.211 */
+    }
+    @media (hover: hover) {
+      .compat-score-box:hover { border-color: rgba(88,166,255,0.30); }
     }
     .compat-pct {
       font-size: 3rem;
@@ -3939,6 +4603,7 @@
       padding: 14px;
       min-width: 0;
       overflow: hidden;
+      transition: border-color 0.15s ease; /* v1.0.211 */
     }
     .compat-col h4 { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 10px; }
     .compat-col-full { grid-column: 1 / -1; }
@@ -4167,10 +4832,11 @@
          the right of long buttons ("Save to cloud now", etc). Centering
          feels more like a CTA at full width. */
       .manage-btn { width: 100%; text-align: center; }
-      /* v1.0.209 — force single column on narrow phones. The card grid's
-         `minmax(300px, 1fr)` on the desktop version forces each card wider
-         than a 320–360 px viewport, clipping the right edge. */
-      .manage-tab-content { grid-template-columns: 1fr; }
+      /* v1.0.209 — force single column on narrow phones. The desktop
+         column-flow uses column-width: 300px which can still try to fit
+         two columns at edge widths; forcing column-count: 1 makes sure
+         everything stacks predictably below 600px. */
+      .manage-tab-content { column-count: 1; }
 
       /* v1.0.209 — Winner Stays On streak badge: anchor over the cover image
          (left side of the row-flipped card) instead of centered over the full
@@ -4299,6 +4965,34 @@
     body.light-mode .ach-tier .ach-req { color: #57606a; }
 
     body.light-mode #mode-popover button[aria-checked="true"] { background: #dbeafe; }
+    /* v1.0.209 — settle/blind/trio/wso banner gradients use hard-coded dark
+       browns/greens for the dark theme; in light mode they need pastel
+       equivalents so the banner text stays readable. */
+    body.light-mode #settle-banner { background: linear-gradient(90deg, #e8f5e9, #d8efdc); }
+    body.light-mode #blind-banner  { background: linear-gradient(90deg, #ede7f6, #ddd3f0); }
+    body.light-mode #trio-banner   { background: linear-gradient(90deg, #fef3e7, #fde9d0); }
+    body.light-mode #wso-banner    { background: linear-gradient(90deg, #ffece0, #ffdfca); }
+    /* v1.0.209 — pastel banner backgrounds pair with dark-tinted accent text
+       that was tuned for dark surfaces (#a371f7 purple, #e3a444 amber,
+       #ffb38a peach). On a matching pastel background they all read
+       low-contrast (purple-on-purple, amber-on-amber, peach-on-peach), so
+       override the text + Stop button border to darker, more saturated
+       values in light mode. */
+    body.light-mode #blind-banner,
+    body.light-mode #blind-banner button { color: #6e40c9; border-color: #6e40c9; }
+    body.light-mode #trio-banner,
+    body.light-mode #trio-banner button  { color: #9a6700; border-color: #9a6700; }
+    body.light-mode #wso-banner,
+    body.light-mode #wso-banner button   { color: #c54a0e; border-color: #c54a0e; }
+    /* And the matching Mode-button highlight text colors for the same reason. */
+    body.light-mode #mode-btn.active-blind { color: #6e40c9; }
+    body.light-mode #mode-btn.active-trio  { color: #9a6700; }
+    body.light-mode #mode-btn.active-wso   { color: #c54a0e; }
+    body.light-mode #mode-btn.active-tower { color: #9a6700; }
+    /* `.filter-fmt-btn.active` uses #79b8ff (light blue) on the new light
+       pastel blue background — low contrast. Push the text to the dark
+       accent-blue used elsewhere in light mode. */
+    body.light-mode .filter-fmt-btn.active { color: var(--accent-blue-dark); }
     body.light-mode .franchise-table-member:hover td { background: #f0f6ff; }
 
     body.light-mode input,
@@ -4393,6 +5087,75 @@
       flex-wrap: wrap; /* v1.0.209 — see settle-banner */
     }
     #wso-banner.active { display: flex; }
+
+    /* v1.0.211 — Battle within franchise banner. Blue accent so it doesn't
+       compete visually with the mode-specific banners (settle peach, blind
+       purple, trio amber, wso orange) — it's a pool restriction, not a mode. */
+    #within-franchise-banner {
+      display: none;
+      background: linear-gradient(90deg, rgba(56,139,253,0.10), rgba(56,139,253,0.04));
+      border: 1px solid var(--accent-primary);
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 0.82rem;
+      color: var(--accent-primary);
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    #within-franchise-banner.active { display: flex; }
+    body.light-mode #within-franchise-banner {
+      background: linear-gradient(90deg, #e6f0ff, #f0f6ff);
+      color: #0969da;
+      border-color: #0969da;
+    }
+    body.light-mode #within-franchise-banner button { color: #0969da; border-color: #0969da; }
+
+    /* v1.0.211 — Franchise modal action row. Blue primary for the constructive
+       action (Battle within); subtle danger style for Exclude all. */
+    .franchise-detail-actions {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .franchise-action-btn {
+      flex: 1 1 160px;
+      padding: 9px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--accent-primary);
+      background: rgba(56,139,253,0.10);
+      color: var(--accent-primary);
+      font-size: 0.86rem; font-weight: 600;
+      cursor: pointer;
+    }
+    @media (hover: hover) {
+      .franchise-action-btn:hover { background: rgba(56,139,253,0.18); }
+    }
+    .franchise-action-btn:disabled {
+      opacity: 0.45; cursor: not-allowed;
+    }
+    .franchise-action-btn.franchise-action-danger {
+      border-color: #c96a3a;
+      background: rgba(201,106,58,0.08);
+      color: #ffb38a;
+    }
+    @media (hover: hover) {
+      .franchise-action-btn.franchise-action-danger:hover { background: rgba(201,106,58,0.18); }
+    }
+    body.light-mode .franchise-action-btn {
+      background: #e6f0ff; color: #0969da; border-color: #0969da;
+    }
+    body.light-mode .franchise-action-btn.franchise-action-danger {
+      background: #fff0e6; color: #b34700; border-color: #b34700;
+    }
+
+    /* v1.0.211 — when battle-within-franchise is active, mark the filter
+       button so users know format toggles don't widen the pool past the
+       chosen franchise. Same has-filter highlight but a subtle ring. */
+    #filter-btn.has-franchise-lock {
+      box-shadow: 0 0 0 2px rgba(56,139,253,0.35);
+    }
 
     /* Three cards side by side, each stretching to fill its column */
     .trio-grid {

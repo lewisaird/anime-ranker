@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.209" />
+  <meta name="version" content="1.0.211" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -809,14 +809,19 @@
       <span id="pool-warning-text">⚠️ Almost all anime are filtered out — only a few battles are possible.</span>
     </div>
 
+    <!-- v1.0.210 — Stop buttons all call setMode('normal') for consistency.
+         Previously settle/blind called their toggle wrappers and trio/wso
+         called setMode directly — functionally identical (the wrappers
+         resolve to setMode('normal') when the mode is active) but
+         inconsistent across the four banners. -->
     <div id="settle-banner">
       <span>🎯 Settle mode — targeting uncertain matchups</span>
-      <button onclick="toggleSettleMode()" style="background:none;border:1px solid #238636;color:#3fb950;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+      <button onclick="setMode('normal')" style="background:none;border:1px solid #238636;color:#3fb950;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
     <div id="blind-banner">
       <span>🙈 Blind mode — ELO ratings hidden, pick on instinct</span>
-      <button onclick="toggleBlindMode()" style="background:none;border:1px solid #6e40c9;color:#a371f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+      <button onclick="setMode('normal')" style="background:none;border:1px solid #6e40c9;color:#a371f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
     <div id="trio-banner">
@@ -829,6 +834,15 @@
     <div id="wso-banner">
       <span>🔥 Winner Stays On — the champion keeps fighting</span>
       <button onclick="setMode('normal')" style="background:none;border:1px solid #c96a3a;color:#ffb38a;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
+    </div>
+    <!-- v1.0.211 — Battle within franchise banner. Sits alongside the other
+         mode banners (settle/blind/trio/wso) but is composable with them — a
+         user can be in Settle mode AND restricted to a franchise. The Stop
+         button only lifts the franchise restriction; the underlying mode
+         continues. -->
+    <div id="within-franchise-banner">
+      <span id="within-franchise-msg">⚔ Battle within franchise</span>
+      <button onclick="stopBattleWithinFranchise()" style="background:none;border:1px solid var(--accent-primary);color:var(--accent-primary);padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
 
@@ -925,6 +939,19 @@
             <button type="button" class="filter-fmt-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL', 'battle')">Special</button>
           </div>
           <p class="filter-popover-hint">Hidden formats are excluded from the battle pool only — your Rankings still show them.</p>
+          <!-- v1.0.211 — Avoid same franchise. When on, the picker skips pairs
+               whose anime share a franchise group (so you don't get Re:Zero S1
+               vs Re:Zero S2 repeatedly when ranking sequels you've already
+               compared). Applies to Classic / Settle / Blind / Trio / WSO. Tower
+               uses a softer down-weight instead so small franchises still play. -->
+          <div class="filter-divider"></div>
+          <label class="filter-toggle-row" for="avoid-same-franchise-chk">
+            <input type="checkbox" id="avoid-same-franchise-chk" onchange="toggleAvoidSameFranchise()" />
+            <span class="filter-toggle-text">
+              Avoid same franchise
+              <span class="filter-toggle-sub">Skip Re:Zero vs Re:Zero etc.</span>
+            </span>
+          </label>
         </div>
       </div>
     </div>
@@ -960,28 +987,44 @@
     <div class="tab-panel" id="tab-panel-rankings">
       <textarea id="export-area" rows="10" readonly></textarea>
       <div id="search-wrap">
-        <input type="text" id="search-input" placeholder="🔍  Search your rankings…" oninput="filterRankings()" />
+        <input type="text" id="search-input" placeholder="🔍  Search by title…" oninput="filterRankings()" />
+        <!-- v1.0.211 — token-grammar help. Kept as a secondary affordance for
+             power users who prefer typing genre:action over clicking through
+             a dropdown. The picker row below is the primary UI. -->
+        <button type="button" id="search-help-btn" class="search-help-btn" onclick="toggleSearchHelp()" aria-label="Search syntax help" aria-expanded="false" title="Tip: you can also type genre:action year:2024 etc.">?</button>
+        <div id="search-help-popover" class="search-help-popover" hidden>
+          <strong>Search tips</strong>
+          <ul>
+            <li>Pick filters from the <strong>+ Genre / + Studio / + Year / + Format</strong> row below.</li>
+            <li>Or type tokens directly: <code>genre:action</code> <code>studio:bones</code> <code>year:2024</code> <code>year:2010-2019</code> <code>format:movie</code></li>
+            <li>Combine freely: <code>genre:romance year:2020-2024 your</code></li>
+            <li>Multi-word: <code>"slice of life"</code></li>
+          </ul>
+        </div>
       </div>
-      <button class="mobile-filter-toggle" id="mobile-filter-toggle" onclick="toggleMobileFilters()" style="display:none">⊟ Filters</button>
-      <div id="collapsible-filters">
-      <div class="format-row" id="format-row">
-        <span class="format-row-label">Formats:</span>
-        <button class="format-btn active" data-format="TV"       onclick="toggleFormat('TV')">TV</button>
-        <button class="format-btn active" data-format="MOVIE"    onclick="toggleFormat('MOVIE')">Movie</button>
-        <button class="format-btn active" data-format="OVA"      onclick="toggleFormat('OVA')">OVA</button>
-        <button class="format-btn active" data-format="ONA"      onclick="toggleFormat('ONA')">ONA</button>
-        <button class="format-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT')">Short</button>
-        <button class="format-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL')">Special</button>
+      <!-- v1.0.211 — Chip-based filter picker. Buttons populate from
+           animeList at click time (so a user who just imported sees the
+           full genre/studio/year set without a refresh). Selected values
+           render as removable chips between the picker and the rankings
+           list. The picker shares state with the text input via
+           _searchChips; filterRankings unions both before matching. -->
+      <!-- v1.0.211 — Unified filter picker. The standalone Formats and
+           Length button rows were removed in favour of these chip-style
+           pickers so the page has ONE filter model (additive: pick to
+           require) instead of two with inverted semantics. The legacy
+           hiddenFormatsRanking / hiddenEpRangesRanking state is auto-
+           migrated into picker chips on first load post-upgrade. -->
+      <div id="search-picker-row" class="search-picker-row">
+        <span class="search-picker-label" aria-hidden="true">Filters:</span>
+        <button type="button" class="search-pick-btn" data-category="genre"  onclick="openSearchPicker('genre',  this)" aria-haspopup="menu" aria-expanded="false">🎭 + Genre</button>
+        <button type="button" class="search-pick-btn" data-category="studio" onclick="openSearchPicker('studio', this)" aria-haspopup="menu" aria-expanded="false">🎬 + Studio</button>
+        <button type="button" class="search-pick-btn" data-category="year"   onclick="openSearchPicker('year',   this)" aria-haspopup="menu" aria-expanded="false">📅 + Year</button>
+        <button type="button" class="search-pick-btn" data-category="format" onclick="openSearchPicker('format', this)" aria-haspopup="menu" aria-expanded="false">📺 + Format</button>
+        <button type="button" class="search-pick-btn" data-category="length" onclick="openSearchPicker('length', this)" aria-haspopup="menu" aria-expanded="false">📏 + Length</button>
+        <button type="button" class="search-clear-btn" id="search-clear-btn" onclick="clearSearchChips()" style="display:none">⤫ Clear filters</button>
+        <div id="search-picker-popover" class="search-picker-popover" hidden></div>
       </div>
-      <div class="format-row" id="ep-filter-row">
-        <span class="format-row-label">Length:</span>
-        <button class="format-btn active" data-ep="short"   onclick="toggleEpRange('short')"  >≤12 ep</button>
-        <button class="format-btn active" data-ep="medium"  onclick="toggleEpRange('medium')" >13–24</button>
-        <button class="format-btn active" data-ep="long"    onclick="toggleEpRange('long')"   >25–70</button>
-        <button class="format-btn active" data-ep="vlong"   onclick="toggleEpRange('vlong')"  >70+</button>
-        <button class="format-btn active" data-ep="unknown" onclick="toggleEpRange('unknown')">Unknown</button>
-      </div>
-      </div><!-- end collapsible-filters -->
+      <div id="search-chips" class="search-chips" hidden></div>
       <div class="list-controls">
         <button class="sort-btn active" data-sort="elo"     data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
         <button class="sort-btn"        data-sort="title"   data-label="Title"      onclick="setSort('title')">Title</button>
@@ -998,6 +1041,15 @@
             <button class="view-btn"        id="view-list-btn" onclick="setRankingView('list')" title="List view" aria-label="List view" aria-pressed="false">☰</button>
           </div>
         </div>
+      </div>
+      <!-- v1.0.211 — Franchise-only sort sub-row. Hidden by default; shown
+           only when body.franchise-mode-on so the franchise-specific sort
+           options live in their own clearly-labelled space instead of
+           cluttering the main sort row. -->
+      <div class="franchise-sort-row">
+        <span class="franchise-sort-label">⛓ Franchise sorts:</span>
+        <button class="sort-btn franchise-only" data-sort="peak"    data-label="Top ELO"      onclick="setSort('peak')">★ Top ELO</button>
+        <button class="sort-btn franchise-only" data-sort="members" data-label="Member count" onclick="setSort('members')">Members</button>
       </div>
       <div class="ranking-list" id="ranking-list"></div>
       <div id="ranking-table-wrap" style="display:none">
@@ -1031,9 +1083,31 @@
       <div id="stats-section">
         <h3>Battle Stats</h3>
         <div class="stats-grid">
-          <div class="stat-box"><div class="stat-number" id="stat-total-battles">0</div><div class="stat-label">Total Battles</div></div>
-          <div class="stat-box"><div class="stat-number" id="stat-stability">0%</div><div class="stat-label">Rankings Stable</div></div>
-          <div class="stat-box"><div class="stat-number" id="stat-fuzzy">0</div><div class="stat-label">Fuzzy Flagged</div></div>
+          <!-- v1.0.211 — Total Battles is clickable: scrolls down to the
+               Battle History list on this same tab (the natural next thing
+               you'd want to see when checking your battle count). -->
+          <div class="stat-box clickable" role="button" tabindex="0"
+               onclick="document.getElementById('history-section')?.scrollIntoView({behavior:'smooth',block:'start'})"
+               onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+               title="Jump to Battle History">
+            <div class="stat-number" id="stat-total-battles">0</div>
+            <div class="stat-label">Total Battles</div>
+          </div>
+          <!-- Rankings Stable stays purely informational — no click target. -->
+          <div class="stat-box">
+            <div class="stat-number" id="stat-stability">0%</div>
+            <div class="stat-label">Rankings Stable</div>
+          </div>
+          <!-- v1.0.211 — Fuzzy Flagged is clickable: jumps to the Rankings
+               tab with the Fuzzy-only filter activated so users can see
+               exactly which entries are flagged. -->
+          <div class="stat-box clickable" role="button" tabindex="0"
+               onclick="switchResultsTab('rankings'); if(!showFuzzyOnly) toggleFuzzyFilter();"
+               onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+               title="See your fuzzy-flagged entries">
+            <div class="stat-number" id="stat-fuzzy">0</div>
+            <div class="stat-label">Fuzzy Flagged</div>
+          </div>
         </div>
         <div class="stats-lists">
           <div class="stats-list-section">
@@ -1324,25 +1398,15 @@
       </div>
 
       <div class="manage-tab-content">
+        <!-- v1.0.209 — Manage section order tuned for column-flow balance:
+             Appearance + accounts (smaller) → Backup/Export (tallest) →
+             Feedback (small) → Danger Zone (last, by convention). With
+             column-fill: balance and these heights, the auto-pack
+             distributes content roughly evenly across columns. -->
         <div class="manage-section">
           <div class="manage-section-title">Appearance</div>
           <button id="theme-toggle-btn" class="manage-btn" onclick="toggleTheme()" title="Cycle theme: Dark → Light → Warm">🌙 Dark mode</button>
           <button id="lang-toggle-btn" class="manage-btn" onclick="toggleLanguage()" title="Switch between English and Romaji anime titles">🈯 Titles: EN</button>
-        </div>
-
-        <div class="manage-section">
-          <div class="manage-section-title">Backup, Sync &amp; Export</div>
-          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Save a backup to transfer to another device, or export your rankings as text or CSV.</p>
-          <div id="cloud-sync-btns" style="display:none">
-            <button class="manage-btn" onclick="manualCloudPush()">☁️ Save to cloud now</button>
-            <button class="manage-btn" onclick="manualCloudPull()">☁️ Load from cloud</button>
-          </div>
-          <button class="manage-btn" onclick="downloadBackup()">⬇ Download backup</button>
-          <button class="manage-btn" onclick="document.getElementById('backup-import-input').click()">📂 Import backup</button>
-          <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(event)">
-          <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
-          <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
-          <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
         </div>
 
         <div class="manage-section" id="manage-anilist-section" style="display:none">
@@ -1364,6 +1428,32 @@
         </div>
 
         <div class="manage-section">
+          <div class="manage-section-title">Backup, Sync &amp; Export</div>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Save a backup to transfer to another device, or export your rankings as text or CSV.</p>
+          <div id="cloud-sync-btns" style="display:none">
+            <button class="manage-btn" onclick="manualCloudPush()">☁️ Save to cloud now</button>
+            <button class="manage-btn" onclick="manualCloudPull()">☁️ Load from cloud</button>
+          </div>
+          <!-- v1.0.210 — visible confirmation that cross-device sync is working.
+               Hidden for guests (no cloud account), filled in by
+               _updateCloudSyncTimestamp() after every successful save and
+               on Manage-tab open. -->
+          <p id="cloud-sync-timestamp" style="font-size:0.78rem;color:#8b949e;margin:6px 0 10px;display:none"></p>
+          <button class="manage-btn" onclick="downloadBackup()">⬇ Download backup</button>
+          <button class="manage-btn" onclick="document.getElementById('backup-import-input').click()">📂 Import backup</button>
+          <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(event)">
+          <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
+          <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
+          <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
+        </div>
+
+        <div class="manage-section manage-feedback-section">
+          <div class="manage-section-title">Feedback</div>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Found a bug or have a suggestion? We'd love to hear it.</p>
+          <button type="button" class="manage-btn manage-btn-feedback" onclick="sendBetaFeedback()">✉️ Send feedback</button>
+        </div>
+
+        <div class="manage-section">
           <div class="manage-section-title" style="color:#f85149">Danger Zone</div>
           <div class="manage-danger-box">
             <p style="color:#8b949e;font-size:0.85rem;margin-bottom:10px">Permanently deletes your entire battle history and ELO rankings. This cannot be undone.</p>
@@ -1371,12 +1461,6 @@
             <p style="color:#8b949e;font-size:0.85rem;margin:12px 0 10px">Deletes all your data from this device and from cloud storage, and logs you out. For privacy removal requests.</p>
             <button class="manage-btn manage-btn-danger" onclick="deleteAllData()">🗑️ Delete all my data</button>
           </div>
-        </div>
-
-        <div class="manage-section manage-feedback-section">
-          <div class="manage-section-title">Feedback</div>
-          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Found a bug or have a suggestion? We'd love to hear it.</p>
-          <button type="button" class="manage-btn manage-btn-feedback" onclick="sendBetaFeedback()">✉️ Send feedback</button>
         </div>
 
       </div>
@@ -1564,6 +1648,10 @@
   <!-- DETAIL MODAL -->
   <div id="detail-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="closeDetailOnOverlay(event)">
     <div class="modal-box">
+      <!-- v1.0.211 — Back-to-franchise button. Shown only when navigating into an
+           individual anime from a franchise modal so the user can return to the
+           franchise overview without losing context. Hidden by default. -->
+      <button class="modal-back" id="modal-franchise-back-btn" onclick="navigateBackToFranchise()" style="display:none" aria-label="Back to franchise">← Back</button>
       <button class="modal-close" onclick="closeDetail()" aria-label="Close">✕</button>
       <img id="modal-cover" src="" alt="" onerror="this.classList.add('img-broken')" />
       <div class="modal-content">
@@ -1589,6 +1677,12 @@
         <div id="modal-description" class="modal-description" style="display:none"></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
           <a id="modal-anilist-btn" class="modal-anilist-btn" href="#" target="_blank" style="margin-bottom:0">View on AniList ↗</a>
+          <!-- v1.0.211 — Battle Next chip. Closes the modal, navigates to the
+               battle screen, queues this anime against a similar-ELO opponent
+               (or fresh random one) so the user can immediately put their
+               curiosity into the rankings. Hidden for franchise modals (no
+               single anime to queue). -->
+          <button id="modal-battle-next-btn" class="modal-battle-next-btn" onclick="battleNextFromModal()" style="display:none">⚔ Battle Next</button>
           <!-- v1.0.161 — Legacy small "Remove Fuzzy Flag" button kept hidden
                (display:none persistent). The full-width fuzzy notice above
                carries both the explanation and the remove action now. The
@@ -1674,11 +1768,15 @@
           <span>Each pick updates ELO scores. S–D tiers form automatically from your choices.</span>
         </div>
       </div>
+      <!-- v1.0.210 — was "Check Rankings as you go" (mechanic). Rewrite to
+           lead with the payoff: what does the user actually get for using
+           Kessen instead of just AniList? Answer: a taste type, a
+           shareable tier list, and optional sync back to AniList/MAL. -->
       <div class="welcome-step">
         <div class="welcome-step-num">3</div>
         <div class="welcome-step-text">
-          <strong>Check Rankings as you go</strong>
-          <span>See where every show stands — and keep battling to refine the order.</span>
+          <strong>What you'll unlock</strong>
+          <span>A personal taste type, a shareable tier list, and optional sync of your scores back to AniList or MAL.</span>
         </div>
       </div>
     </div>
@@ -1801,6 +1899,17 @@
     <div class="confirm-modal-actions">
       <button class="confirm-btn-cancel" onclick="_confirmCancel()">Cancel</button>
       <button class="confirm-btn-danger" id="confirm-modal-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.0.210 — "What's new" modal, opened from the app_update bell entry -->
+<div id="whats-new-modal" role="dialog" aria-modal="true" aria-labelledby="whats-new-title" onclick="if(event.target===this)closeWhatsNewModal()">
+  <div class="whats-new-box">
+    <h3 id="whats-new-title">✨ What's new in Kessen</h3>
+    <ul id="whats-new-bullets" class="whats-new-bullets"></ul>
+    <div class="whats-new-actions">
+      <button id="whats-new-close-btn" class="whats-new-close-btn" onclick="closeWhatsNewModal()">Got it</button>
     </div>
   </div>
 </div>

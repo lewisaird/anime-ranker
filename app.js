@@ -33,6 +33,7 @@ const IDS = Object.freeze({
   changeUserBtn:          'change-user-btn',
   cloudSyncBtns:          'cloud-sync-btns',
   cloudSyncIndicator:     'cloud-sync-indicator',
+  cloudSyncTimestamp:     'cloud-sync-timestamp',
   compatResults:          'compat-results',
   compatUsernameInput:    'compat-username-input',
   confirmModal:           'confirm-modal',
@@ -99,6 +100,7 @@ const IDS = Object.freeze({
   manageAnilistSection:   'manage-anilist-section',
   manageMalSection:       'manage-mal-section',
   modalAnilistBtn:        'modal-anilist-btn',
+  modalBattleNextBtn:     'modal-battle-next-btn',
   modalConfidenceWrap:    'modal-confidence-wrap',
   modalCover:             'modal-cover',
   modalDescription:       'modal-description',
@@ -157,6 +159,12 @@ const IDS = Object.freeze({
   rivalrySection:         'rivalry-section',
   savedComparisons:       'saved-comparisons',
   searchInput:            'search-input',
+  searchHelpBtn:          'search-help-btn',
+  searchHelpPopover:      'search-help-popover',
+  searchPickerRow:        'search-picker-row',
+  searchPickerPopover:    'search-picker-popover',
+  searchChips:            'search-chips',
+  searchClearBtn:         'search-clear-btn',
   sessionSummaryList:     'session-summary-list',
   sessionSummaryModal:    'session-summary-modal',
   sessionSummarySubtitle: 'session-summary-subtitle',
@@ -234,6 +242,16 @@ const IDS = Object.freeze({
   ncPushCatTower:         'nc-push-cat-tower',
   ncPushCatWt:            'nc-push-cat-wt',
   ncPushCatLc:            'nc-push-cat-lc',
+  // v1.0.210 — "What's new" modal opened from the app_update bell entry.
+  whatsNewModal:          'whats-new-modal',
+  whatsNewTitle:          'whats-new-title',
+  whatsNewBullets:        'whats-new-bullets',
+  whatsNewCloseBtn:       'whats-new-close-btn',
+  // v1.0.211 — Franchise pack
+  avoidSameFranchiseChk:  'avoid-same-franchise-chk',
+  withinFranchiseBanner:  'within-franchise-banner',
+  withinFranchiseMsg:     'within-franchise-msg',
+  modalFranchiseBackBtn:  'modal-franchise-back-btn',
   collabModal:              'collab-modal',
   collabPanelMode:           'collab-panel-mode',
   collabPanelSetup:          'collab-panel-setup',
@@ -340,7 +358,6 @@ const IDS = Object.freeze({
   collabTiebreakBtn:      'collab-tiebreak-btn',
   collabVoteSub:          'collab-vote-sub',
   collabVoteWho:          'collab-vote-who',
-  collapsibleFilters:     'collapsible-filters',
   discoverMoodGrid:       'discover-mood-grid',
   filterBtn:              'filter-btn',
   filterPopover:          'filter-popover',
@@ -348,7 +365,6 @@ const IDS = Object.freeze({
   historyCount:           'history-count',
   lcHistoryList:          'lc-history-list',
   lcHistoryListLobby:     'lc-history-list-lobby',
-  mobileFilterToggle:     'mobile-filter-toggle',
   moodsSection:           'moods-section',
   newBadgeTaste:          'new-badge-taste',
   recsTabMoods:           'recs-tab-moods',
@@ -418,6 +434,15 @@ const VS_BUFFER     = 8;         // extra rows to render above/below viewport
 let rankingView     = 'grid';    // 'grid' or 'list'
 let showFuzzyOnly   = false;     // fuzzy filter toggle
 let franchiseMode   = false;     // group sequels/seasons in rankings view
+// v1.0.211 — Avoid-same-franchise filter. When true, pickers (Classic/Settle/
+// Blind/Trio/WSO) skip pairs that share a franchise group. Tower mode applies
+// a softer down-weight separately (see _pickTowerOpponent). The toggle lives
+// in the filter popover so it sits alongside format/fuzzy as a pool filter.
+let avoidSameFranchise = false;
+// v1.0.211 — Battle-within-franchise mode. When non-null, pickers restrict
+// to this set of anime IDs (the chosen franchise's members). Launched from
+// the franchise detail modal. ELO updates and battleCount tick normally.
+let battleWithinFranchise = null; // { name: 'Re:Zero', ids: Set<number> } | null
 // v1.0.207 — Winner Stays On (WSO) mode. The winner of a battle "stays on"
 // against a fresh opponent until they lose; a small flame badge above their
 // card shows the current streak. Champion is always rendered as side A so
@@ -622,6 +647,15 @@ const KESSEN_KEYS = {
     // already been shown (accepted or declined). Prevents repeat pestering.
     guestMergeDismissed: 'kessen.ui.guestMergeDismissed',
     tasteStorySeen:      'kessen.ui.tasteStorySeen', // JSON array of battle counts already shown
+    // v1.0.210 — ms timestamp of the most recent successful cloud save.
+    // Surfaced on the Manage tab's Backup/Sync card so users can SEE their
+    // cross-device sync is actually working (the v1.0.209 sync work was
+    // invisible without this).
+    lastCloudSaveTs:     'kessen.ui.lastCloudSaveTs',
+    // v1.0.210 — version string of the last release the user has seen the
+    // "What's new" notification for. Compared at boot with the current
+    // APP_VERSION; mismatch pushes an entry into the notification centre.
+    lastSeenAppVersion:  'kessen.ui.lastSeenAppVersion',
     // v1.0.154 — was set/read inline as 'kessen.ui.theme'. Brought into the
     // registry alongside the other UI prefs.
     theme:               'kessen.ui.theme',
@@ -639,7 +673,7 @@ const KESSEN_KEYS = {
   },
   settings: {
     allowAdult:  'kessen.settings.allowAdult',
-    viewPrefs:   'kessen.settings.viewPrefs', // local-only: rankingView + franchiseMode
+    viewPrefs:   'kessen.settings.viewPrefs', // local-only: rankingView + franchiseMode + avoidSameFranchise
   },
   data: {
     savedComparisons: 'kessen.data.savedComparisons',
@@ -1956,6 +1990,40 @@ function _setSyncIndicator(state) {
   if (state === 'error')  { el.textContent = '⚠️'; el.title = 'Sync error';  el.style.color = '#f85149'; el.classList.remove('sync-pulse'); }
 }
 
+// v1.0.210 — format a relative time like "just now", "2 min ago", "3 h ago".
+// Used by the Backup/Sync card so the user can verify cross-device sync is
+// actually doing something. Public functions like _doCloudSave call
+// _updateCloudSyncTimestamp() on success to refresh the label.
+function _formatRelTime(ms) {
+  if (!ms) return 'never';
+  const diff = Date.now() - ms;
+  if (diff < 0)             return 'just now';
+  if (diff < 30_000)        return 'just now';
+  if (diff < 60_000)        return 'less than a minute ago';
+  const min = Math.floor(diff / 60_000);
+  if (min < 60)             return `${min} min ago`;
+  const hr  = Math.floor(min / 60);
+  if (hr < 24)              return `${hr} h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7)              return `${day} day${day === 1 ? '' : 's'} ago`;
+  return new Date(ms).toLocaleDateString();
+}
+function _updateCloudSyncTimestamp() {
+  const el = byId(IDS.cloudSyncTimestamp);
+  if (!el) return;
+  let ts = 0;
+  try { ts = Number(localStorage.getItem(KESSEN_KEYS.ui.lastCloudSaveTs) || 0); } catch {}
+  if (!_cloudSyncEnabled) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = ts
+    ? `Last synced: ${_formatRelTime(ts)}`
+    : 'Not synced yet — your next change will save to cloud.';
+}
+// Tick the relative time once a minute while the Manage tab is open. Cheap;
+// we only update text content, no layout/reflow because the line has a fixed
+// height in the card.
+setInterval(_updateCloudSyncTimestamp, 60_000);
+
 // ── Real-time sync helpers ────────────────────────────────────────────────────
 
 // Returns the Firebase base path for the current user's personal data.
@@ -2146,6 +2214,11 @@ async function _doCloudSave() {
     _cloudSaveFailStreak = 0;
     _setSyncIndicator('saved');
     setTimeout(() => _setSyncIndicator('hidden'), 3000);
+    // v1.0.210 — record the successful save timestamp + refresh the Manage
+    // tab's "Last synced …" label so users have visible confirmation that
+    // cross-device sync is working.
+    try { localStorage.setItem(KESSEN_KEYS.ui.lastCloudSaveTs, String(Date.now())); } catch {}
+    _updateCloudSyncTimestamp();
 
     // Notify other devices via Firebase — write a tiny ping only, NOT the full
     // session. The full data lives in the Netlify Blob (written above); other
@@ -2488,6 +2561,22 @@ function loadState(username, source = 'anilist') {
       if (a.status     === undefined) a.status     = 'COMPLETED';
       if (a.popularity === undefined) a.popularity = 0;
       if (a.battles    === undefined) a.battles    = _avgBattles; // estimated from average
+      // v1.0.211 — Achievement-system backfills.
+      // seedElo: powers Comeback Kid. Fall back to the oldest eloHistory
+      // point we still have (eloHistory is capped at 30, so for heavily-
+      // battled anime this is the closest approximation to the original
+      // seed we can recover). If eloHistory is empty, default to 1200.
+      if (a.seedElo === undefined) {
+        a.seedElo = (Array.isArray(a.eloHistory) && a.eloHistory.length > 0)
+          ? a.eloHistory[0]
+          : 1200;
+      }
+      // maxWinStreak: powers Hot Streak. Bootstraps from the current
+      // streak (if it's a win streak) so users with existing streaks
+      // don't lose visible progress. Future wins extend it in pickWinner.
+      if (a.maxWinStreak === undefined) {
+        a.maxWinStreak = (a.streak?.type === 'win') ? (a.streak.count || 0) : 0;
+      }
     });
     // v1.0.116 — dedup any duplicate-ID entries that snuck in before the
     // custom-list dedup at fetch time in v1.0.115. Keep the entry with the
@@ -2517,6 +2606,12 @@ function loadState(username, source = 'anilist') {
     if (animeList.length < _beforeMusic) {
       console.warn('[migrate] removed', _beforeMusic - animeList.length, 'MUSIC-format entries');
     }
+    // v1.0.211 — load local-only view preferences (rankingView / franchiseMode
+    // / avoidSameFranchise) at session-restore time. Previously this only ran
+    // inside showResults, which left avoidSameFranchise as `false` at the
+    // first battle for users who'd toggled it in a prior session. The cost is
+    // one localStorage read.
+    _loadViewPrefs();
     return true;
   } catch { return false; }
 }
@@ -2604,9 +2699,17 @@ function updateElo(winner, loser) {
 function pickOpponents() {
   const n = animeList.length;
 
+  // v1.0.211 — Battle-within-franchise restricts the pool to the chosen
+  // franchise's members. Acts like another filter alongside excludedIds and
+  // hiddenFormatsBattle — anime not in the set get weight 0.
+  const inFranchisePool = battleWithinFranchise
+    ? (a => battleWithinFranchise.ids.has(a.id))
+    : null;
+
   // weight: 0 for excluded, lower for fuzzy, higher for fewer comparisons
   const weights = animeList.map(a => {
     if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
+    if (inFranchisePool && !inFranchisePool(a)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
@@ -2618,12 +2721,22 @@ function pickOpponents() {
   const poolText    = byId(IDS.poolWarningText);
   if (poolBanner) {
     if (activeCount < 2) {
+      // v1.0.211 — battle-within-franchise gets its own message because the
+      // generic "remove some filters" line doesn't tell the user what to do
+      // (the filter button doesn't control franchise restriction).
       const msg = animeList.length < 2
         ? '⚠️ You need at least 2 anime in your list to start battling.'
-        : '⚠️ All anime are filtered out — remove some filters to keep battling.';
+        : battleWithinFranchise && activeCount < 2
+          ? `⚠️ Only ${activeCount} eligible anime in "${battleWithinFranchise.name}" — stop the within-franchise battle to widen the pool.`
+          : '⚠️ All anime are filtered out — remove some filters to keep battling.';
       poolText.textContent = msg;
       poolBanner.classList.add('active');
-    } else if (activeCount <= 5) {
+    } else if (activeCount <= 5 && !battleWithinFranchise) {
+      // v1.0.211 — suppress the "low battle pool" warning while Battle
+      // Within Franchise is active. The pool is deliberately constrained
+      // to one franchise; "remove some filters to see more matchups"
+      // misleads the user — the filter button doesn't control the
+      // franchise restriction and the small pool is the entire point.
       poolText.textContent = `⚠️ Only ${activeCount} anime in your battle pool — remove some filters to see more matchups.`;
       poolBanner.classList.add('active');
     } else {
@@ -2655,17 +2768,51 @@ function pickOpponents() {
 
   const idxA = weightedPick(-1);
 
+  // v1.0.211 — Avoid-same-franchise filter. If on, we need at least one
+  // cross-franchise candidate for idxB. If none exists, fall through to the
+  // normal pool (i.e. avoid is best-effort — a list with one giant franchise
+  // shouldn't stop battles entirely).
+  const animeA = animeList[idxA];
+  const avoidF = avoidSameFranchise && !battleWithinFranchise;
+  const crossFranchiseEligibleCount = avoidF
+    ? animeList.reduce((c, a, i) =>
+        c + (i !== idxA && weights[i] > 0 && !_sameFranchise(a, animeA) ? 1 : 0), 0)
+    : Infinity;
+  const applyAvoid = avoidF && crossFranchiseEligibleCount > 0;
+
   // For B: pick from anime with similar ELO to A (within 300 pts), not excluded
-  const eloA = animeList[idxA].elo;
+  // v1.0.211 hotfix — when battling within a franchise, drop the similar-ELO
+  // window entirely. The point of within-franchise is to settle every member
+  // against every other member, so excluding the high-ELO outlier ("AOT Final
+  // Season" sitting far above the rest) just because it's 700 ELO above its
+  // siblings defeats the mode. ELO matching still applies in the standard
+  // global pool, where blowout matches would be a waste of compute.
+  const eloA = animeA.elo;
+  const eloWindow = battleWithinFranchise ? Infinity : 300;
   const candidates = animeList
     .map((a, i) => ({ i, a }))
-    .filter(({ i }) => i !== idxA && weights[i] > 0 && Math.abs(animeList[i].elo - eloA) < 300)
+    .filter(({ i, a }) =>
+      i !== idxA
+      && weights[i] > 0
+      && Math.abs(animeList[i].elo - eloA) < eloWindow
+      && (!applyAvoid || !_sameFranchise(a, animeA))
+    )
     .sort((x, y) => x.a.comparisons - y.a.comparisons);
 
   let idxB;
   if (candidates.length > 0) {
     const pool = candidates.slice(0, Math.min(20, candidates.length));
     idxB = pool[Math.floor(Math.random() * pool.length)].i;
+  } else if (applyAvoid) {
+    // Broader-pool fallback that still honours avoid-same-franchise.
+    const wider = animeList
+      .map((a, i) => ({ i, a }))
+      .filter(({ i, a }) =>
+        i !== idxA && weights[i] > 0 && !_sameFranchise(a, animeA))
+      .sort((x, y) => x.a.comparisons - y.a.comparisons);
+    idxB = wider.length
+      ? wider[Math.floor(Math.random() * Math.min(20, wider.length))].i
+      : weightedPick(idxA);
   } else {
     idxB = weightedPick(idxA);
   }
@@ -2845,7 +2992,23 @@ function renderBattle() {
     return;
   }
   if (arena) arena.style.display = '';
-  const [ia, ib] = pair;
+  let [ia, ib] = pair;
+  // v1.0.211 hotfix — Defensive consistency check: in WSO mode, the champion
+  // MUST be on side A. If something upstream (nextPairOverride from an
+  // undo+redo path, a stale preloaded pair, or a future regression) hands
+  // us a pair where the champion isn't on the left, swap or re-pick so the
+  // streak badge always sits above the correct anime.
+  if (wsoMode && _wsoChampionValid() && ia !== wsoWinnerIdx) {
+    if (ib === wsoWinnerIdx) {
+      // Champion was on side B — just swap so badge anchors to the left card.
+      [ia, ib] = [ib, ia];
+    } else {
+      // Neither side is the champion — drop the override and re-pick fresh
+      // through the WSO picker so the cards match wsoWinnerIdx.
+      const fresh = pickWsoPair();
+      if (fresh) [ia, ib] = fresh;
+    }
+  }
   renderPair(ia, ib);
   _renderWsoBadge(false); // v1.0.207 — refresh badge on every render; no pulse here, pickWinner pulses on increment
   saveState();
@@ -2942,22 +3105,33 @@ function _pickWsoOpponent() {
     if (i === wsoWinnerIdx) continue;
     if (excludedIds.has(animeList[i].id)) continue;
     if (hiddenFormatsBattle.has(animeList[i].format)) continue;
+    // v1.0.211 — battle-within-franchise constrains the WSO pool too
+    if (battleWithinFranchise && !battleWithinFranchise.ids.has(animeList[i].id)) continue;
     eligible.push(i);
   }
   if (eligible.length === 0) return null;
+  // v1.0.211 — avoid-same-franchise. Prefer cross-franchise eligibles; fall
+  // through to the full pool only if every eligible shares the champion's
+  // franchise (so the streak doesn't end from "no legal opponent").
+  let pool = eligible;
+  if (avoidSameFranchise && !battleWithinFranchise && wsoWinnerIdx != null) {
+    const champ = animeList[wsoWinnerIdx];
+    const cross = eligible.filter(i => !_sameFranchise(animeList[i], champ));
+    if (cross.length > 0) pool = cross;
+  }
   // Prefer fresh (unseen this streak)
   const faced = new Set(wsoFacedOrder);
-  const fresh = eligible.filter(i => !faced.has(i));
+  const fresh = pool.filter(i => !faced.has(i));
   if (fresh.length > 0) {
     return fresh[Math.floor(Math.random() * fresh.length)];
   }
   // Fallback: least-recently faced eligible anime. wsoFacedOrder is oldest-
   // first, so iterate and return the first eligible index we see.
   for (const idx of wsoFacedOrder) {
-    if (eligible.includes(idx)) return idx;
+    if (pool.includes(idx)) return idx;
   }
   // Should be unreachable, but be defensive
-  return eligible[Math.floor(Math.random() * eligible.length)];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function pickWsoPair() {
@@ -2975,7 +3149,28 @@ function pickWsoPair() {
   }
   const opp = _pickWsoOpponent();
   if (opp == null) {
-    // Pool empty (everything filtered out) — fall back to standard pick
+    // v1.0.211 hotfix — Champion-preserving fallback. The previous
+    // `return pickOpponents()` ignored wsoWinnerIdx entirely: when the WSO
+    // opponent pool was momentarily empty (e.g. avoid-same-franchise
+    // narrowed it during a long Goblin Slayer streak), pickOpponents
+    // happily returned a random weighted pair where the LEFT card was no
+    // longer the actual champion. The user kept seeing the old champion
+    // on the left while the WSO state already pointed at the new one, so
+    // their next click voted against whoever the picker decided to put on
+    // the right — confusing both visually and logically. Now we force the
+    // champion to side A and only fall through to the standard picker if
+    // even the champion itself isn't a valid candidate (shouldn't happen
+    // unless the user excluded the champion mid-battle).
+    if (_wsoChampionValid()) {
+      // Re-pick with the same constraints minus the WSO-specific avoid set.
+      // pickOpponents respects excludedIds + hiddenFormatsBattle, so the
+      // opponent it picks won't violate user filters.
+      const seed = pickOpponents();
+      if (!seed) return null;
+      // Whichever index in the seed isn't the champion becomes the opponent.
+      const oppIdx = seed[0] !== wsoWinnerIdx ? seed[0] : seed[1];
+      return [wsoWinnerIdx, oppIdx];
+    }
     return pickOpponents();
   }
   return [wsoWinnerIdx, opp];
@@ -3083,6 +3278,11 @@ function pickWinner(side) {
   const l = animeList[loserIdx];
   w.streak = (w.streak?.type === 'win') ? { type: 'win', count: (w.streak.count || 0) + 1 } : { type: 'win', count: 1 };
   l.streak = (l.streak?.type === 'loss') ? { type: 'loss', count: (l.streak.count || 0) + 1 } : { type: 'loss', count: 1 };
+  // v1.0.211 — Track all-time-high winning streak per anime so Hot Streak
+  // achievement progress persists across losses. Without this, a 9-win
+  // streak that was about to hit Silver evaporates from the achievement
+  // tracker the moment the anime loses one battle.
+  w.maxWinStreak = Math.max(w.maxWinStreak || 0, w.streak.count);
 
   // Update persistent matchup stats (used for rivalries)
   if (!matchupStats[_mKey]) {
@@ -3113,6 +3313,9 @@ function pickWinner(side) {
   _checkAchievements();
   _maybeSaveTasteSnapshot();
   _syncTasteNewBadge();
+  // v1.0.211 — Battle Within Franchise auto-completion. No-op when the mode
+  // isn't active. Reuses _mKey which is already in scope above.
+  _recordBattleWithinPair(wId, lId);
   // v1.0.207 — WSO state update. Side 0 (champion) winning ticks the streak
   // and adds the opponent to the faced list; side 1 (opponent) winning makes
   // them the new champion with streak 1 and the previous champion as their
@@ -3122,7 +3325,19 @@ function pickWinner(side) {
   if (wsoMode) {
     if (side === 0) {
       wsoStreak += 1;
-      if (loserIdx != null && !wsoFacedOrder.includes(loserIdx)) {
+      // v1.0.211 — Treat wsoFacedOrder as a proper LRU queue. Previously we
+      // only appended on first sighting (`!includes` guard), so once an
+      // opponent had been faced once it stayed pinned at whatever position
+      // it landed at. With the v1.0.211 avoid-same-franchise filter this
+      // surfaced badly: once the cross-franchise pool was exhausted, the
+      // "least-recently faced" fallback returned the same opponent every
+      // round because nobody ever moved in the queue. Now we remove-then-
+      // append so the most-recently-faced opponent always sits at the back
+      // and the next round picks the next-oldest from the front. Restores
+      // proper round-robin rotation against a shrunk pool.
+      if (loserIdx != null) {
+        const existing = wsoFacedOrder.indexOf(loserIdx);
+        if (existing !== -1) wsoFacedOrder.splice(existing, 1);
         wsoFacedOrder.push(loserIdx);
       }
       _shouldPulseWso = true;
@@ -3158,6 +3373,44 @@ function _updateUndoBtn() {
 function undoLast() {
   if (undoStack.length === 0) return;
   const snap = undoStack.pop();
+
+  if (snap.type === 'exclude') {
+    // v1.0.210 — undo a "✗ Not seen" action: remove from excludedIds and
+    // restore the pair the user was looking at. No ELO change to revert
+    // because exclusion doesn't run a battle.
+    excludedIds.delete(snap.excludedId);
+    if (typeof snap.prevA === 'number' && typeof snap.prevB === 'number'
+        && snap.prevA < animeList.length && snap.prevB < animeList.length) {
+      renderPair(snap.prevA, snap.prevB);
+    } else {
+      renderBattle();
+    }
+    saveState();
+    _updateUndoBtn();
+    return;
+  }
+
+  if (snap.type === 'bulk-exclude') {
+    // v1.0.211 — undo bulk-exclude franchise. Pulls every id out of
+    // excludedIds (only the ones this snapshot added — pre-existing
+    // exclusions weren't in snap.ids, so they stay excluded). Same arena
+    // restore as the single-exclude case.
+    for (const id of snap.ids || []) excludedIds.delete(id);
+    _bumpFranchiseGroupCache();
+    if (typeof snap.prevA === 'number' && typeof snap.prevB === 'number'
+        && snap.prevA < animeList.length && snap.prevB < animeList.length) {
+      renderPair(snap.prevA, snap.prevB);
+    } else if (byId(IDS.battleScreen)?.style.display !== 'none') {
+      renderBattle();
+    } else {
+      renderRankingList();
+    }
+    saveState();
+    scheduleCloudSave();
+    showToast(`↩ Restored ${snap.ids?.length || 0} from "${snap.franchiseName || 'franchise'}" to battles.`, 2500);
+    _updateUndoBtn();
+    return;
+  }
 
   if (snap.type === 'trio') {
     // Restore all 3 anime to pre-trio state
@@ -4267,6 +4520,11 @@ function _buildFranchiseGroups(sorted) {
   for (const group of groups.values()) {
     group.members.sort((a, b) => b.elo - a.elo);
     group.bestElo = Math.round(group.members.reduce((s, a) => s + a.elo, 0) / group.members.length);
+    // v1.0.211 — peakElo powers the "Peak ELO" sort option in franchise mode.
+    // Not surfaced visually on the card (the headline ELO number is the
+    // average), but lets users re-sort the franchise list by their single
+    // strongest entry per franchise.
+    group.peakElo = group.members[0].elo;
     group.cover   = group.members[0].cover;
     group.format  = group.members[0].format;
     // Aggregate stats across all members
@@ -4329,6 +4587,16 @@ function _buildFranchiseGroups(sorted) {
     case 'score':
       result.sort((a, b) => (a.avgScore - b.avgScore) * dir);
       break;
+    // v1.0.211 — Franchise-only aggregates. The flat list ignores these
+    // (case falls through to default 'elo' sort) — the sort buttons are
+    // hidden when franchiseMode is off so users can't accidentally pick
+    // them in flat mode.
+    case 'peak':
+      result.sort((a, b) => (a.peakElo - b.peakElo) * dir);
+      break;
+    case 'members':
+      result.sort((a, b) => (a.members.length - b.members.length) * dir);
+      break;
     case 'tier':
       result.sort((a, b) => (a.eloRank - b.eloRank) * dir);
       break;
@@ -4347,6 +4615,15 @@ function toggleFranchiseMode() {
   if (btn) {
     btn.classList.toggle('active', franchiseMode);
     btn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
+  }
+  // v1.0.211 — gate franchise-only sort buttons via body class. Also reset to
+  // a flat-list-compatible sort when leaving franchise mode so the user
+  // doesn't end up looking at the rankings sorted by a metric whose button
+  // just disappeared.
+  document.body.classList.toggle('franchise-mode-on', franchiseMode);
+  if (!franchiseMode && (currentSort === 'peak' || currentSort === 'members')) {
+    setSort('elo'); // resets the active button + re-renders
+    return;
   }
   _applyRankingViewState();
   _saveViewPrefs();
@@ -4449,13 +4726,23 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     // cards use. Top-3 franchises (by ELO rank, not sort position) should
     // stand out in franchise mode just like they do in flat-list mode.
     const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
+    // v1.0.211 — "Top" badge surfaces the strongest *current* entry in the
+    // franchise. Meaningful for multi-entry franchises ("Madoka Magica's
+    // top is its TV series at 1480"), redundant for singletons (top = the
+    // only entry, same as the headline avg). The `avg` sub-label pairs
+    // with this so users don't confuse the average with the strongest.
+    // Historical peak (highest ELO any member has ever reached) lives in
+    // the franchise detail modal — see showFranchiseDetail.
+    const peakBadge = !isSingle
+      ? `<span class="franchise-peak" title="Highest current ELO in this franchise. Historical peak shown in the franchise overview.">★ Top ${group.peakElo}</span>`
+      : '';
     card.innerHTML = `
       <span class="rank-number ${numClass}">#${displayRank}</span>
       <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
       <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
-      ${countBadge || fuzzyCountBadge ? `<div class="franchise-grid-meta">${countBadge}${fuzzyCountBadge}</div>` : ''}
-      <div class="rank-elo">ELO ${group.bestElo}</div>
+      ${countBadge || fuzzyCountBadge || peakBadge ? `<div class="franchise-grid-meta">${countBadge}${peakBadge}${fuzzyCountBadge}</div>` : ''}
+      <div class="rank-elo">ELO ${group.bestElo}${!isSingle ? '<span class="franchise-elo-sub">avg</span>' : ''}</div>
       <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
       ${singleFuzzyPill}
       ${cohBadge}
@@ -4470,7 +4757,8 @@ function _buildFranchiseCard(group, rank, totalGroups) {
           <div class="franchise-name rank-title">${esc(group.name)}</div>
           <div class="franchise-meta">
             ${tierBadge}
-            <span class="franchise-elo">ELO ${group.bestElo}</span>
+            <span class="franchise-elo">ELO ${group.bestElo}${!isSingle ? '<span class="franchise-elo-sub">avg</span>' : ''}</span>
+            ${!isSingle ? `<span class="franchise-peak" title="Highest current ELO in this franchise.">★ Top ${group.peakElo}</span>` : ''}
             <span class="franchise-elo">${wrStr} WR · ${group.totalBattles} battles</span>
             ${countBadge}
             ${fuzzyCountBadge}
@@ -4510,7 +4798,11 @@ function showFranchiseDetail(groupName) {
     // immediately clear which member is uncertain (the whole franchise
     // doesn't carry the outline any more — only the affected entry).
     const fuzzyCls = a.fuzzy ? ' is-fuzzy' : '';
-    return `<div class="franchise-detail-member${fuzzyCls}" onclick="closeDetailModal();showAnimeDetail(${a.id})">
+    // v1.0.211 — Stash the franchise name so the resulting anime detail modal
+    // can show a "← Back" button that returns to this franchise overview
+    // instead of dumping the user back at the Rankings screen with no context.
+    const backName = esc(group.name).replace(/'/g, "\\'");
+    return `<div class="franchise-detail-member${fuzzyCls}" onclick="navigateToFranchiseMember(${a.id}, '${backName}')">
       <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
@@ -4530,7 +4822,28 @@ function showFranchiseDetail(groupName) {
   coverEl.alt = group.name;
   byId(IDS.modalTitle).textContent = group.name;
   const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
-  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${group.members.length} entries · Avg ELO ${group.bestElo}`;
+  // v1.0.211 — Historical peak (highest ELO any member has ever reached) is
+  // derived from each member's eloHistory array (capped at 30 entries, so
+  // this is "all-time" only within that window — older peaks roll off).
+  // We take the max across history + current ELO so the current value
+  // itself counts as a high if it hasn't been recorded in history yet.
+  let allTimePeak = group.members[0].elo;
+  let allTimePeakMember = group.members[0];
+  for (const m of group.members) {
+    const memberMax = Math.max(m.elo, ...(Array.isArray(m.eloHistory) ? m.eloHistory : []));
+    if (memberMax > allTimePeak) {
+      allTimePeak = memberMax;
+      allTimePeakMember = m;
+    }
+  }
+  const isSingleMember = group.members.length === 1;
+  const peakNowHtml = !isSingleMember
+    ? ` · Top now ${group.peakElo}`
+    : '';
+  const peakAllTimeHtml = !isSingleMember && allTimePeak > group.peakElo
+    ? ` · All-time best ${allTimePeak} <span style="color:#8b949e;font-size:0.82rem">(${esc(displayTitle(allTimePeakMember))})</span>`
+    : '';
+  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${group.members.length} entries · Avg ELO ${group.bestElo}${peakNowHtml}${peakAllTimeHtml}`;
   const cohDetail = _coherenceLabel(group);
   const cohHtml   = cohDetail
     ? ` · <span class="franchise-coherence ${cohDetail.cls}" style="font-size:0.78rem" title="${esc(cohDetail.title)}">${cohDetail.icon} ${cohDetail.label} <span style="color:#8b949e;font-weight:400">(±${group.eloStdDev} ELO)</span></span>`
@@ -4600,10 +4913,30 @@ function showFranchiseDetail(groupName) {
     recentEl.innerHTML = '';
   }
 
+  // v1.0.211 — Franchise actions row. "Battle within" launches a sub-mode
+  // restricted to this franchise's members (so users can settle internal
+  // rankings without seeing the franchise paired with unrelated titles
+  // every few battles). "Exclude all" bulk-excludes the entire franchise
+  // from battles in one shot — useful for finished shows or shows you've
+  // decided you don't want to keep ranking. Both pass the canonical group
+  // name as a string parameter so they re-look-up the current member set
+  // (the franchise grouping is recomputed at call time and the member list
+  // could have changed since modal-open if the user excluded an entry).
+  const safeName = esc(group.name).replace(/'/g, "\\'");
+  const canBattle = group.members.length >= 2;
+  const actionsHtml = `
+    <div class="franchise-detail-actions">
+      <button type="button" class="franchise-action-btn"
+              ${canBattle ? '' : 'disabled title="Need ≥2 entries to battle"'}
+              onclick="startBattleWithinFranchise('${safeName}')">⚔ Battle within</button>
+      <button type="button" class="franchise-action-btn franchise-action-danger"
+              onclick="bulkExcludeFranchise('${safeName}')">🚫 Exclude all from battles</button>
+    </div>`;
+
   // Replace description with the member list
   const descEl = byId(IDS.modalDescription);
   if (descEl) {
-    descEl.innerHTML = `<div class="franchise-detail-members">${membersHtml}</div>`;
+    descEl.innerHTML = actionsHtml + `<div class="franchise-detail-members">${membersHtml}</div>`;
     descEl.style.display = 'block';
     descEl.style.opacity = '1';
   }
@@ -4616,6 +4949,36 @@ function showFranchiseDetail(groupName) {
 function closeDetailModal() {
   byId(IDS.detailModal).style.display = 'none';
   popModalBack('detail');
+  // v1.0.211 — Clear any pending "back to franchise" state when the modal is
+  // closed via the close button / overlay click / Escape. Without this, a
+  // user who opens a franchise → drills into a member → closes → opens a
+  // different anime card directly would still see the stale back button.
+  _detailFranchiseBack = null;
+  const backBtn = byId(IDS.modalFranchiseBackBtn);
+  if (backBtn) backBtn.style.display = 'none';
+}
+
+// v1.0.211 — Back-to-franchise navigation. When a user clicks an entry in the
+// franchise modal we close the franchise overview, open the individual anime
+// detail, and stash the franchise name so a "← Back" button in the detail
+// modal can return to it. The back button is shown by navigateToFranchiseMember
+// (after showAnimeDetail repaints the modal) and hidden by closeDetailModal /
+// a direct showAnimeDetail call.
+let _detailFranchiseBack = null;
+function navigateToFranchiseMember(id, franchiseName) {
+  _detailFranchiseBack = franchiseName || null;
+  closeDetailModal(); // resets back state — restore it after
+  _detailFranchiseBack = franchiseName || null;
+  showAnimeDetail(id);
+  const backBtn = byId(IDS.modalFranchiseBackBtn);
+  if (backBtn && _detailFranchiseBack) backBtn.style.display = '';
+}
+function navigateBackToFranchise() {
+  const name = _detailFranchiseBack;
+  if (!name) { closeDetailModal(); return; }
+  _detailFranchiseBack = null;
+  closeDetailModal();
+  showFranchiseDetail(name);
 }
 
 function toggleFranchiseExpand(el) {
@@ -4735,6 +5098,11 @@ function showResults() {
   _applyRankingViewState();
   // Load local-only view preferences (grid/list, franchise) before rendering
   _loadViewPrefs();
+  // v1.0.211 — migrate any legacy hiddenFormatsRanking / hiddenEpRangesRanking
+  // sets into chip-picker state, then paint the chip row. Must run AFTER
+  // saveState restores the legacy sets but BEFORE the first filterRankings.
+  _migrateLegacyFiltersToChips();
+  _renderSearchChips();
   byId(IDS.viewGridBtn)?.classList.toggle('active', rankingView === 'grid');
   byId(IDS.viewListBtn)?.classList.toggle('active', rankingView === 'list');
   const franchiseBtn = byId(IDS.franchiseBtn);
@@ -4742,6 +5110,11 @@ function showResults() {
     franchiseBtn.classList.toggle('active', franchiseMode);
     franchiseBtn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
   }
+  // v1.0.211 — keep the body class in lockstep with franchiseMode at boot too
+  // (toggleFranchiseMode handles runtime toggling; this handles page-load
+  // restoration so franchise-only sort buttons appear immediately for users
+  // whose saved view was already in franchise mode).
+  document.body.classList.toggle('franchise-mode-on', franchiseMode);
   _applyRankingViewState();
 
   byId(IDS.resultsSubtitle).textContent =
@@ -4858,11 +5231,12 @@ function renderHistory() {
   if (searchEl && searchEl.value) filterHistory(searchEl.value);
 }
 
-function _filterFranchise() {
-  const q = (byId(IDS.searchInput)?.value || '').toLowerCase().trim();
-  // Per-member filter check: format / episode-length / excluded / fuzzy-only.
-  // Mirrors the predicates in filterRankings() for non-franchise mode so that
-  // toggling a filter while franchise mode is on actually does something.
+function _filterFranchise(preParsedQuery) {
+  // v1.0.211 — token grammar + chip picker. filterRankings hands us the
+  // already-merged effective query; standalone callers (e.g. switching
+  // sort modes) re-parse from the input AND union the chip state in.
+  const query = preParsedQuery
+    || _effectiveSearchQuery(_parseSearchQuery(byId(IDS.searchInput)?.value || ''));
   const animeById = new Map(animeList.map(a => [a.id, a]));
   const memberPasses = (a) => {
     if (!a) return false;
@@ -4870,6 +5244,7 @@ function _filterFranchise() {
     if (hiddenFormatsRanking.has(a.format))                        return false;
     if (hiddenEpRangesRanking.has(epRange(a.episodes, a.format)))  return false;
     if (showFuzzyOnly && !a.fuzzy)                          return false;
+    if (!_animeMatchesSearchTokens(a, query))               return false;
     return true;
   };
   // A franchise group is shown iff at least ONE member passes the filters —
@@ -4883,19 +5258,30 @@ function _filterFranchise() {
     }
     return false;
   };
+  // Search text match: franchise name OR any member title contains the text.
+  // Member-title matching means typing "Brotherhood" finds the Fullmetal group
+  // even though the group's display name is just "Fullmetal Alchemist".
+  const groupMatchesText = (csv, name) => {
+    if (!query.text) return true;
+    if ((name || '').toLowerCase().includes(query.text)) return true;
+    if (!csv) return false;
+    return csv.split(',').some(idStr => {
+      const a = animeById.get(Number(idStr));
+      return a && displayTitle(a).toLowerCase().includes(query.text);
+    });
+  };
 
   if (rankingView === 'grid') {
     document.querySelectorAll('#ranking-list .franchise-group').forEach(card => {
-      const name = (card.dataset.franchiseName || '').toLowerCase();
-      const matchesSearch  = !q || name.includes(q);
+      const matchesSearch  = groupMatchesText(card.dataset.memberIds, card.dataset.franchiseName);
       const matchesFilters = groupHasVisibleMember(card.dataset.memberIds);
       card.style.display = (matchesSearch && matchesFilters) ? '' : 'none';
     });
   } else {
     // List mode — filter group header rows and hide/show their members together
     document.querySelectorAll('#ranking-table-body .franchise-table-group').forEach(row => {
-      const title = row.querySelector('.tbl-title')?.textContent?.toLowerCase() || '';
-      const matchesSearch  = !q || title.includes(q);
+      const title = row.querySelector('.tbl-title')?.textContent || '';
+      const matchesSearch  = groupMatchesText(row.dataset.memberIds, title);
       const matchesFilters = groupHasVisibleMember(row.dataset.memberIds);
       const show  = matchesSearch && matchesFilters;
       row.style.display = show ? '' : 'none';
@@ -5283,9 +5669,27 @@ function _confirmAsync(title, body, okLabel) {
 function resetAll() {
   _showConfirm(
     '🔄 Reset everything?',
-    'This will permanently delete all your battle history, rankings, and achievements for this account. There is no undo.',
+    'This will permanently delete all your battle history, rankings, and achievements for this account — including the cloud copy. There is no undo.',
     'Yes, reset',
-    () => {
+    async () => {
+      // v1.0.211 — wipe the cloud save FIRST. Without this, the immediately-
+      // following startLoading() call hits checkAndApplyCloudSave() and
+      // restores the cloud copy of the user's session — defeating the reset.
+      // (deleteAllData has always done this; resetAll was the inconsistent
+      // one.) Also suppress cloud-save debounces during the in-memory wipe
+      // so a battle finished in the last few seconds doesn't push pre-reset
+      // state up after we've cleared it.
+      clearTimeout(_cloudSaveTimer);
+      _cloudSaveTimer = null;
+      _suppressCloudSave = true;
+      const wasAniList     = !!(authToken && authUser);
+      const wasMAL         = !!(malAuthToken && malAuthUser);
+      const rememberedName = authUser?.name || '';
+      let cloudResult = { ok: true, reason: 'not-signed-in' };
+      if (wasAniList || wasMAL) {
+        cloudResult = await _wipeCloudSession();
+      }
+
       if (saveKey) localStorage.removeItem(saveKey);
       // Clear taste snapshots, milestone seen-state, and saved comparisons
       // so taste profile, taste story, and social tab start completely fresh.
@@ -5299,24 +5703,30 @@ function resetAll() {
       _notifCentre = [];
       byId(IDS.finishPromptBanner)?.classList.remove('active');
       _ncUpdateBell();
-      // Remember who was logged in so we can re-trigger their list load
-      // without asking them to sign in again. We capture BEFORE clearing
-      // ranking state since saveKey / tokens may be touched downstream.
-      const wasAniList      = !!(authToken && authUser);
-      const wasMAL          = !!(malAuthToken && malAuthUser);
-      const rememberedName  = authUser?.name || '';
       _clearRankingState();
       // Re-enter the normal loading flow so the user gets a fresh session
       // with the same list they started from. Guest mode just lands on home.
+      // _suppressCloudSave is reset by _applyCloudSaveToMemory the next time
+      // the user logs in (or by the fresh saveState below for guest).
       if (wasAniList) {
         const input = byId(IDS.usernameInput);
         if (input) input.value = rememberedName;
         startLoading();
       } else if (wasMAL) {
         _startMALOAuthSession();
+      } else {
+        _suppressCloudSave = false; // guest — no cloud anyway
       }
-      // Guest: already on the username screen via _clearRankingState
-      showToast('✓ Reset — starting fresh.');
+      // Surface cloud-wipe failure so the user knows their data isn't fully
+      // gone if something went wrong. 'not-signed-in' is the guest case and
+      // is not a failure.
+      if (cloudResult.ok || cloudResult.reason === 'not-signed-in') {
+        showToast('✓ Reset — starting fresh.');
+      } else if (cloudResult.reason === 'verify-failed') {
+        showToast('⚠️ Local reset done, but the cloud copy keeps coming back — another device may be re-uploading. Sign out everywhere and try again.', 8000);
+      } else {
+        showToast(`⚠️ Local reset done, but cloud wipe failed (${cloudResult.reason}). Try again, or use Delete all my data.`, 6000);
+      }
     }
   );
 }
@@ -5811,33 +6221,65 @@ async function _fetchRecRelations(ids) {
 }
 
 function _getRelationNote(media) {
-  const relations = media.relations ?? _recRelationsCache.get(media.id);
-  const edges = relations?.edges;
-  if (!edges?.length) return '';
   const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
   const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i + 1]));
   const ownMap     = new Map(animeList.map(a => [a.id, a]));
 
+  const relations = media.relations ?? _recRelationsCache.get(media.id);
+  const edges = relations?.edges;
+
   // Priority: PREQUEL first (most actionable), then PARENT, SEQUEL, SIDE_STORY
   const priority = ['PREQUEL', 'PARENT', 'SEQUEL', 'SIDE_STORY', 'ALTERNATIVE'];
-  const matches = edges
+  const matches = (edges || [])
     .filter(e => priority.includes(e.relationType) && ownMap.has(e.node.id))
     .sort((a, b) => priority.indexOf(a.relationType) - priority.indexOf(b.relationType));
 
-  if (!matches.length) return '';
+  if (matches.length) {
+    const { relationType, node } = matches[0];
+    const relTitle = node.title.english || node.title.romaji;
+    const rank = eloRankMap.get(node.id);
+    if (relationType === 'PREQUEL')
+      return `<div class="rec-relation-note">📺 Sequel to <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
+    if (relationType === 'SEQUEL')
+      return `<div class="rec-relation-note">⏮ Watch this before <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
+    if (relationType === 'PARENT')
+      return `<div class="rec-relation-note">🔗 Part of <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
+    return `<div class="rec-relation-note">🔗 Related to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
+  }
 
-  const { relationType, node } = matches[0];
-  const relTitle = node.title.english || node.title.romaji;
-  const rank = eloRankMap.get(node.id);
+  // v1.0.211 — Title-pattern fallback. AniList's RELATIONS graph misses a lot
+  // of specials / parody films / numbered seasons whose relation type is
+  // CHARACTER or OTHER (not in our priority list), or whose related node ID
+  // isn't the one the user actually owns. When that happens, fall back to
+  // our own franchise grouper: normalise the candidate's title with
+  // _franchiseKey and look for any user-owned anime that shares the same
+  // franchise key. Catches "Saga of Tanya the Evil Season 2" ↔ "Saga of
+  // Tanya the Evil", "Boku no Hero Academia: I am a hero too" ↔ "Boku no
+  // Hero Academia", "Madoka Magica: Walpurgisnacht: Rising" ↔ Madoka.
+  const candEn  = media.title?.english || '';
+  const candRo  = media.title?.romaji  || '';
+  const candEnKey = candEn ? _franchiseKey(candEn) : '';
+  const candRoKey = candRo ? _franchiseKey(candRo) : '';
+  if (!candEnKey && !candRoKey) return '';
 
-  // esc() the AniList title — user-editable on AniList so it could carry HTML.
-  if (relationType === 'PREQUEL')
-    return `<div class="rec-relation-note">📺 Sequel to <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
-  if (relationType === 'SEQUEL')
-    return `<div class="rec-relation-note">⏮ Watch this before <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
-  if (relationType === 'PARENT')
-    return `<div class="rec-relation-note">🔗 Part of <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
-  return `<div class="rec-relation-note">🔗 Related to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
+  let bestMatch = null;
+  let bestRank  = Infinity;
+  for (const a of animeList) {
+    const aEnKey = a.titleEn ? _franchiseKey(a.titleEn) : '';
+    const aRoKey = a.titleRo ? _franchiseKey(a.titleRo) : '';
+    const aMainKey = a.title  ? _franchiseKey(a.title)  : '';
+    const hit = (candEnKey && (aEnKey === candEnKey || aRoKey === candEnKey || aMainKey === candEnKey))
+             || (candRoKey && (aEnKey === candRoKey || aRoKey === candRoKey || aMainKey === candRoKey));
+    if (!hit) continue;
+    const rank = eloRankMap.get(a.id) ?? Infinity;
+    if (rank < bestRank) {
+      bestRank  = rank;
+      bestMatch = a;
+    }
+  }
+  if (!bestMatch) return '';
+  const relTitle = displayTitle(bestMatch);
+  return `<div class="rec-relation-note">🔗 Part of <strong>${esc(relTitle)}</strong> — you have it at <strong>#${bestRank}</strong></div>`;
 }
 
 // ─── REC CARD HTML HELPER ─────────────────────────────────────────────────────
@@ -10549,6 +10991,11 @@ async function fetchGuestPool() {
       genres: m.genres || [],
       seasonYear: m.seasonYear || null,
       elo: 1200, wins: 0, losses: 0, comparisons: 0,
+      // v1.0.211 — seedElo is the ELO at the moment this anime entered the
+      // ranked list, captured so the Comeback Kid achievement can still
+      // detect "this anime started at ≤900 ELO" even after 30+ battles
+      // have rolled the original value out of eloHistory (which is capped).
+      seedElo: 1200,
       fuzzy: false, eloHistory: [1200], anilistScore: 0,
     };
   });
@@ -10606,17 +11053,24 @@ async function startGuestMode() {
 // Pick a single new opponent to face keepIdx, using the same ELO-proximity + weight logic
 function pickOneOpponent(keepIdx) {
   const n = animeList.length;
+  // v1.0.211 — honour both pool restrictions so an exclude-replacement during
+  // Battle Within stays inside the franchise pool.
   const weights = animeList.map(a => {
     if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
+    if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
   const totalW = weights.reduce((s, w) => s + w, 0);
 
   const eloKeep = animeList[keepIdx].elo;
+  // v1.0.211 hotfix — match pickOpponents: skip the similar-ELO window when
+  // battling within a franchise so the outlier high-ELO entry can still be
+  // picked as a replacement opponent.
+  const eloWindow = battleWithinFranchise ? Infinity : 300;
   const candidates = animeList
     .map((a, i) => ({ i, a }))
-    .filter(({ i }) => i !== keepIdx && weights[i] > 0 && Math.abs(animeList[i].elo - eloKeep) < 300)
+    .filter(({ i }) => i !== keepIdx && weights[i] > 0 && Math.abs(animeList[i].elo - eloKeep) < eloWindow)
     .sort((x, y) => x.a.comparisons - y.a.comparisons);
 
   if (candidates.length > 0) {
@@ -10642,9 +11096,18 @@ function excludeAnime(event, side) {
   const excludedIdx = side === 0 ? currentA : currentB;
   const keepIdx     = side === 0 ? currentB : currentA;
 
-  excludedIds.add(animeList[excludedIdx].id);
-  undoStack = [];
-  _updateUndoBtn();
+  const excludedId = animeList[excludedIdx].id;
+  excludedIds.add(excludedId);
+  // v1.0.210 — was `undoStack = []; _updateUndoBtn();` which silently
+  // discarded all prior undo history when the user accidentally tapped
+  // "✗ Not seen". Push a typed snapshot instead so the same Undo button
+  // can roll the exclusion back. Handled in undoLast as snap.type==='exclude'.
+  _pushUndoSnapshot({
+    type:       'exclude',
+    excludedId,
+    prevA:      currentA,
+    prevB:      currentB,
+  });
 
   // Keep the surviving anime in its position; replace only the excluded slot
   const newIdx = pickOneOpponent(keepIdx);
@@ -10860,24 +11323,163 @@ function checkMilestone(before, after) {
 
 // ─── TASTE STORY (milestone recap experience) ───────────────────────────────
 
+// v1.0.211 — Each genre now has 5 archetypes (was 3). _tasteArchetypeIndex
+// returns the milestone position, then we mod by the array length, so going
+// from 3 → 5 just extends the cycle: a heavy player past 1000 battles now
+// sees fresh titles for longer before things start repeating.
+//
+// Audit notes:
+//   - Drama:        dropped "Cries on Schedule" (3rd crying joke), added
+//                   "Knows the Music Cue", "Believes Misunderstanding Is
+//                   Plot", "Stayed for the Letter Reveal".
+//   - Supernatural: dropped "Talks to the Foxes" (third yokai joke), added
+//                   variety covering charms, ghost stories, shrines.
+//   - Mecha:        dropped "Unit 01 Apologist" (second Eva ref next to
+//                   "Get in the Robot"), added Gundam UC, G Gundam, and
+//                   the Real-vs-Super Robot argument.
+//   - Adventure:    dropped vague "Born Adventurer", added specific
+//                   observations ("Knows the Smell of a New Continent").
+//   - Music + Ecchi: new entries — these are real AniList genres that
+//                   previously fell through to the fallback.
+//   - Shounen:      removed. Empirically confirmed it never fires —
+//                   AniList exposes it as a tag (not a genre) and MAL
+//                   treats it as a demographic. Dead code.
 const _TASTE_ARCHETYPES = {
-  'Psychological': ['Read the Wiki After Every Episode', 'The 4D Chess Enjoyer',     'Has Bookmarked the Timeline'],
-  'Drama':         ['Onion Ninja Survivor',              'Cried at Episode 5',       'Cries on Schedule'],
-  'Action':        ['Sakuga Connoisseur',                'AOTY Every Season',        'Slows It to 0.25x'],
-  'Comedy':        ['Laughed During the Sad Part',       'Reaction Face Collector',  "Is the Group Chat's Anime Person"],
-  'Sci-Fi':        ['The Infodump Appreciator',          'The Hard Sci-Fi Purist',   'Time Loop Apologist'],
-  'Fantasy':       ['Isekai Truck Survivor',             'Reincarnated With Great Taste', 'World-Building Connoisseur'],
-  'Romance':       ['Just Confess Already',              'The Slow Burn Masochist',  'Shipper Strategist'],
-  'Horror':        ['Watches Alone at 3am',              'Unfazed by the Gore',      'Sleeps With the Light On'],
-  'Slice of Life': ['Cosy Anime Specialist',             'Tea and Existential Dread', 'Rewatches When Sad'],
-  'Sports':        ['Cried at the Training Arc',         'Peak Fiction Finder',      'Believes the Coach Speech'],
-  'Mystery':       ['Paused at Every Frame',             'The Theory Poster',        'Solved It Before the Detective'],
-  'Supernatural':  ['Yokai Whisperer',                   'Spirit World Citizen',     'Talks to the Foxes'],
-  'Mecha':         ['Get in the Robot',                  'Unit 01 Apologist',        'Gundam Lore Encyclopaedia'],
-  'Shounen':       ['Power of Friendship Believer',      'Never Skips the Training Arc', 'Has a Take on the Tournament Arc'],
-  'Adventure':     ['Plots the Route Mid-Episode',       'Always One Town Over',     'Born Adventurer'],
-  'Thriller':      ['Plot Twist Connoisseur',            'Trust No Character',       'Suspects the Quiet One'],
-  'Mahou Shoujo':  ['Transformation Sequence Devotee',   'Says the Transformation Phrase Out Loud', 'Cried at Sailor Moon'],
+  'Psychological': [
+    'Read the Wiki After Every Episode',
+    'The 4D Chess Enjoyer',
+    'Has Bookmarked the Timeline',
+    'Re-watched for the Subtext',
+    'Knows What the Director Was Doing',
+  ],
+  'Drama': [
+    'Onion Ninja Survivor',
+    'Cried at Episode 5',
+    'Knows the Music Cue',
+    'Has a Reliable Comfort Sob',
+    "Knows the Power-Move Speech",
+  ],
+  'Action': [
+    'Sakuga Connoisseur',
+    'AOTY Every Season',
+    'Slows It to 0.25x',
+    'Owns the Re-edited Fight Compilation',
+    'Has Opinions on Choreography',
+  ],
+  'Comedy': [
+    'Laughed During the Sad Part',
+    'Reaction Face Collector',
+    "Is the Group Chat's Anime Person",
+    'Knows the Beat Drop in the Joke',
+    'Dies on the Nichijou Hill',
+  ],
+  'Sci-Fi': [
+    'The Infodump Appreciator',
+    'The Hard Sci-Fi Purist',
+    'Time Loop Apologist',
+    'Has Opinions on FTL',
+    'Argues About the Physics',
+  ],
+  'Fantasy': [
+    'Isekai Truck Survivor',
+    'Reincarnated With Great Taste',
+    'World-Building Connoisseur',
+    'Trusts the Mentor (Big Mistake)',
+    'Has Strong Magic-System Opinions',
+  ],
+  'Romance': [
+    'Just Confess Already',
+    'The Slow Burn Masochist',
+    'Shipper Strategist',
+    'Knows Every Confession Trope',
+    'Reads the Manga First',
+  ],
+  'Horror': [
+    'Watches Alone at 3am',
+    'Unfazed by the Gore',
+    'Sleeps With the Light On',
+    'Pauses to Catch the Background',
+    'Thinks the Censorship Made It Worse',
+  ],
+  'Slice of Life': [
+    'Cosy Anime Specialist',
+    'Tea and Existential Dread',
+    'Rewatches When Sad',
+    'Has a Tea-Drinking Anime',
+    'Has a Comfort Episode',
+  ],
+  'Sports': [
+    'Cried at the Training Arc',
+    'Peak Fiction Finder',
+    'Believes the Coach Speech',
+    'Knows the Team Like Family',
+    'Re-watches the Final Match',
+  ],
+  'Mystery': [
+    'Paused at Every Frame',
+    'The Theory Poster',
+    'Solved It Before the Detective',
+    'Has a Whiteboard',
+    'Trusts No Witness',
+  ],
+  'Supernatural': [
+    'Yokai Whisperer',
+    'Spirit World Citizen',
+    'Believes the Old Lady\'s Warning',
+    'Carries a Charm',
+    'Reads Ghost Stories at Lunch',
+  ],
+  'Mecha': [
+    'Get in the Robot',
+    'Knows Every UC Calendar Date',
+    'Knows All the Cockpit Designs',
+    'Cried at G Gundam',
+    'Argues About Real vs Super Robot',
+  ],
+  // v1.0.211 — Removed Shounen. AniList doesn't expose Shounen as a genre
+  // (it's a tag in their schema, not in MediaGenre); MAL treats it as a
+  // demographic, not a genre. Confirmed empirically — anime.genres never
+  // contains "Shounen", so the archetype set was dead code. If a future
+  // importer changes that, we'll add Shounen back.
+  'Adventure': [
+    'Plots the Route Mid-Episode',
+    'Always One Town Over',
+    'Knows the Smell of a New Continent',
+    'Map First, Story Second',
+    'Builds the Lore in the Margins',
+  ],
+  'Thriller': [
+    'Plot Twist Connoisseur',
+    'Trust No Character',
+    'Suspects the Quiet One',
+    'Predicted the Body',
+    'Has a Suspect Tier List',
+  ],
+  'Mahou Shoujo': [
+    'Transformation Sequence Devotee',
+    'Says the Transformation Phrase Out Loud',
+    'Cried at Sailor Moon',
+    'Owns the OST',
+    'Knows the Wand Shop By Name',
+  ],
+  // v1.0.211 — Music: previously fell through to fallback. Real AniList
+  // genre that K-On, Bocchi, Carole & Tuesday, Sound! Euphonium etc carry.
+  'Music': [
+    'Knows the Drummer\'s Name',
+    'Has the OST on Repeat',
+    'Re-watched for the Performance',
+    'Quotes the Lyrics in DM',
+    'Believes the Band Saved Their Life',
+  ],
+  // v1.0.211 — Ecchi: previously fell through. Real AniList genre.
+  // Played for self-aware humour rather than judgement.
+  'Ecchi': [
+    'Watches It for the Story',
+    'Has a Defense Speech Ready',
+    'Closes the Curtains First',
+    'Argues It Has Plot',
+    'Owns It in the Group Chat',
+  ],
 };
 
 const _ERA_NICKNAMES = {
@@ -10990,7 +11592,18 @@ function _computeTasteInsights(battleMilestone) {
   const topGenre   = genreAvgs[0]?.genre || 'Drama';
   const topDelta   = Math.round((genreAvgs[0]?.avg || globalAvg) - globalAvg);
   const botGenre   = genreAvgs[genreAvgs.length - 1]?.genre;
-  const archetypes = _TASTE_ARCHETYPES[topGenre] || ['The Algorithm Gave Up', 'Refuses to Be Categorised'];
+  // v1.0.211 — Was a 2-entry "the algorithm failed" fallback that read as
+  // a system error message rather than a personality. Now 5 entries that
+  // celebrate the user's eclectic taste — feels earned even when their top
+  // genre doesn't match a known set (e.g. niche genres, or "Hentai" filtered
+  // out leaving an even tag spread).
+  const archetypes = _TASTE_ARCHETYPES[topGenre] || [
+    'Hard to Pigeonhole',
+    'Genre-Fluid',
+    'A Taste of Their Own',
+    'The Algorithm Took the Day Off',
+    'Refuses to Be Categorised',
+  ];
   const archetype  = archetypes[_tasteArchetypeIndex(battleMilestone) % archetypes.length];
 
   cards.push({
@@ -11647,21 +12260,32 @@ function setSocialPlatform(p) {
 
 const ACHIEVEMENT_DEFS = [
   {
-    id: 'battle', name: 'Battle Hardened', emoji: '⚔️',
-    desc: 'Keep fighting battles to rank your anime',
+    // v1.0.211 — Was Battle Hardened (raw battle counter — pure grind).
+    // Now All-Stars: count of anime that have climbed to your "definitely
+    // good" tier (ELO 1400+). Measures the SIZE of your highly-rated
+    // pool, not how many clicks you made. ELO 1400 is ~200 above the
+    // default 1200 seed, which takes deliberate wins to reach.
+    id: 'all-stars', name: 'All-Stars', emoji: '⭐',
+    desc: 'Build up a deep pool of highly-rated anime',
     tiers: [
-      { id: 'battle-bronze', tier: 'bronze', label: 'Bronze', req: '50 battles'   },
-      { id: 'battle-silver', tier: 'silver', label: 'Silver', req: '250 battles'  },
-      { id: 'battle-gold',   tier: 'gold',   label: 'Gold',   req: '1,000 battles' },
+      { id: 'all-stars-bronze', tier: 'bronze', label: 'Bronze', req: '10 anime at ELO 1400+' },
+      { id: 'all-stars-silver', tier: 'silver', label: 'Silver', req: '25 anime at ELO 1400+' },
+      { id: 'all-stars-gold',   tier: 'gold',   label: 'Gold',   req: '50 anime at ELO 1400+' },
     ]
   },
   {
-    id: 'collector', name: 'Collector', emoji: '📚',
-    desc: 'Build up your ranked library',
+    // v1.0.211 — Was Collector (raw battled-count). Now Loyalist: anime
+    // you've stress-tested deeply (20+ battles each). Different from
+    // Settled (which requires uniform 10+ across the WHOLE list) —
+    // Loyalist measures deep commitment to specific favourites, so a
+    // user with a 200-anime list can earn it by going deep on 30 of
+    // them without ranking every one to confidence.
+    id: 'loyalist', name: 'Loyalist', emoji: '👑',
+    desc: 'Stress-test your favourites through many battles',
     tiers: [
-      { id: 'collector-bronze', tier: 'bronze', label: 'Bronze', req: '50 anime'  },
-      { id: 'collector-silver', tier: 'silver', label: 'Silver', req: '150 anime' },
-      { id: 'collector-gold',   tier: 'gold',   label: 'Gold',   req: '300 anime' },
+      { id: 'loyalist-bronze', tier: 'bronze', label: 'Bronze', req: '5 anime at 20+ battles each' },
+      { id: 'loyalist-silver', tier: 'silver', label: 'Silver', req: '15 anime at 20+ battles each' },
+      { id: 'loyalist-gold',   tier: 'gold',   label: 'Gold',   req: '30 anime at 20+ battles each' },
     ]
   },
   {
@@ -11674,21 +12298,31 @@ const ACHIEVEMENT_DEFS = [
     ]
   },
   {
-    id: 'explorer', name: 'Genre Explorer', emoji: '🎭',
-    desc: 'Diversify your list across genres',
+    // v1.0.211 — Was Genre Explorer (counted ANIME per genre, which
+    // multi-genre tagging made trivial — one anime tagged Action/Adventure/
+    // Drama hit three genres at once). Now Tastemaker: only top-tier
+    // (S-tier = top 10%) anime count, and we use each anime's PRIMARY
+    // genre only. Each anime contributes to exactly one genre, so the
+    // achievement measures genuine cross-genre taste at the high end.
+    id: 'tastemaker', name: 'Tastemaker', emoji: '🎭',
+    desc: 'Have favourites across many different genres',
     tiers: [
-      { id: 'explorer-bronze', tier: 'bronze', label: 'Bronze', req: '5 genres'  },
-      { id: 'explorer-silver', tier: 'silver', label: 'Silver', req: '8 genres'  },
-      { id: 'explorer-gold',   tier: 'gold',   label: 'Gold',   req: '12 genres' },
+      { id: 'tastemaker-bronze', tier: 'bronze', label: 'Bronze', req: 'S-tier anime in 3 primary genres' },
+      { id: 'tastemaker-silver', tier: 'silver', label: 'Silver', req: 'S-tier anime in 5 primary genres' },
+      { id: 'tastemaker-gold',   tier: 'gold',   label: 'Gold',   req: 'S-tier anime in 8 primary genres' },
     ]
   },
   {
-    id: 'traveller', name: 'Time Traveller', emoji: '🕰️',
-    desc: 'Explore anime from different eras',
+    // v1.0.211 — Was Time Traveller (battled anime in N decades). Now
+    // Era Curator: only A-tier or higher anime (top 25%) count. Measures
+    // the breadth of your TOP picks across eras, not whether you happened
+    // to touch one '70s anime on the way to ranking a 2020s favourite.
+    id: 'era-curator', name: 'Era Curator', emoji: '🕰️',
+    desc: 'Have top picks from many different eras',
     tiers: [
-      { id: 'traveller-bronze', tier: 'bronze', label: 'Bronze', req: '3 decades' },
-      { id: 'traveller-silver', tier: 'silver', label: 'Silver', req: '4 decades' },
-      { id: 'traveller-gold',   tier: 'gold',   label: 'Gold',   req: '5 decades' },
+      { id: 'era-curator-bronze', tier: 'bronze', label: 'Bronze', req: 'A-tier+ anime in 3 decades' },
+      { id: 'era-curator-silver', tier: 'silver', label: 'Silver', req: 'A-tier+ anime in 4 decades' },
+      { id: 'era-curator-gold',   tier: 'gold',   label: 'Gold',   req: 'A-tier+ anime in 5 decades' },
     ]
   },
   {
@@ -11773,33 +12407,70 @@ function _tryUnlock(id, condition, toastName) {
 function _checkAchievements() {
   if (!animeList.length) return;
 
-  // Battle Hardened
-  _tryUnlock('battle-bronze', battleCount >= 50,   '⚔️ Battle Hardened (Bronze)');
-  _tryUnlock('battle-silver', battleCount >= 250,  '⚔️ Battle Hardened (Silver)');
-  _tryUnlock('battle-gold',   battleCount >= 1000, '⚔️ Battle Hardened (Gold)');
+  // v1.0.211 — Achievement rework. Was Battle Hardened (raw battle
+  // counter) and Collector (raw battled-count). Both replaced with
+  // tier/depth-based criteria that measure HOW you rank rather than
+  // HOW MUCH.
 
-  // Collector
-  _tryUnlock('collector-bronze', animeList.length >= 50,  '📚 Collector (Bronze)');
-  _tryUnlock('collector-silver', animeList.length >= 150, '📚 Collector (Silver)');
-  _tryUnlock('collector-gold',   animeList.length >= 300, '📚 Collector (Gold)');
+  // All-Stars — anime that have climbed to ELO 1400+ (200 above the
+  // 1200 default seed). These are the anime you've actively favoured
+  // through wins, not just touched once.
+  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400).length;
+  _tryUnlock('all-stars-bronze', allStarsCount >= 10, '⭐ All-Stars (Bronze)');
+  _tryUnlock('all-stars-silver', allStarsCount >= 25, '⭐ All-Stars (Silver)');
+  _tryUnlock('all-stars-gold',   allStarsCount >= 50, '⭐ All-Stars (Gold)');
 
-  // Hot Streak — longest current win streak across any anime
-  const maxStreak = Math.max(0, ...animeList.map(a => (a.streak?.type === 'win' ? (a.streak.count || 0) : 0)));
+  // Loyalist — anime stress-tested through many battles (≥20 each).
+  // Different from Settled (uniform 10+ across whole list) — Loyalist
+  // rewards going deep on specific favourites.
+  const loyalistCount = animeList.filter(a => (a.battles || 0) >= 20).length;
+  _tryUnlock('loyalist-bronze', loyalistCount >= 5,  '👑 Loyalist (Bronze)');
+  _tryUnlock('loyalist-silver', loyalistCount >= 15, '👑 Loyalist (Silver)');
+  _tryUnlock('loyalist-gold',   loyalistCount >= 30, '👑 Loyalist (Gold)');
+
+  // Hot Streak — longest WIN STREAK EVER achieved across any anime.
+  // v1.0.211 — was using `a.streak.count` (current streak), which reset
+  // to zero on any loss and wiped achievement progress. We now read
+  // `a.maxWinStreak` (persisted high-water mark) so a 9-win streak that
+  // ends keeps its progress toward Silver.
+  const maxStreak = Math.max(0, ...animeList.map(a => a.maxWinStreak || 0));
   _tryUnlock('decisive-bronze', maxStreak >= 5,  '🔥 Hot Streak (Bronze)');
   _tryUnlock('decisive-silver', maxStreak >= 10, '🔥 Hot Streak (Silver)');
   _tryUnlock('decisive-gold',   maxStreak >= 20, '🔥 Hot Streak (Gold)');
 
-  // Genre Explorer
-  const genreCount = new Set(animeList.flatMap(a => a.genres || [])).size;
-  _tryUnlock('explorer-bronze', genreCount >= 5,  '🎭 Genre Explorer (Bronze)');
-  _tryUnlock('explorer-silver', genreCount >= 8,  '🎭 Genre Explorer (Silver)');
-  _tryUnlock('explorer-gold',   genreCount >= 12, '🎭 Genre Explorer (Gold)');
+  // Tier-based diversity achievements. We compute each anime's tier once
+  // (S/A/B/C/D) using the same percentile rules as the ranking UI, then
+  // measure breadth at the top end. Multi-genre tagging no longer matters
+  // because Tastemaker uses each anime's PRIMARY genre only.
+  const byEloDesc = [...animeList].sort((a, b) => b.elo - a.elo);
+  const totalRanked = byEloDesc.length;
+  const tierOf = new Map();
+  byEloDesc.forEach((a, i) => tierOf.set(a.id, getTier(i, totalRanked)));
 
-  // Time Traveller
-  const decadeCount = new Set(animeList.filter(a => a.seasonYear).map(a => Math.floor(a.seasonYear / 10) * 10)).size;
-  _tryUnlock('traveller-bronze', decadeCount >= 3, '🕰️ Time Traveller (Bronze)');
-  _tryUnlock('traveller-silver', decadeCount >= 4, '🕰️ Time Traveller (Silver)');
-  _tryUnlock('traveller-gold',   decadeCount >= 5, '🕰️ Time Traveller (Gold)');
+  // Tastemaker — distinct PRIMARY genres represented in S-tier (top 10%).
+  const sTierPrimaryGenres = new Set();
+  for (const a of animeList) {
+    if (tierOf.get(a.id) !== 'S') continue;
+    const primary = (a.genres || [])[0];
+    if (primary) sTierPrimaryGenres.add(primary);
+  }
+  const tastemakerCount = sTierPrimaryGenres.size;
+  _tryUnlock('tastemaker-bronze', tastemakerCount >= 3, '🎭 Tastemaker (Bronze)');
+  _tryUnlock('tastemaker-silver', tastemakerCount >= 5, '🎭 Tastemaker (Silver)');
+  _tryUnlock('tastemaker-gold',   tastemakerCount >= 8, '🎭 Tastemaker (Gold)');
+
+  // Era Curator — distinct decades represented in A-tier or higher (top 25%).
+  const topDecades = new Set();
+  for (const a of animeList) {
+    const t = tierOf.get(a.id);
+    if (t !== 'S' && t !== 'A') continue;
+    if (!a.seasonYear) continue;
+    topDecades.add(Math.floor(a.seasonYear / 10) * 10);
+  }
+  const eraCuratorCount = topDecades.size;
+  _tryUnlock('era-curator-bronze', eraCuratorCount >= 3, '🕰️ Era Curator (Bronze)');
+  _tryUnlock('era-curator-silver', eraCuratorCount >= 4, '🕰️ Era Curator (Silver)');
+  _tryUnlock('era-curator-gold',   eraCuratorCount >= 5, '🕰️ Era Curator (Gold)');
 
   // Undefeated
   const hasUndefeated = animeList.some(a => a.wins >= 10 && a.losses === 0);
@@ -11812,9 +12483,14 @@ function _checkAchievements() {
   _tryUnlock('settled-silver', settledCount >= 75, '⚖️ Settled (Silver)');
   _tryUnlock('settled-gold',   allSettled,          '⚖️ Settled (Gold)');
 
-  // Top Dog — wins of the current #1 ranked anime
+  // Top Dog — the most wins by ANY anime in the user's list.
+  // v1.0.211 — was indexed to `byElo[0].wins` (current #1's wins), which
+  // visibly regressed every time a new anime took the #1 spot (the new
+  // leader typically had fewer total wins than the displaced one).
+  // Using max(wins) instead means any anime that has ever been dominant
+  // counts toward the achievement and progress can never go backwards.
   const byElo  = [...animeList].sort((a, b) => b.elo - a.elo);
-  const topWins = byElo[0]?.wins || 0;
+  const topWins = Math.max(0, ...animeList.map(a => a.wins || 0));
   _tryUnlock('top-dog-bronze', topWins >= 20,  '👑 Top Dog (Bronze)');
   _tryUnlock('top-dog-silver', topWins >= 75,  '👑 Top Dog (Silver)');
   _tryUnlock('top-dog-gold',   topWins >= 250, '👑 Top Dog (Gold)');
@@ -11842,16 +12518,102 @@ function _checkAchievements() {
   _tryUnlock('rival-silver', rivalryCount >= 3, '🤺 Rival (Silver)');
   _tryUnlock('rival-gold',   rivalryCount >= 5, '🤺 Rival (Gold)');
 
-  // Comeback Kid — any anime seeded at ≤900 ELO that is now in the top 25%
+  // Comeback Kid — any anime seeded at ≤900 ELO that is now in the top 25%.
+  // v1.0.211 — was reading eloHistory[0], but that array is capped at 30
+  // entries — for any heavily-battled anime the actual original seed has
+  // rolled off and index 0 is whatever its ELO was 30 battles ago (much
+  // higher than the true seed). Effectively unreachable for active users.
+  // Now uses a dedicated `seedElo` field captured at anime creation; the
+  // load-time migration backfills it from eloHistory[0] for existing
+  // saves so users see correct unlocks once they next sync.
   const top25cutoff  = Math.floor(byElo.length * 0.25);
   const top25ids     = new Set(byElo.slice(0, Math.max(1, top25cutoff)).map(a => a.id));
-  const hasComeback  = animeList.some(a =>
-    top25ids.has(a.id) &&
-    Array.isArray(a.eloHistory) && a.eloHistory.length > 0 &&
-    a.eloHistory[0] <= 900
-  );
+  const hasComeback  = animeList.some(a => {
+    if (!top25ids.has(a.id)) return false;
+    const seed = (typeof a.seedElo === 'number') ? a.seedElo
+               : (Array.isArray(a.eloHistory) && a.eloHistory.length > 0) ? a.eloHistory[0]
+               : null;
+    return seed != null && seed <= 900;
+  });
   _tryUnlock('comeback-kid', hasComeback, '📈 Comeback Kid');
 }
+
+// v1.0.211 — Snapshot the current progress signal for every achievement,
+// keyed by the achievement family id. Used by renderAchievementsTab to show
+// per-tier progress bars on locked cards so users can see how close they
+// are. Returns { current, fmt(target) -> string } pairs.
+function _achievementProgress() {
+  const byElo = [...animeList].sort((a, b) => b.elo - a.elo);
+  const top10 = byElo.slice(0, 10);
+  const top25cutoff = Math.floor(byElo.length * 0.25);
+  const top25ids    = new Set(byElo.slice(0, Math.max(1, top25cutoff)).map(a => a.id));
+
+  // v1.0.211 — Pre-compute the tier map once and reuse for the new
+  // tier/depth-based achievements.
+  const byEloDesc = [...animeList].sort((a, b) => b.elo - a.elo);
+  const totalRanked = byEloDesc.length;
+  const tierOf = new Map();
+  byEloDesc.forEach((a, i) => tierOf.set(a.id, getTier(i, totalRanked)));
+
+  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400).length;
+  const loyalistCount = animeList.filter(a => (a.battles || 0) >= 20).length;
+
+  const sTierPrimaryGenres = new Set();
+  for (const a of animeList) {
+    if (tierOf.get(a.id) !== 'S') continue;
+    const primary = (a.genres || [])[0];
+    if (primary) sTierPrimaryGenres.add(primary);
+  }
+  const topDecades = new Set();
+  for (const a of animeList) {
+    const t = tierOf.get(a.id);
+    if (t !== 'S' && t !== 'A') continue;
+    if (!a.seasonYear) continue;
+    topDecades.add(Math.floor(a.seasonYear / 10) * 10);
+  }
+
+  return {
+    'all-stars':   { current: allStarsCount },
+    loyalist:      { current: loyalistCount },
+    tastemaker:    { current: sTierPrimaryGenres.size },
+    'era-curator': { current: topDecades.size },
+    decisive:   { current: Math.max(0, ...animeList.map(a => a.maxWinStreak || 0)) },
+    settled:    { current: animeList.filter(a => (a.battles || 0) >= TARGET_BATTLES_PER_ANIME).length },
+    'top-dog':  { current: Math.max(0, ...animeList.map(a => a.wins || 0)) },
+    'social-butterfly': { current: comparedFriends.size },
+    rival:      { current: _computeFranchiseRivalries().length },
+    // Single-tier flag achievements — these have no meaningful progress
+    // bar because the req text describes a condition rather than a count
+    // ("Pre-1990 anime in your top 10", "10+ wins, 0 losses", etc).
+    // hideProgress tells the renderer to skip the bar; current is still
+    // computed because _checkAchievements / _getClosestUnlockableAchievement
+    // ignore them by way of the same flag.
+    undefeated: { current: animeList.some(a => (a.wins || 0) >= 10 && (a.losses || 0) === 0) ? 1 : 0, hideProgress: true },
+    'hidden-gem-fan': { current: top10.some(a => a.popularity > 0 && a.popularity < 50000) ? 1 : 0, hideProgress: true },
+    'old-soul': { current: top10.some(a => a.seasonYear && a.seasonYear < 1990) ? 1 : 0, hideProgress: true },
+    'comeback-kid': { current: animeList.some(a => {
+      if (!top25ids.has(a.id)) return false;
+      const seed = (typeof a.seedElo === 'number') ? a.seedElo
+                 : (Array.isArray(a.eloHistory) && a.eloHistory.length > 0) ? a.eloHistory[0]
+                 : null;
+      return seed != null && seed <= 900;
+    }) ? 1 : 0, hideProgress: true },
+    // kindred / contrarian have no measurable progress until you compare.
+    kindred:    { current: 0, hideProgress: true },
+    contrarian: { current: 0, hideProgress: true },
+  };
+}
+
+// Pull a numeric target out of a tier's `req` text (e.g. "50 battles" → 50,
+// "1,000 battles" → 1000). Returns null if no number found. Used only for
+// progress-bar rendering — the actual unlock thresholds live in
+// _checkAchievements and are the source of truth.
+function _achievementTierTarget(req) {
+  if (!req) return null;
+  const m = req.replace(/,/g, '').match(/\d+/);
+  return m ? parseInt(m[0], 10) : null;
+}
+
 
 function renderAchievementsTab() {
   const el = byId(IDS.achievementsContent);
@@ -11859,6 +12621,7 @@ function renderAchievementsTab() {
 
   const totalTiers  = ACHIEVEMENT_DEFS.reduce((s, d) => s + d.tiers.length, 0);
   const unlockedCount = Object.keys(achievements).length;
+  const progress = _achievementProgress();
 
   const tierIcons = { bronze: '🥉', silver: '🥈', gold: '🥇' };
   const tierOrder = ['bronze', 'silver', 'gold'];
@@ -11879,6 +12642,7 @@ function renderAchievementsTab() {
           if (match && achievements[match.id]) highestTier = tier;
         }
         const cardCls = highestTier ? `has-${highestTier}` : '';
+        const prog = progress[def.id];
         return `
           <div class="achievement-card ${cardCls}">
             <div class="achievement-header">
@@ -11893,12 +12657,39 @@ function renderAchievementsTab() {
                 const unlock = achievements[t.id];
                 const date = unlock ? new Date(unlock.unlockedAt).toLocaleDateString() : null;
                 const tierCls = unlock ? `unlocked ${t.tier}` : '';
+                // v1.0.211 — Progress bar for locked tiers. Shows `current /
+                // target` and a green fill so users can see how close they
+                // are. Hidden for achievements without a measurable signal
+                // (kindred / contrarian / single-tier flag achievements that
+                // are already unlocked).
+                const target = _achievementTierTarget(t.req);
+                let progressHtml = '';
+                if (!unlock && prog && !prog.hideProgress && target != null) {
+                  // v1.0.211 — Genre Explorer / Time Traveller use different
+                  // signals per tier (3+ per genre for Bronze, 5+ for Gold,
+                  // etc). The per-tier override is read first; otherwise we
+                  // fall back to the achievement-wide current.
+                  const tierCurrent = prog.perTier?.[t.id] ?? prog.current;
+                  const pct = Math.min(100, Math.round((tierCurrent / target) * 100));
+                  // Single-tier flag achievements report current as 0/1.
+                  // Skip the bar there (it's not meaningful — the req text
+                  // already describes the unlock condition).
+                  const isFlag = target === 1 || (def.tiers.length === 1 && /[^0-9]+$/.test(t.req));
+                  if (!isFlag) {
+                    progressHtml = `
+                      <div class="ach-progress-wrap" title="${tierCurrent.toLocaleString()} of ${target.toLocaleString()}">
+                        <div class="ach-progress-fill" style="width:${pct}%"></div>
+                        <span class="ach-progress-text">${tierCurrent.toLocaleString()} / ${target.toLocaleString()}</span>
+                      </div>`;
+                  }
+                }
                 return `
                   <div class="ach-tier ${tierCls}">
                     <span class="ach-icon">${unlock ? tierIcons[t.tier] : '🔒'}</span>
                     <span class="ach-label">${t.tier.charAt(0).toUpperCase() + t.tier.slice(1)}</span>
                     <span class="ach-req">${t.req}</span>
                     ${date ? `<span class="achievement-unlock-date">${date}</span>` : ''}
+                    ${progressHtml}
                   </div>`;
               }).join('')}
             </div>
@@ -11989,7 +12780,12 @@ function renderProfileTab() {
   switchProfileTab(_activeProfileSub);
 }
 
-function renderManageTab() {}
+function renderManageTab() {
+  // v1.0.210 — refresh the "Last synced …" label when the Manage tab opens
+  // so the relative time is accurate even if the user just came back to it
+  // after an hour. Background ticking handles the per-minute updates.
+  _updateCloudSyncTimestamp();
+}
 
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
 
@@ -12037,10 +12833,17 @@ function renderSocialTab() {
 // a real "MHA vs Demon Slayer" rivalry even though the individual matchups
 // differ each time. Stand-alone shows count as a "franchise of one".
 function _computeFranchiseRivalries() {
-  const relMap = _computeFranchiseIds();
-  const fkey   = (id) => {
-    const root = relMap.get(id);
-    return root != null ? `rel:${root}` : `id:${id}`;
+  // v1.0.211 — switched from _computeFranchiseIds (relations-only union-find)
+  // to _getFranchiseIdMap, which is the authoritative grouper used by the
+  // Rankings page (relations + title patterns + alias table + crossover
+  // detection). The old version missed Pokémon-style franchises where most
+  // members share a title prefix but aren't linked via AniList's relations
+  // graph — so every Pokémon movie / spin-off showed up as its own
+  // "franchise" and produced bogus intra-Pokémon rivalries.
+  const groupMap = _getFranchiseIdMap();
+  const fkey = (id) => {
+    const g = groupMap.get(id);
+    return g != null ? g : `id:${id}`;
   };
 
   // Aggregate battle counts per franchise pair. Prefer matchupStats (uncapped)
@@ -12090,15 +12893,23 @@ function _computeFranchiseRivalries() {
     }
   });
 
-  // Qualify: 2+ total battles AND both sides have at least one win. The
-  // original 3+ threshold was too tight for large libraries — with 600 battles
-  // across 300+ anime, expected franchise-pair count is well below 1 for most
-  // pairs. 2+ with at least one win each side (so a 1-1 split) is the lowest
-  // meaningful signal: same two franchises keep meeting AND neither dominates.
+  // Qualify: 2+ total battles AND meaningful balance.
+  //
+  // v1.0.211 — "both sides have at least one win" was too loose: 19-1 over
+  // 20 battles still qualified because the loser cleared 1 win. That's a
+  // stomp, not a rivalry. Tightened to require the minority side to hold
+  // at least 1/3 of the battles (e.g. 13-7 in 20, not 19-1). Below 4 total
+  // we keep the original "both won at least once" check — the sample is
+  // too small to demand a balance ratio.
   const out = [];
   pairs.forEach(p => {
     if (p.total < 2) return;
     if (p.winsA === 0 || p.winsB === 0) return;
+    if (p.total >= 4) {
+      const minority = Math.min(p.winsA, p.winsB);
+      const minNeeded = Math.ceil(p.total / 3);
+      if (minority < minNeeded) return; // one side dominates — not a rivalry
+    }
     const dA = display.get(p.kA), dB = display.get(p.kB);
     if (!dA || !dB) return; // franchise no longer in user's list
     out.push({
@@ -12369,22 +13180,480 @@ function flagFuzzy(event, side) {
 }
 
 // ─── SEARCH / FILTER ──────────────────────────────────────────────────────────
+// v1.0.211 — Token-aware search parser for the Rankings search input.
+// Grammar (whitespace-separated):
+//   genre:<name>     — match if anime.genres contains <name> (case-insensitive)
+//   studio:<name>    — match if anime.studios contains <name> (substring, ci)
+//   year:<n>         — match if anime.seasonYear === n
+//   year:<from>-<to> — match if seasonYear in [from, to]
+//   format:<fmt>     — match by anime.format (TV, MOVIE, OVA, ONA, TV_SHORT,
+//                      SPECIAL; common synonyms accepted: movie, short, tv)
+//   <free text>      — title substring (always case-insensitive)
+//
+// Multiple values for the same key are OR'd (genre:action genre:comedy →
+// anime in EITHER); different keys are AND'd. Empty input passes all anime.
+// Studio match is substring rather than equality so users can type "bones"
+// and hit "Studio Bones" / "Bones Inc." consistently.
+const _SEARCH_FORMAT_SYNONYMS = {
+  tv: 'TV', movie: 'MOVIE', film: 'MOVIE', ova: 'OVA', ona: 'ONA',
+  short: 'TV_SHORT', tv_short: 'TV_SHORT', special: 'SPECIAL',
+};
+function _parseSearchQuery(raw) {
+  const out = { text: '', genres: [], studios: [], formats: [], years: [], lengths: [], yearRange: null };
+  const lower = (raw || '').toLowerCase().trim();
+  if (!lower) return out;
+  // Split on whitespace but preserve quoted runs ("slice of life"). Keeps the
+  // parser obviously-correct for the few users who type multi-word genres.
+  const parts = lower.match(/"[^"]+"|\S+/g) || [];
+  const free  = [];
+  // length: synonyms — let users type the bucket-natural-name or the slug.
+  const lengthSyn = {
+    short: 'short', '<=12': 'short', '≤12': 'short', 'movie': 'short',
+    medium: 'medium', 'mid': 'medium', '13-24': 'medium',
+    long: 'long', '25-70': 'long',
+    vlong: 'vlong', 'verylong': 'vlong', '70+': 'vlong',
+    unknown: 'unknown', 'unk': 'unknown',
+  };
+  for (let p of parts) {
+    if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+    const m = p.match(/^(genre|studio|year|format|length):(.+)$/);
+    if (!m) { free.push(p); continue; }
+    const [, key, val] = m;
+    if (!val) continue;
+    if (key === 'genre')  out.genres.push(val);
+    else if (key === 'studio') out.studios.push(val);
+    else if (key === 'format') {
+      const fmt = _SEARCH_FORMAT_SYNONYMS[val] || val.toUpperCase();
+      out.formats.push(fmt);
+    }
+    else if (key === 'length') {
+      const bucket = lengthSyn[val] || val;
+      if (_SEARCH_LENGTH_BUCKETS.find(b => b.value === bucket)) out.lengths.push(bucket);
+    }
+    else if (key === 'year') {
+      const range = val.match(/^(\d{4})\s*-\s*(\d{4})$/);
+      if (range) out.yearRange = [Number(range[1]), Number(range[2])].sort((a, b) => a - b);
+      else if (/^\d{4}$/.test(val)) out.years.push(Number(val));
+    }
+  }
+  out.text = free.join(' ').trim();
+  return out;
+}
+// Token-only matcher (does NOT check title — caller composes that). Encapsulated
+// so filterRankings and _filterFranchise share one source of truth.
+function _animeMatchesSearchTokens(a, q) {
+  if (!a) return false;
+  if (q.genres.length) {
+    const haystack = (a.genres || []).map(g => g.toLowerCase());
+    if (!q.genres.some(g => haystack.includes(g))) return false;
+  }
+  if (q.studios.length) {
+    const haystack = (a.studios || []).map(s => s.toLowerCase());
+    if (!q.studios.some(needle => haystack.some(h => h.includes(needle)))) return false;
+  }
+  if (q.formats.length) {
+    if (!q.formats.includes(a.format)) return false;
+  }
+  if (q.lengths && q.lengths.length) {
+    if (!q.lengths.includes(epRange(a.episodes, a.format))) return false;
+  }
+  if (q.years.length && !q.years.includes(a.seasonYear)) return false;
+  if (q.yearRange) {
+    const [lo, hi] = q.yearRange;
+    if (!a.seasonYear || a.seasonYear < lo || a.seasonYear > hi) return false;
+  }
+  return true;
+}
+
+// v1.0.211 — Chip-based filter state. Lives alongside the text input;
+// filterRankings unions both before matching. Sets dedupe values cheaply
+// and keep insertion order deterministic enough for chip rendering.
+let _searchChips = {
+  genres:  new Set(),
+  studios: new Set(),
+  years:   new Set(),
+  yearRange: null,
+  formats: new Set(),
+  // v1.0.211 — length chips replace the standalone Length button row. Bucket
+  // names mirror what `epRange()` returns: short / medium / long / vlong /
+  // unknown. The standalone row's subtractive semantics are migrated into
+  // these additive chips on first load by _migrateLegacyFiltersToChips.
+  lengths: new Set(),
+};
+const _SEARCH_LENGTH_BUCKETS = [
+  { value: 'short',   label: '≤12 ep (or Movie)' },
+  { value: 'medium',  label: '13–24 ep' },
+  { value: 'long',    label: '25–70 ep' },
+  { value: 'vlong',   label: '70+ ep' },
+  { value: 'unknown', label: 'Unknown length' },
+];
+
+// Pull the distinct value list for each chip category from the user's
+// current animeList. Computed on demand at picker-open time so a fresh
+// import shows new genres without a reload. Studios and genres are
+// canonicalised to lowercase for matching but rendered with original
+// casing for the popover.
+function _searchPickerValues(category) {
+  if (category === 'format') {
+    // v1.0.211 — count per format so the popover reads at-a-glance the same
+    // way Genre / Studio / Length do (`Movie  ·  47`, `OVA  ·  3`).
+    const counts = new Map();
+    animeList.forEach(a => {
+      if (!a.format) return;
+      counts.set(a.format, (counts.get(a.format) || 0) + 1);
+    });
+    const FORMATS = [
+      { value: 'TV',       label: 'TV' },
+      { value: 'MOVIE',    label: 'Movie' },
+      { value: 'OVA',      label: 'OVA' },
+      { value: 'ONA',      label: 'ONA' },
+      { value: 'TV_SHORT', label: 'Short' },
+      { value: 'SPECIAL',  label: 'Special' },
+    ];
+    return FORMATS.map(f => ({
+      value: f.value, label: `${f.label}  ·  ${counts.get(f.value) || 0}`,
+    }));
+  }
+  if (category === 'length') {
+    // Annotate counts so users see e.g. "≤12 ep (or Movie)  ·  47" — same
+    // density-cue treatment as genres / studios.
+    const counts = new Map();
+    animeList.forEach(a => {
+      const b = epRange(a.episodes, a.format);
+      counts.set(b, (counts.get(b) || 0) + 1);
+    });
+    return _SEARCH_LENGTH_BUCKETS.map(b => {
+      const c = counts.get(b.value) || 0;
+      return { value: b.value, label: `${b.label}  ·  ${c}` };
+    });
+  }
+  if (category === 'year') {
+    // v1.0.211 — count per year. Newest first; sparse years (1 entry)
+    // self-evidently flag themselves so the user doesn't waste a click.
+    const counts = new Map();
+    animeList.forEach(a => {
+      if (!a.seasonYear) return;
+      counts.set(a.seasonYear, (counts.get(a.seasonYear) || 0) + 1);
+    });
+    return [...counts.keys()].sort((a, b) => b - a)
+      .map(y => ({ value: String(y), label: `${y}  ·  ${counts.get(y)}` }));
+  }
+  // genre / studio: union across animeList, normalise display casing
+  const field = category === 'genre' ? 'genres' : 'studios';
+  const counts = new Map();
+  animeList.forEach(a => (a[field] || []).forEach(v => {
+    if (!v) return;
+    const key = v.toLowerCase();
+    const prev = counts.get(key);
+    counts.set(key, { label: prev?.label || v, count: (prev?.count || 0) + 1 });
+  }));
+  return [...counts.entries()]
+    .sort((a, b) => b[1].count - a[1].count || a[1].label.localeCompare(b[1].label))
+    .map(([value, v]) => ({ value, label: `${v.label}  ·  ${v.count}` }));
+}
+
+async function openSearchPicker(category, btn) {
+  const pop = byId(IDS.searchPickerPopover);
+  if (!pop) return;
+  // Toggle off if same button clicked again
+  if (!pop.hasAttribute('hidden') && pop.dataset.category === category) {
+    _closeSearchPicker();
+    return;
+  }
+  // v1.0.211 — Lazy-load AniList enrichment data on demand. genres, studios
+  // and seasonYear all come from the same `_enrichGenresAndEras` call, which
+  // is only triggered today when the user visits the Taste tab. Before this
+  // fix the Studio picker was empty for any save predating the enrichment
+  // (or any user who hadn't opened Taste yet) — opening Taste once magically
+  // "fixed" it, which is the exact symptom Lewis hit. Now the picker
+  // triggers the same fetch itself, showing a loading state while it runs.
+  const needsEnrichment =
+       (category === 'studio' && animeList.some(a => !Array.isArray(a.studios)))
+    || (category === 'genre'  && animeList.some(a => !Array.isArray(a.genres)))
+    || (category === 'year'   && animeList.some(a => a.seasonYear == null));
+  if (needsEnrichment) {
+    pop.dataset.category = category;
+    pop.innerHTML = `<div class="search-picker-loading">⏳ Loading ${esc(category)} data…</div>`;
+    pop.removeAttribute('hidden');
+    document.querySelectorAll('.search-pick-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    if (btn) {
+      const row = byId(IDS.searchPickerRow);
+      const btnRect = btn.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      pop.style.left = `${Math.max(0, btnRect.left - rowRect.left)}px`;
+    }
+    try {
+      await _enrichGenresAndEras();
+      saveState();
+    } catch (e) {
+      pop.innerHTML = `<div class="search-picker-empty">Could not fetch ${esc(category)} data: ${esc(e.message || 'network error')}</div>`;
+      return;
+    }
+    // If the user closed the popover mid-fetch, don't re-open it.
+    if (pop.hasAttribute('hidden') || pop.dataset.category !== category) return;
+    // Fall through to render with the freshly-enriched data.
+  }
+  const values = _searchPickerValues(category);
+  pop.dataset.category = category;
+  const isChecked = (val) => {
+    if (category === 'genre')  return _searchChips.genres.has(val);
+    if (category === 'studio') return _searchChips.studios.has(val);
+    if (category === 'format') return _searchChips.formats.has(val);
+    if (category === 'length') return _searchChips.lengths.has(val);
+    if (category === 'year')   return _searchChips.years.has(Number(val));
+    return false;
+  };
+  const heading = {
+    genre: 'Pick genres', studio: 'Pick studios', year: 'Pick years',
+    format: 'Pick formats', length: 'Pick episode lengths',
+  }[category];
+  const empty = values.length === 0
+    ? `<p class="search-picker-empty">Nothing to pick yet — your list doesn't have ${category} data populated.</p>`
+    : '';
+  const rangeUI = category === 'year' ? `
+    <div class="search-picker-range">
+      <span>Range:</span>
+      <input type="number" id="search-year-range-from" placeholder="from" min="1900" max="2099" value="${_searchChips.yearRange?.[0] ?? ''}" />
+      <span>–</span>
+      <input type="number" id="search-year-range-to"   placeholder="to"   min="1900" max="2099" value="${_searchChips.yearRange?.[1] ?? ''}" />
+      <button type="button" class="search-picker-range-apply" onclick="_applyYearRange()">Apply</button>
+      ${_searchChips.yearRange ? '<button type="button" class="search-picker-range-clear" onclick="_clearYearRange()">Clear</button>' : ''}
+    </div>` : '';
+  pop.innerHTML = `
+    <div class="search-picker-header">${esc(heading)}</div>
+    ${rangeUI}
+    <div class="search-picker-list">
+      ${values.map(v => `
+        <label class="search-picker-item">
+          <input type="checkbox" ${isChecked(v.value) ? 'checked' : ''}
+                 onchange="_toggleSearchChip('${category}', this.value, this.checked)"
+                 value="${esc(v.value)}" />
+          <span>${esc(v.label)}</span>
+        </label>
+      `).join('')}
+      ${empty}
+    </div>
+  `;
+  pop.removeAttribute('hidden');
+  // Highlight the active picker button
+  document.querySelectorAll('.search-pick-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  // Position the popover under the clicked button
+  if (btn) {
+    const row = byId(IDS.searchPickerRow);
+    const btnRect = btn.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    pop.style.left = `${Math.max(0, btnRect.left - rowRect.left)}px`;
+  }
+  // Outside-click close
+  setTimeout(() => {
+    const closer = (e) => {
+      if (pop.contains(e.target)) return;
+      if (e.target.classList && e.target.classList.contains('search-pick-btn')) return;
+      _closeSearchPicker();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    const escCloser = (e) => {
+      if (e.key !== 'Escape') return;
+      _closeSearchPicker();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    document.addEventListener('click', closer, true);
+    document.addEventListener('keydown', escCloser);
+  }, 0);
+}
+
+function _closeSearchPicker() {
+  const pop = byId(IDS.searchPickerPopover);
+  if (pop) pop.setAttribute('hidden', '');
+  document.querySelectorAll('.search-pick-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+}
+
+function _toggleSearchChip(category, value, on) {
+  if (category === 'genre') {
+    if (on) _searchChips.genres.add(value); else _searchChips.genres.delete(value);
+  } else if (category === 'studio') {
+    if (on) _searchChips.studios.add(value); else _searchChips.studios.delete(value);
+  } else if (category === 'format') {
+    if (on) _searchChips.formats.add(value); else _searchChips.formats.delete(value);
+  } else if (category === 'length') {
+    if (on) _searchChips.lengths.add(value); else _searchChips.lengths.delete(value);
+  } else if (category === 'year') {
+    const n = Number(value);
+    if (on) _searchChips.years.add(n); else _searchChips.years.delete(n);
+  }
+  _persistSearchChips();
+  _renderSearchChips();
+  filterRankings();
+}
+
+function _applyYearRange() {
+  const fromEl = byId('search-year-range-from');
+  const toEl   = byId('search-year-range-to');
+  const from = parseInt(fromEl?.value, 10);
+  const to   = parseInt(toEl?.value,   10);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    showToast('Enter both a from and to year.', 2500);
+    return;
+  }
+  _searchChips.yearRange = [Math.min(from, to), Math.max(from, to)];
+  _closeSearchPicker();
+  _renderSearchChips();
+  filterRankings();
+}
+
+function _clearYearRange() {
+  _searchChips.yearRange = null;
+  _closeSearchPicker();
+  _renderSearchChips();
+  filterRankings();
+}
+
+function _renderSearchChips() {
+  const wrap = byId(IDS.searchChips);
+  const clearBtn = byId(IDS.searchClearBtn);
+  if (!wrap) return;
+  const chips = [];
+  // Look up label casing for genres/studios from animeList for nicer display
+  const labelFor = (category, value) => {
+    if (category === 'genre' || category === 'studio') {
+      const field = category === 'genre' ? 'genres' : 'studios';
+      for (const a of animeList) {
+        const hit = (a[field] || []).find(v => v && v.toLowerCase() === value);
+        if (hit) return hit;
+      }
+      return value;
+    }
+    if (category === 'format') {
+      return ({ TV: 'TV', MOVIE: 'Movie', OVA: 'OVA', ONA: 'ONA', TV_SHORT: 'Short', SPECIAL: 'Special' })[value] || value;
+    }
+    return String(value);
+  };
+  const pillIcon = { genre: '🎭', studio: '🎬', year: '📅', format: '📺', length: '📏', yearRange: '📅' };
+  const lengthLabel = (v) => (_SEARCH_LENGTH_BUCKETS.find(b => b.value === v)?.label) || v;
+  for (const v of _searchChips.genres)  chips.push({ category: 'genre',  raw: v, label: labelFor('genre',  v) });
+  for (const v of _searchChips.studios) chips.push({ category: 'studio', raw: v, label: labelFor('studio', v) });
+  for (const v of _searchChips.years)   chips.push({ category: 'year',   raw: String(v), label: String(v) });
+  for (const v of _searchChips.formats) chips.push({ category: 'format', raw: v, label: labelFor('format', v) });
+  for (const v of _searchChips.lengths) chips.push({ category: 'length', raw: v, label: lengthLabel(v) });
+  if (_searchChips.yearRange) {
+    const [lo, hi] = _searchChips.yearRange;
+    chips.push({ category: 'yearRange', raw: 'range', label: `${lo}–${hi}` });
+  }
+  wrap.innerHTML = chips.map(c => `
+    <span class="search-chip" data-category="${c.category}" data-value="${esc(c.raw)}">
+      <span class="search-chip-icon" aria-hidden="true">${pillIcon[c.category] || '·'}</span>
+      <span class="search-chip-label">${esc(c.label)}</span>
+      <button type="button" class="search-chip-remove" aria-label="Remove filter" onclick="_removeSearchChip('${c.category}', '${esc(c.raw)}')">×</button>
+    </span>
+  `).join('');
+  const anyChip = chips.length > 0;
+  if (anyChip) wrap.removeAttribute('hidden'); else wrap.setAttribute('hidden', '');
+  if (clearBtn) clearBtn.style.display = anyChip ? '' : 'none';
+}
+
+function _removeSearchChip(category, value) {
+  if (category === 'yearRange') _searchChips.yearRange = null;
+  else if (category === 'genre')  _searchChips.genres.delete(value);
+  else if (category === 'studio') _searchChips.studios.delete(value);
+  else if (category === 'format') _searchChips.formats.delete(value);
+  else if (category === 'length') _searchChips.lengths.delete(value);
+  else if (category === 'year')   _searchChips.years.delete(Number(value));
+  _persistSearchChips();
+  _renderSearchChips();
+  filterRankings();
+}
+
+function clearSearchChips() {
+  _searchChips = {
+    genres: new Set(), studios: new Set(), years: new Set(),
+    yearRange: null, formats: new Set(), lengths: new Set(),
+  };
+  // Also clear the text input so "Clear filters" really means "show everything".
+  const input = byId(IDS.searchInput);
+  if (input) input.value = '';
+  _persistSearchChips();
+  _renderSearchChips();
+  filterRankings();
+}
+
+// Compose the effective query from the parsed text-input tokens + the
+// chip state. Chip values OR with same-key typed tokens (so a typed
+// genre:action and a chipped Comedy together mean "either"); different
+// keys still AND. Year range from chips takes precedence over a typed
+// year range (chip UI is the more discoverable surface).
+function _effectiveSearchQuery(parsed) {
+  const out = {
+    text: parsed.text,
+    genres:  [...new Set([...parsed.genres,  ..._searchChips.genres])],
+    studios: [...new Set([...parsed.studios, ..._searchChips.studios])],
+    formats: [...new Set([...parsed.formats, ..._searchChips.formats])],
+    years:   [...new Set([...parsed.years,   ..._searchChips.years])],
+    lengths: [...new Set([...(parsed.lengths || []), ..._searchChips.lengths])],
+    yearRange: _searchChips.yearRange || parsed.yearRange,
+  };
+  return out;
+}
+
+// v1.0.211 — Search help popover. Click toggles, outside-click or Escape
+// closes. Lives outside the search input so the input still gets the full
+// width and the popover can absolute-position below it.
+function toggleSearchHelp() {
+  const pop = byId(IDS.searchHelpPopover);
+  const btn = byId(IDS.searchHelpBtn);
+  if (!pop || !btn) return;
+  const willOpen = pop.hasAttribute('hidden');
+  if (willOpen) {
+    pop.removeAttribute('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+    // Close on next outside click. Capture so it runs before the next bubble.
+    const closer = (e) => {
+      if (pop.contains(e.target) || btn.contains(e.target)) return;
+      pop.setAttribute('hidden', '');
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    const escCloser = (e) => {
+      if (e.key !== 'Escape') return;
+      pop.setAttribute('hidden', '');
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    setTimeout(() => {
+      document.addEventListener('click', closer, true);
+      document.addEventListener('keydown', escCloser);
+    }, 0);
+  } else {
+    pop.setAttribute('hidden', '');
+    btn.setAttribute('aria-expanded', 'false');
+  }
+}
+
 function filterRankings() {
-  if (franchiseMode) { _filterFranchise(); return; }
-  const q = byId(IDS.searchInput).value.toLowerCase().trim();
-  // Build a quick id→fuzzy lookup from the data model (not DOM) so that
-  // unfuzzying an anime is reflected immediately without a full re-render.
-  const fuzzyById = new Map(animeList.map(a => [a.id, !!a.fuzzy]));
+  const raw    = byId(IDS.searchInput).value;
+  const parsed = _parseSearchQuery(raw);
+  const query  = _effectiveSearchQuery(parsed);
+  if (franchiseMode) { _filterFranchise(query); return; }
+  const animeById = new Map(animeList.map(a => [a.id, a]));
   document.querySelectorAll('#ranking-list .rank-card').forEach(card => {
     if (card.classList.contains('franchise-group')) return; // skip franchise cards
     const titleEl = card.querySelector('.rank-title');
     if (!titleEl) return;
     const title   = titleEl.textContent.toLowerCase();
     const animeId = parseInt(card.dataset.animeId) || 0;
-    const isFuzzy = fuzzyById.get(animeId) ?? (card.querySelector('.fuzzy-tag') !== null);
+    const anime   = animeById.get(animeId);
+    const isFuzzy = !!anime?.fuzzy;
     const fmt     = card.dataset.format  || '';
     const epRng   = card.dataset.epRange || 'unknown';
-    const show = (!q || title.includes(q))
+    const matchesText   = !query.text || title.includes(query.text);
+    const matchesTokens = _animeMatchesSearchTokens(anime, query);
+    const show = matchesText
+      && matchesTokens
       && (!showFuzzyOnly || isFuzzy)
       && !hiddenFormatsRanking.has(fmt)
       && !hiddenEpRangesRanking.has(epRng)
@@ -12528,14 +13797,44 @@ function renderScoreDistribution() {
   }).join('');
 }
 
-function renderStudioAffinity() {
+// v1.0.211 — session-scoped attempt flag so a failed/empty enrichment
+// doesn't infinite-loop the Studio Affinity panel. Without this, the
+// post-fetch renderStatsTab() call re-renders Studio Affinity → no
+// studios → fetch again → re-render → fetch again → … Reset on Reset/
+// Delete (resetAll, deleteAllData clear all module state via reload paths).
+let _studioFetchAttempted = false;
+async function renderStudioAffinity() {
   const el = byId(IDS.statStudioAffinity);
   if (!el) return;
   const hasStudios = animeList.some(a => Array.isArray(a.studios) && a.studios.length > 0);
   if (!hasStudios) {
-    el.innerHTML = `<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">Studio data not loaded yet —
-      <a href="#" style="color:#58a6ff" onclick="event.preventDefault();_enrichGenresAndEras().then(renderStatsTab)">fetch it now →</a></div>`;
-    return;
+    if (_studioFetchAttempted) {
+      el.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No studio data is available for the anime in your list.</div>';
+      return;
+    }
+    if (el.dataset.fetching === '1') return;
+    el.dataset.fetching = '1';
+    el.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">⏳ Loading studio data…</div>';
+    try {
+      await _enrichGenresAndEras();
+      saveState();
+    } catch (e) {
+      _studioFetchAttempted = false; // allow retry on hard error
+      el.innerHTML = `<div style="color:#f85149;font-size:0.8rem;padding:8px 0">Could not fetch studio data: ${esc(e.message || 'network error')}. <a href="#" style="color:#58a6ff" onclick="event.preventDefault();renderStudioAffinity()">retry →</a></div>`;
+      return;
+    } finally {
+      delete el.dataset.fetching;
+    }
+    _studioFetchAttempted = true;
+    // Re-check directly instead of re-running renderStatsTab — the latter
+    // re-enters this function and loops forever when AniList returned no
+    // studios (which is the case for some libraries / region restrictions).
+    const nowHasStudios = animeList.some(a => Array.isArray(a.studios) && a.studios.length > 0);
+    if (!nowHasStudios) {
+      el.innerHTML = '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No studio data is available for the anime in your list.</div>';
+      return;
+    }
+    // Studios now available — fall through to the normal render path below.
   }
   const overallAvg = Math.round(animeList.reduce((s, a) => s + a.elo, 0) / animeList.length);
   const studioMap = {};
@@ -12788,6 +14087,43 @@ function _computeFranchiseIds() {
   const out = new Map();
   for (const id of parent.keys()) out.set(id, find(id));
   return out;
+}
+
+// v1.0.211 — Cached animeId → franchise-group ID map. Built from
+// _buildFranchiseGroups (which is the authoritative grouper — relations graph
+// + title patterns + alias table + crossover detection), inverted, and cached.
+// Cache key encodes list size + first/last IDs so it self-invalidates on add/
+// remove/import. Other mutation points (excludeAnime, applySync) call
+// _bumpFranchiseGroupCache() to force a rebuild. Lookup is O(1) per anime.
+let _franchiseGroupCache    = null;
+let _franchiseGroupCacheKey = '';
+function _getFranchiseIdMap() {
+  const key = `${animeList.length}:${animeList[0]?.id || 0}:${animeList[animeList.length - 1]?.id || 0}`;
+  if (_franchiseGroupCache && _franchiseGroupCacheKey === key) return _franchiseGroupCache;
+  const map = new Map();
+  const groups = _buildFranchiseGroups(animeList.slice());
+  let gid = 0;
+  for (const g of groups) {
+    const groupId = `g${gid++}`;
+    for (const m of g.members) map.set(m.id, groupId);
+  }
+  _franchiseGroupCache    = map;
+  _franchiseGroupCacheKey = key;
+  return map;
+}
+function _bumpFranchiseGroupCache() {
+  _franchiseGroupCache    = null;
+  _franchiseGroupCacheKey = '';
+}
+// Single-pair check, used by the avoid-same-franchise filter and the Tower
+// down-weight. Returns false for missing inputs or self-pairs so callers can
+// use it freely without null-guarding.
+function _sameFranchise(a, b) {
+  if (!a || !b || a.id === b.id) return false;
+  const m = _getFranchiseIdMap();
+  const ka = m.get(a.id);
+  const kb = m.get(b.id);
+  return !!(ka && kb && ka === kb);
 }
 
 // ─── TASTE PROFILE (§6.4.1) ───────────────────────────────────────────────────
@@ -13663,6 +14999,15 @@ function showAnimeDetail(id) {
   modalBtn.href        = _animeExternalUrl(anime);
   modalBtn.textContent = `View on ${_animeExternalLabel(anime)} ↗`;
   modalBtn.style.display = '';
+  // v1.0.211 — Battle Next chip. Visible on per-anime modals (not
+  // franchise modals, which call showFranchiseDetail and hide this).
+  // Stashes the id on the button so battleNextFromModal can read it
+  // without rebuilding the chain back to animeList.
+  const battleNextBtn = byId(IDS.modalBattleNextBtn);
+  if (battleNextBtn) {
+    battleNextBtn.style.display = '';
+    battleNextBtn.dataset.animeId = String(id);
+  }
   const descEl = byId(IDS.modalDescription);
   const cleanDesc = stripHtml(anime.description);
   if (cleanDesc) {
@@ -13866,6 +15211,18 @@ function toggleFormat(fmt, scope = 'ranking') {
     populateTowerList(q);
   }
 
+  // v1.0.209 — invalidate the preloaded next pair. The preload picks under
+  // the filter state at the time it ran, not the filter state at the time
+  // it'll be consumed — so widening the filter (e.g. movies-only → all
+  // formats) wouldn't actually affect the next battle, because both
+  // movies are still "valid" under the relaxed filter and
+  // _takeValidPreloadedPair happily returns them. Dropping the preload
+  // here forces the next pickOpponents() call instead, which respects
+  // the current filter. Cost: one cover-cache miss; benefit: the next
+  // battle actually reflects the user's intent.
+  _preloadedPair = null;
+  _preloadedImgs = null;
+
   // Battle-scope: immediately swap out any card whose format is now filtered.
   const battleVisible = byId(IDS.battleScreen)?.style.display !== 'none';
   if (!battleVisible || towerMode) return;
@@ -13892,14 +15249,50 @@ function toggleFormat(fmt, scope = 'ranking') {
   }
 }
 
-function toggleMobileFilters() {
-  const panel = byId(IDS.collapsibleFilters);
-  const btn   = byId(IDS.mobileFilterToggle);
-  if (!panel || !btn) return;
-  const open = panel.classList.toggle('open');
-  btn.classList.toggle('active', open);
-  btn.textContent = open ? '⊟ Filters' : '⊞ Filters';
+// v1.0.211 — Avoid-same-franchise filter handler. Mirrors the format-toggle
+// flow: persist via _saveViewPrefs, invalidate preload (next pair depends on
+// the filter), re-render the active mode if the currently-shown pair is now
+// disallowed. Also re-highlights the filter button so users see they have an
+// active filter.
+function toggleAvoidSameFranchise() {
+  const chk = byId(IDS.avoidSameFranchiseChk);
+  avoidSameFranchise = !!(chk && chk.checked);
+  _saveViewPrefs();
+  syncFormatButtons();
+  // Invalidate preload — same reasoning as toggleFormat: the cached next-pair
+  // was picked under the old filter state.
+  _preloadedPair = null;
+  _preloadedImgs = null;
+
+  const battleVisible = byId(IDS.battleScreen)?.style.display !== 'none';
+  if (!battleVisible || towerMode) return;
+
+  if (trioMode) {
+    // If the active trio now contains a same-franchise pair, repaint with a
+    // fresh trio picked under the new filter.
+    if (avoidSameFranchise && currentTrio.length === 3) {
+      const [a, b, c] = currentTrio.map(i => animeList[i]);
+      const hasDupe = _sameFranchise(a, b) || _sameFranchise(a, c) || _sameFranchise(b, c);
+      if (hasDupe) renderTrio();
+    }
+  } else if (wsoMode) {
+    // Champion stays; opponent is repicked if same-franchise under new toggle.
+    if (avoidSameFranchise && currentA != null && currentB != null
+        && _sameFranchise(animeList[currentA], animeList[currentB])) {
+      renderBattle();
+    }
+  } else {
+    if (avoidSameFranchise && currentA != null && currentB != null
+        && _sameFranchise(animeList[currentA], animeList[currentB])) {
+      renderBattle();
+    }
+  }
 }
+
+// v1.0.211 — toggleMobileFilters was removed when the Formats / Length
+// button rows folded into the unified chip picker. The Filter button still
+// lives in the battle screen for the battle-pool filter popover; that goes
+// through toggleFilterMenu, not this function.
 
 function syncFormatButtons() {
   // Sync rankings-tab buttons (these write/read the Ranking-scope set)
@@ -13916,9 +15309,16 @@ function syncFormatButtons() {
     b.classList.toggle('active',    !isHidden);
     b.classList.toggle('hidden-fmt', isHidden);
   });
-  // Highlight the battle-screen filter button if any battle-scope format is hidden
+  // v1.0.211 — sync avoid-same-franchise checkbox + bake it into the filter-button
+  // highlight so any active filter (format or franchise-avoid) draws the eye.
+  const avoidChk = byId(IDS.avoidSameFranchiseChk);
+  if (avoidChk) avoidChk.checked = avoidSameFranchise;
+  // Highlight the battle-screen filter button if any battle-scope filter is active
   const filterBtn = byId(IDS.filterBtn);
-  if (filterBtn) filterBtn.classList.toggle('has-filter', hiddenFormatsBattle.size > 0);
+  if (filterBtn) {
+    filterBtn.classList.toggle('has-filter',
+      hiddenFormatsBattle.size > 0 || avoidSameFranchise);
+  }
 }
 
 // ─── EPISODE RANGE FILTER ────────────────────────────────────────────────────
@@ -14503,6 +15903,234 @@ function setMode(name) {
   if (currentA == null && currentB == null && !trioMode) { renderBattle(); }
 }
 
+// v1.0.211 — Record a battled pair while Battle Within Franchise is active,
+// then auto-stop when every unique pair has been fought. Without this the
+// mode loops indefinitely after exhausting the unique combinations, generating
+// noisy repeats of matchups the user has already settled. Called from
+// pickWinner (one pair per battle) and applyTrioResult (three pairs per round).
+//
+// Target count is re-resolved each tick so it tracks the CURRENT eligible
+// pool — if the user excludes a member halfway through, target shrinks and
+// completion can fire earlier than the original C(n,2).
+function _recordBattleWithinPair(idA, idB) {
+  if (!battleWithinFranchise) return;
+  // Same key shape as matchupStats — "minId-maxId" — so it dedupes both
+  // orderings automatically and matches the keys pickWinner already builds.
+  const key = [Math.min(idA, idB), Math.max(idA, idB)].join('-');
+  battleWithinFranchise.battledPairs.add(key);
+
+  const eligible = animeList.filter(a =>
+    battleWithinFranchise.ids.has(a.id)
+    && !excludedIds.has(a.id)
+    && !hiddenFormatsBattle.has(a.format)
+  );
+  const n = eligible.length;
+  if (n < 2) {
+    const name = battleWithinFranchise.name;
+    stopBattleWithinFranchise();
+    showToast(`✨ Battle Within "${name}" stopped — pool ran out of eligible pairs.`, 4500);
+    return;
+  }
+  const target = (n * (n - 1)) / 2;
+  if (battleWithinFranchise.battledPairs.size >= target) {
+    const name = battleWithinFranchise.name;
+    stopBattleWithinFranchise();
+    showToast(`✨ You've battled every pair in "${name}" — Battle Within stopped. Tap ⚔ Battle within again for another pass.`, 5500);
+  }
+}
+
+// v1.0.211 — Battle within franchise. Constrains the picker pool to a single
+// franchise so users can settle the internal ordering ("which Re:Zero season
+// is best?") without that franchise getting paired against unrelated titles
+// every other battle. Implemented as a pool restriction rather than a true
+// new "mode" because every existing mode (Classic / Settle / Blind / Trio /
+// WSO) composes cleanly — Settle within franchise, Blind within franchise,
+// and Trio within franchise all just work on top.
+function startBattleWithinFranchise(name) {
+  // Re-resolve the group at call time — the user could have excluded an
+  // entry between modal-open and clicking the button.
+  const groups = _buildFranchiseGroups(getSortedList());
+  const group  = groups.find(g => g.name === name);
+  if (!group) {
+    showToast('⚠️ Franchise no longer exists — refresh rankings and try again.', 3500);
+    return;
+  }
+  // Eligible members = not excluded + not filtered by format. We honour
+  // existing pool filters so Battle Within respects the user's mental model
+  // of "active battle pool". If that knocks the set under 2, we tell them.
+  const eligible = group.members.filter(a =>
+    !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format)
+  );
+  if (eligible.length < 2) {
+    showToast(`⚠️ "${name}" needs ≥2 eligible entries to battle (try removing format filters).`, 4500);
+    return;
+  }
+
+  battleWithinFranchise = {
+    name,
+    ids: new Set(eligible.map(a => a.id)),
+    // v1.0.211 — auto-stop once every unique pair has been battled at
+    // least once. battledPairs stores "minId-maxId" strings (same shape
+    // as matchupStats keys) so we can compare against C(eligible, 2) for
+    // completion. Recorded by _recordBattleWithinPair from pickWinner and
+    // applyTrioResult.
+    battledPairs: new Set(),
+  };
+
+  // Reset to a clean Classic-style picker. Trio is the one to be careful about
+  // because it persists currentTrio; setMode('normal') handles that for us.
+  // WSO seeds from an empty streak so the champion gets picked from the
+  // restricted pool rather than carrying over a stale champion that might
+  // not even be in this franchise.
+  setMode('normal');
+
+  // Banner + filter-button visual cue
+  const banner = byId(IDS.withinFranchiseBanner);
+  const msg    = byId(IDS.withinFranchiseMsg);
+  if (msg)    msg.textContent = `⚔ Battle within: ${name}`;
+  if (banner) banner.classList.add('active');
+  const filterBtn = byId(IDS.filterBtn);
+  if (filterBtn) filterBtn.classList.add('has-franchise-lock');
+
+  // Modal is sitting open on top — close it so the user lands on the battle.
+  closeDetailModal();
+
+  // Fresh battle from the restricted pool
+  _preloadedPair = null;
+  _preloadedImgs = null;
+  // v1.0.211 hotfix — navigate to the battle screen. The franchise modal
+  // opens from the Rankings tab inside #results-screen, so renderBattle()
+  // was painting into a hidden DOM tree — the user had to manually click
+  // "Keep Ranking" or otherwise navigate to the battle to see the new pair.
+  // Mirrors resumeBattle()'s screen swap.
+  hide('results-screen');
+  show('battle-screen');
+  renderBattle();
+}
+
+// v1.0.211 — Battle Next chip. Lets the user queue the anime currently open
+// in the detail modal as one side of their next battle, paired against a
+// similar-ELO opponent picked the same way pickOneOpponent picks replacement
+// opponents during an "exclude" action. The pair lands in nextPairOverride so
+// it's consumed exactly once by the next renderBattle call — after that the
+// regular picker takes over again. We deliberately swallow trio mode (because
+// nextPairOverride only feeds renderBattle, not renderTrio) by flipping out
+// of trio first, mirroring how Battle Within drops back to a clean Classic
+// picker before queueing.
+function battleNextFromModal() {
+  const btn = byId(IDS.modalBattleNextBtn);
+  const id  = Number(btn?.dataset?.animeId);
+  if (!id) return;
+  const idx = animeList.findIndex(a => a.id === id);
+  if (idx === -1) {
+    showToast('⚠️ Couldn’t find that anime in your list.', 3000);
+    return;
+  }
+  // Excluded anime can't validly enter the battle pool — surface the obvious
+  // recovery action (re-include) rather than silently picking it anyway.
+  if (excludedIds.has(id)) {
+    showToast('That anime is excluded from your battle pool. Re-include it from Manage → Excluded first.', 4500);
+    return;
+  }
+  // Format filter parity with the rest of the battle picker. If a user has
+  // hidden Movies and clicks Battle Next on a movie, queueing it would defy
+  // their own filter — call it out.
+  if (hiddenFormatsBattle.has(animeList[idx].format)) {
+    showToast('That anime’s format is currently hidden from battles. Adjust your format filter to queue it.', 4500);
+    return;
+  }
+  // Battle Within is a stricter pool than the user expects when they click
+  // Battle Next from a random card. Clear it so the queued anime gets a real
+  // similar-ELO opponent from the full pool.
+  if (battleWithinFranchise) {
+    battleWithinFranchise = null;
+    const banner = byId(IDS.withinFranchiseBanner);
+    if (banner) banner.classList.remove('active');
+    const filterBtn = byId(IDS.filterBtn);
+    if (filterBtn) filterBtn.classList.remove('has-franchise-lock');
+  }
+  // Trio renders its own arena and ignores nextPairOverride — flip to normal
+  // so the queued pair actually paints. WSO and Settle both go through
+  // renderBattle, which respects nextPairOverride first, so they don't need
+  // a mode switch.
+  if (trioMode) setMode('normal');
+
+  const oppIdx = pickOneOpponent(idx);
+  if (oppIdx === idx || oppIdx == null) {
+    showToast('⚠️ Couldn’t find an opponent (try widening your filters).', 3500);
+    return;
+  }
+  nextPairOverride = [[idx, oppIdx]];
+
+  closeDetailModal();
+  _preloadedPair = null;
+  _preloadedImgs = null;
+  hide('results-screen');
+  show('battle-screen');
+  renderBattle();
+  showToast(`⚔ Queued "${displayTitle(animeList[idx])}" for next battle.`, 2500);
+}
+
+function stopBattleWithinFranchise() {
+  battleWithinFranchise = null;
+  const banner = byId(IDS.withinFranchiseBanner);
+  if (banner) banner.classList.remove('active');
+  const filterBtn = byId(IDS.filterBtn);
+  if (filterBtn) filterBtn.classList.remove('has-franchise-lock');
+  _preloadedPair = null;
+  _preloadedImgs = null;
+  if (trioMode) renderTrio(); else renderBattle();
+}
+
+// v1.0.211 — Bulk-exclude every member of a franchise. Confirms first because
+// it touches many entries at once. Pushes a typed undo snapshot so the user
+// can roll it back with the same Undo button as a normal battle.
+function bulkExcludeFranchise(name) {
+  const groups = _buildFranchiseGroups(getSortedList());
+  const group  = groups.find(g => g.name === name);
+  if (!group) return;
+  // Only ids that aren't already excluded — undo shouldn't "re-exclude" the
+  // ones the user had already singled out earlier.
+  const newlyExcluded = group.members
+    .map(a => a.id)
+    .filter(id => !excludedIds.has(id));
+  if (newlyExcluded.length === 0) {
+    showToast('Every entry in this franchise is already excluded.', 2500);
+    return;
+  }
+
+  _showConfirm(
+    `🚫 Exclude all of "${name}" from battles?`,
+    `${newlyExcluded.length} entr${newlyExcluded.length === 1 ? 'y' : 'ies'} will be removed from your battle pool (Rankings stay unchanged). You can undo this from the Undo button or re-add individual entries from Manage → Excluded.`,
+    'Exclude all',
+    () => {
+      const prevA = currentA, prevB = currentB;
+      for (const id of newlyExcluded) excludedIds.add(id);
+      _pushUndoSnapshot({
+        type:  'bulk-exclude',
+        ids:   newlyExcluded.slice(),
+        prevA,
+        prevB,
+        franchiseName: name,
+      });
+      _bumpFranchiseGroupCache();
+      saveState();
+      scheduleCloudSave();
+      closeDetailModal();
+      showToast(`✓ Excluded ${newlyExcluded.length} from "${name}" — Undo available.`, 3500);
+
+      // Refresh whatever screen is visible
+      if (byId(IDS.battleScreen)?.style.display !== 'none') {
+        _preloadedPair = null;
+        _preloadedImgs = null;
+        if (trioMode) renderTrio(); else renderBattle();
+      } else {
+        renderRankingList();
+      }
+    }
+  );
+}
+
 // Toggles the popover. Uses a one-shot outside-click listener (registered on
 // the next tick so the opening click doesn't immediately dismiss it) and an
 // Escape-key handler. Both listeners unwire cleanly on close.
@@ -14667,12 +16295,19 @@ function pickTrio() {
   const weights = [];
   animeList.forEach((a, i) => {
     if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return;
+    // v1.0.211 — battle-within-franchise restriction applies to trio too
+    if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return;
     pool.push(i);
     const base = 1 / ((a.comparisons || 0) + 1);
     weights.push(a.fuzzy ? base * 0.1 : base);
   });
   if (pool.length < 3) return null;
 
+  // v1.0.211 — avoid-same-franchise. After picking each card, zero out any
+  // remaining candidate that shares a franchise with anyone already chosen.
+  // Best-effort: if we run out of cross-franchise candidates mid-pick we let
+  // duplicates through so the trio doesn't collapse to fewer than three.
+  const applyAvoid = avoidSameFranchise && !battleWithinFranchise;
   const availW = weights.slice();
   const chosen = [];
   for (let p = 0; p < 3; p++) {
@@ -14682,7 +16317,27 @@ function pickTrio() {
     for (let i = 0; i < pool.length; i++) {
       if (availW[i] === 0) continue;
       r -= availW[i];
-      if (r <= 0) { chosen.push(pool[i]); availW[i] = 0; break; }
+      if (r <= 0) {
+        chosen.push(pool[i]);
+        availW[i] = 0;
+        if (applyAvoid) {
+          const justPicked = animeList[pool[i]];
+          // Tentatively zero same-franchise candidates. Track which we zeroed
+          // so we can restore them if doing so would empty the remaining pool.
+          const tentativelyZeroed = [];
+          for (let j = 0; j < pool.length; j++) {
+            if (availW[j] === 0) continue;
+            if (_sameFranchise(animeList[pool[j]], justPicked)) {
+              tentativelyZeroed.push([j, availW[j]]);
+              availW[j] = 0;
+            }
+          }
+          if (availW.every(w => w === 0) && p < 2) {
+            for (const [j, w] of tentativelyZeroed) availW[j] = w;
+          }
+        }
+        break;
+      }
     }
   }
   return chosen.length === 3 ? chosen : null;
@@ -14996,6 +16651,13 @@ function applyTrioResult() {
   checkSessionSummary();
   _checkAchievements();
   _maybeSaveTasteSnapshot();
+  // v1.0.211 — Battle Within Franchise auto-completion. Records all three
+  // implied pairs from the trio result. If this round filled the last
+  // remaining pairs, the completion check fires inside the third call and
+  // stops Battle Within with a celebratory toast.
+  pairs.forEach(([wIdx, lIdx]) => {
+    _recordBattleWithinPair(animeList[wIdx].id, animeList[lIdx].id);
+  });
   saveState();
 
   // Render the next trio FIRST so we can store it in the snap (mirrors the
@@ -15134,12 +16796,14 @@ function maybeShowLongPressTip() {
 // In settle mode, pickOpponents uses a tighter window and prefers uncertain anime.
 // Called from the modified pickOpponents below.
 function pickSettlePair() {
-  // Candidates: not excluded, not hidden format, fewer than 15 comparisons
+  // Candidates: not excluded, not hidden format, fewer than 15 comparisons.
+  // v1.0.211 — battle-within-franchise restricts the pool here too.
   const uncertain = animeList
     .map((a, i) => ({ i, a }))
     .filter(({ a }) =>
       !excludedIds.has(a.id) &&
       !hiddenFormatsBattle.has(a.format) &&
+      (!battleWithinFranchise || battleWithinFranchise.ids.has(a.id)) &&
       (a.battles || 0) < TARGET_BATTLES_PER_ANIME
     );
 
@@ -15171,10 +16835,18 @@ function pickSettlePair() {
   if (idxA === undefined) idxA = uncertain[0].i;
 
   // Pick B: nearest ELO among uncertain pool (excluding A)
+  // v1.0.211 — when avoid-same-franchise is on (and not in within-franchise
+  // mode, which obviously WANTS same-franchise pairs), prefer cross-franchise
+  // candidates; fall back to any candidate if everyone shares A's franchise.
   const eloA = animeList[idxA].elo;
-  const candidates = uncertain
-    .filter(({ i }) => i !== idxA)
-    .sort((x, y) => Math.abs(x.a.elo - eloA) - Math.abs(y.a.elo - eloA));
+  const animeA = animeList[idxA];
+  const applyAvoid = avoidSameFranchise && !battleWithinFranchise;
+  let candidates = uncertain.filter(({ i }) => i !== idxA);
+  if (applyAvoid) {
+    const filtered = candidates.filter(({ a }) => !_sameFranchise(a, animeA));
+    if (filtered.length) candidates = filtered;
+  }
+  candidates.sort((x, y) => Math.abs(x.a.elo - eloA) - Math.abs(y.a.elo - eloA));
   const idxB = candidates[0]?.i ?? (idxA === 0 ? 1 : 0);
   return [idxA, idxB];
 }
@@ -15290,8 +16962,18 @@ function _pickNextTowerOpponent(champIdx) {
     .filter(idx => idx != null)
     .map(idx => animeList[idx]?.id));
 
+  // v1.0.211 — soft same-franchise down-weight. Same-franchise opponents get
+  // 0.25× weight instead of being excluded outright, so a champion whose
+  // franchise dominates the user's list (Gundam, Pretty Cure) still has
+  // legal opponents — they're just picked last. Cross-franchise picks win
+  // ~80% of the time when both options exist, which is enough to vary the
+  // run without making the soft-rule feel binary.
+  const SAME_FRANCHISE_WEIGHT  = 0.25;
+  const CROSS_FRANCHISE_WEIGHT = 1.0;
+
   for (const bandWidth of [200, 350, 600, Infinity]) {
     const candidates = [];
+    const weights    = [];
     for (let i = 0; i < animeList.length; i++) {
       if (i === champIdx) continue;
       const a = animeList[i];
@@ -15299,9 +16981,16 @@ function _pickNextTowerOpponent(champIdx) {
       if (usedIds.has(a.id)) continue;
       if (Math.abs((a.elo || 1200) - (champion.elo || 1200)) > bandWidth) continue;
       candidates.push(i);
+      weights.push(_sameFranchise(a, champion) ? SAME_FRANCHISE_WEIGHT : CROSS_FRANCHISE_WEIGHT);
     }
     if (candidates.length) {
-      return candidates[Math.floor(Math.random() * candidates.length)];
+      const total = weights.reduce((s, w) => s + w, 0);
+      let r = Math.random() * total;
+      for (let k = 0; k < candidates.length; k++) {
+        r -= weights[k];
+        if (r <= 0) return candidates[k];
+      }
+      return candidates[candidates.length - 1]; // numerical-rounding safety net
     }
   }
   return -1; // shouldn't happen unless library is tiny
@@ -15428,7 +17117,14 @@ function endTower() {
 function _saveViewPrefs() {
   try {
     localStorage.setItem(KESSEN_KEYS.settings.viewPrefs,
-      JSON.stringify({ rankingView, franchiseMode }));
+      // v1.0.211 — avoidSameFranchise piggybacks on viewPrefs so it persists
+      // across reloads without needing a new top-level storage key. Search
+      // chips also live here so an active filter survives a refresh — same
+      // behaviour the old format-row had via the saveState route.
+      JSON.stringify({
+        rankingView, franchiseMode, avoidSameFranchise,
+        searchChips: _serialiseSearchChips(),
+      }));
   } catch { /* storage full — not critical */ }
 }
 function _loadViewPrefs() {
@@ -15438,7 +17134,72 @@ function _loadViewPrefs() {
     const p = JSON.parse(raw);
     if (p.rankingView) rankingView = p.rankingView;
     if (p.franchiseMode != null) franchiseMode = p.franchiseMode;
+    if (p.avoidSameFranchise != null) avoidSameFranchise = !!p.avoidSameFranchise;
+    if (p.searchChips) _deserialiseSearchChips(p.searchChips);
   } catch { /* corrupt — ignore */ }
+}
+
+// v1.0.211 — chip-state persistence. Sets serialise to arrays; yearRange
+// passes through. Kept inside viewPrefs so existing storage-quota guarantees
+// (and the slim-fallback path) cover the chips too.
+function _serialiseSearchChips() {
+  return {
+    genres:    [..._searchChips.genres],
+    studios:   [..._searchChips.studios],
+    years:     [..._searchChips.years],
+    formats:   [..._searchChips.formats],
+    lengths:   [..._searchChips.lengths],
+    yearRange: _searchChips.yearRange,
+  };
+}
+function _deserialiseSearchChips(p) {
+  if (!p || typeof p !== 'object') return;
+  _searchChips.genres  = new Set(Array.isArray(p.genres)  ? p.genres  : []);
+  _searchChips.studios = new Set(Array.isArray(p.studios) ? p.studios : []);
+  _searchChips.years   = new Set(Array.isArray(p.years)   ? p.years.map(Number) : []);
+  _searchChips.formats = new Set(Array.isArray(p.formats) ? p.formats : []);
+  _searchChips.lengths = new Set(Array.isArray(p.lengths) ? p.lengths : []);
+  _searchChips.yearRange = Array.isArray(p.yearRange) && p.yearRange.length === 2
+    ? [Number(p.yearRange[0]), Number(p.yearRange[1])]
+    : null;
+}
+function _persistSearchChips() {
+  _saveViewPrefs();
+}
+
+// v1.0.211 — one-time migration from the legacy Formats / Length button rows
+// (subtractive, "all on by default, click off to hide") to the new chip picker
+// (additive, "click to require"). For each non-empty hidden set, we add the
+// COMPLEMENT to the chip picker, so the post-migration filter shows exactly
+// the same anime as before. Idempotent: re-runs are no-ops because we clear
+// the legacy sets after.
+const _ALL_FORMATS_FOR_MIGRATION = ['TV', 'MOVIE', 'OVA', 'ONA', 'TV_SHORT', 'SPECIAL'];
+const _ALL_LENGTHS_FOR_MIGRATION = ['short', 'medium', 'long', 'vlong', 'unknown'];
+let _legacyFilterMigrationDone = false;
+function _migrateLegacyFiltersToChips() {
+  if (_legacyFilterMigrationDone) return;
+  let migrated = false;
+  if (hiddenFormatsRanking && hiddenFormatsRanking.size > 0) {
+    for (const fmt of _ALL_FORMATS_FOR_MIGRATION) {
+      if (!hiddenFormatsRanking.has(fmt)) _searchChips.formats.add(fmt);
+    }
+    hiddenFormatsRanking = new Set();
+    migrated = true;
+  }
+  if (hiddenEpRangesRanking && hiddenEpRangesRanking.size > 0) {
+    for (const bucket of _ALL_LENGTHS_FOR_MIGRATION) {
+      if (!hiddenEpRangesRanking.has(bucket)) _searchChips.lengths.add(bucket);
+    }
+    hiddenEpRangesRanking = new Set();
+    migrated = true;
+  }
+  _legacyFilterMigrationDone = true;
+  if (migrated) {
+    _persistSearchChips();
+    // Existing save snapshot still has the legacy sets; saveState rewrites
+    // them as empty on next mutation. That's fine — they're already empty
+    // in memory and the predicate chain handles empty as no-op.
+  }
 }
 
 function setRankingView(view) {
@@ -15458,7 +17219,13 @@ function renderRankingTable() {
   const sorted    = getSortedList();
   const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
   const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i]));
-  const q = (byId(IDS.searchInput).value || '').toLowerCase().trim();
+  // v1.0.211 — list view used to inline-parse just the title-text portion
+  // of the search input. After the chip picker landed, that meant ticking
+  // `+ Format: ONA` filtered the grid but did nothing here — list rendered
+  // every anime. Route through the same _effectiveSearchQuery path so the
+  // table honours chip + token + text identically to filterRankings.
+  const parsed = _parseSearchQuery(byId(IDS.searchInput).value || '');
+  const query  = _effectiveSearchQuery(parsed);
 
   // Build pre-computed data array (filtered)
   _vsTableData = [];
@@ -15468,7 +17235,8 @@ function renderRankingTable() {
     const eloRank = eloRankMap.get(anime.id) ?? i;
     const tier    = getTier(eloRank, sorted.length);
     const conf    = confidenceLabel(anime.battles || 0);
-    const hidden = (q && !title.toLowerCase().includes(q)) ||
+    const hidden = (query.text && !title.toLowerCase().includes(query.text)) ||
+                   !_animeMatchesSearchTokens(anime, query) ||
                    (showFuzzyOnly && !anime.fuzzy) ||
                    hiddenFormatsRanking.has(fmt) ||
                    hiddenEpRangesRanking.has(epRange(anime.episodes, fmt)) ||
@@ -16571,6 +18339,9 @@ function _ncLoad() {
     const raw = localStorage.getItem(KESSEN_KEYS.data.notifCentre(saveKey));
     _notifCentre = raw ? JSON.parse(raw) : [];
   } catch { _notifCentre = []; }
+  // v1.0.210 — surface the "What's new" entry on first boot of a new version.
+  // Runs once per session (idempotent inside the helper).
+  _checkAppUpdateNotif();
 }
 
 function _ncSave() {
@@ -16642,6 +18413,84 @@ function _ncStopSync() {
 // Add a notification. For new_anime / removed_anime, replaces any existing
 // unread entry of the same type so the count stays fresh. finish_prompt is
 // deduplicated per anime ID.
+// v1.0.210 — "What's new" notification. On boot we compare APP_VERSION with
+// the localStorage value of lastSeenAppVersion. If they differ AND the user
+// had a previous version stored (i.e. not a brand-new install), we push a
+// single notification into the bell. Tapping the action opens a small modal
+// with the bullet list below — no in-your-face welcome-style overlay,
+// fits the existing "things-that-need-attention" pattern.
+//
+// To announce a new release: bump APP_VERSION in the meta + sw.js + package
+// (already standard), then update WHATS_NEW.bullets here. Boot detection
+// handles the rest.
+const APP_VERSION = (() => {
+  try { return document.querySelector('meta[name="version"]')?.content || ''; }
+  catch { return ''; }
+})();
+
+const WHATS_NEW = {
+  title: '✨ What\'s new in Kessen',
+  bullets: [
+    'Cross-device sync — your milestones and "How you\'ve changed" timeline now follow you between phone and desktop.',
+    'Three theme modes: Dark, Light, and a new Warm option (in Manage → Appearance).',
+    'Winner Stays On — champion keeps fighting until knocked off, with a streak counter.',
+    'Tower / Settle / Trio / Blind / WSO now share consistent banners, prompts, and Mode-button highlights.',
+    'Manage tab redesigned with balanced column layout.',
+    'Last-synced timestamp on the Backup card so you can see sync is working.',
+    'Light mode is now actually usable — pastel pills, readable banners, fixed contrast across confidence badges and mode highlights.',
+    'Many small mobile readability fixes.',
+  ],
+};
+
+let _appUpdateChecked = false;
+function _checkAppUpdateNotif() {
+  if (_appUpdateChecked) return;
+  _appUpdateChecked = true;
+  if (!APP_VERSION) return;
+  let stored = '';
+  try { stored = localStorage.getItem(KESSEN_KEYS.ui.lastSeenAppVersion) || ''; }
+  catch { return; } // storage disabled — silent no-op rather than nag every boot
+  // Always update the stored version so we don't re-check on every boot.
+  try { localStorage.setItem(KESSEN_KEYS.ui.lastSeenAppVersion, APP_VERSION); }
+  catch { /* ignore */ }
+  // No previous version → brand-new device, nothing to announce.
+  if (!stored) return;
+  // Same version → no update happened, nothing to announce.
+  if (stored === APP_VERSION) return;
+  // App was updated. Push a notification.
+  _ncAdd('app_update', `🎉 Kessen has been updated to v${APP_VERSION} — tap to see what's new`, {
+    fromVersion: stored,
+    toVersion:   APP_VERSION,
+    title:       WHATS_NEW.title,
+    bullets:     WHATS_NEW.bullets,
+  });
+}
+
+// Triggered by the "View details" action button on the app_update bell entry.
+function ncActionShowWhatsNew(id) {
+  const notif = _notifCentre.find(n => n.id === id);
+  const modal = byId(IDS.whatsNewModal);
+  if (!modal) return;
+  const title    = byId(IDS.whatsNewTitle);
+  const bulletsEl = byId(IDS.whatsNewBullets);
+  const data = notif?.data || WHATS_NEW;
+  if (title)    title.textContent = data.title || WHATS_NEW.title;
+  if (bulletsEl) {
+    bulletsEl.innerHTML = (data.bullets || []).map(b => `<li>${esc(String(b))}</li>`).join('');
+  }
+  modal.style.display = 'flex';
+  // Hook Escape + browser-back close, matching the rest of the modal stack.
+  pushModalBack('whatsNew', closeWhatsNewModal);
+  // Dismiss the bell entry once the user opens the details — the "What's
+  // new" job is done; the modal itself can be re-opened from a future
+  // release's announcement if needed.
+  if (id) ncDismiss(id);
+}
+function closeWhatsNewModal() {
+  const modal = byId(IDS.whatsNewModal);
+  if (modal) modal.style.display = 'none';
+}
+
 function _ncAdd(type, msg, data = {}) {
   // removed_anime stays single-entry (replaces existing). new_anime is now
   // allowed multiple entries — _refreshListBanners clears stale ones itself
@@ -16695,7 +18544,11 @@ function _ncTimeAgo(ts) {
 }
 
 function _ncIcon(type) {
-  return type === 'finish_prompt' ? '⚡' : type === 'new_anime' ? '🆕' : type === 'removed_anime' ? '📤' : '🔔';
+  if (type === 'finish_prompt')  return '⚡';
+  if (type === 'new_anime')      return '🆕';
+  if (type === 'removed_anime')  return '📤';
+  if (type === 'app_update')     return '🎉';
+  return '🔔';
 }
 
 function _ncActionBtn(n) {
@@ -16715,6 +18568,8 @@ function _ncActionBtn(n) {
   }
   if (n.type === 'removed_anime')
     return `<button class="nc-action-btn" onclick="ncActionReviewRemoved('${n.id}')">📋 Review</button>`;
+  if (n.type === 'app_update')
+    return `<button class="nc-action-btn" onclick="ncActionShowWhatsNew('${n.id}')">📖 View details</button>`;
   return '';
 }
 
@@ -16735,6 +18590,7 @@ function ncActionAddAndTower(id) {
     const { elo } = _calcSmartElo(newAnime);
     newAnime.elo = elo;
     newAnime.eloHistory = [elo];
+    newAnime.seedElo = elo; // v1.0.211 — capture smart-seeded starting ELO
     animeList.push(newAnime);
     _pendingNewAnime = _pendingNewAnime.filter(a => a.id !== newAnime.id);
     championIdx = animeList.length - 1;
@@ -17149,6 +19005,8 @@ async function checkForNewAnimeMAL() {
             genres: m.genres || [], seasonYear: m.seasonYear || null,
             popularity: m.popularity || 0,
             elo: 1200, wins: 0, losses: 0, comparisons: 0, battles: 0,
+            // v1.0.211 — see seedElo comment in the AniList fetch path
+            seedElo: 1200,
             fuzzy: false, eloHistory: [1200],
             anilistScore: 0, malScore: userScore,
             idMal: m.idMal || null,
@@ -17451,6 +19309,7 @@ function confirmAddNewAnime() {
     const { elo } = _calcSmartElo(a);
     a.elo         = elo;
     a.eloHistory  = [elo];
+    a.seedElo     = elo; // v1.0.211 — capture starting ELO for Comeback Kid
     animeList.push(a);
   });
   _pendingNewAnime = [];
