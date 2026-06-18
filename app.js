@@ -165,6 +165,9 @@ const IDS = Object.freeze({
   searchPickerPopover:    'search-picker-popover',
   searchChips:            'search-chips',
   searchClearBtn:         'search-clear-btn',
+  sortMenuBtn:            'sort-menu-btn',
+  sortMenuCurrent:        'sort-menu-current',
+  sortMenuPopover:        'sort-menu-popover',
   sessionSummaryList:     'session-summary-list',
   sessionSummaryModal:    'session-summary-modal',
   sessionSummarySubtitle: 'session-summary-subtitle',
@@ -814,6 +817,41 @@ function _clearRankingState() {
   _cloudSyncEnabled = false;
   nextPairOverride  = null;
   matchupStats      = {};
+  // v1.0.211 — Clear mode flags + per-mode session state. Without this, a
+  // user mid-WSO / Tower / Trio / Battle-Within who Resets and re-fetches
+  // ends up in the new session with a stale champion index, trio array, or
+  // franchise restriction pointing into the OLD animeList. Most dangerously
+  // wsoWinnerIdx → an array bound that no longer exists.
+  wsoMode              = false;
+  wsoWinnerIdx         = null;
+  wsoStreak            = 0;
+  wsoFacedOrder        = [];
+  settleMode           = false;
+  blindMode            = false;
+  trioMode             = false;
+  currentTrio          = [];
+  trioOrder            = [];
+  towerMode            = false;
+  towerChampIdx        = null;
+  towerRound           = 0;
+  towerOpponents       = [];
+  towerResults         = [];
+  battleWithinFranchise = null;
+  // View-state flags that should also reset (otherwise the new session
+  // silently inherits the previous user's franchise/sort/view prefs).
+  franchiseMode        = false;
+  showFuzzyOnly        = false;
+  avoidSameFranchise   = false;
+  // Reset search chips so the new user/session isn't already filtered.
+  _searchChips = {
+    genres: new Set(), studios: new Set(), years: new Set(),
+    yearRange: null, formats: new Set(), lengths: new Set(),
+  };
+  // Reset enrichment-attempted flags so the new list's enrichment fires.
+  _enrichmentAttemptedKey = '';
+  _studioFetchAttempted   = false;
+  _legacyFilterMigrationDone = false;
+  _bumpFranchiseGroupCache();
 
   // Cancel any in-flight save debounces — they would fire against stale state.
   clearTimeout(_cloudSaveTimer);
@@ -1739,6 +1777,7 @@ async function fetchAllAnime(username, seedFromScores = false) {
               seasonYear
               popularity
               isAdult
+              studios(isMain: true) { nodes { name } }
             }
           }
         }
@@ -1811,6 +1850,11 @@ async function fetchAllAnime(username, seedFromScores = false) {
       globalScore: e.media.averageScore || 0,
       genres: e.media.genres || [],
       seasonYear: e.media.seasonYear || null,
+      // v1.0.211 — studios came along in the initial fetch (was lazy-fetched
+      // by _enrichGenresAndEras only when the Taste tab opened). Including
+      // them at import time means the Studio filter picker is instant on
+      // fresh loads instead of needing a slow background enrichment.
+      studios: (e.media.studios?.nodes || []).map(n => n.name).filter(Boolean),
       popularity: e.media.popularity || 0,
       status: e.status || 'COMPLETED',
       elo: startElo,
@@ -2493,7 +2537,14 @@ function loadState(username, source = 'anilist') {
     ? KESSEN_KEYS.session.mal(username)
     : KESSEN_KEYS.session.anilist(username);
   _saveCollision = false;
-  const raw = localStorage.getItem(saveKey);
+  // v1.0.211 fix — Safari private-mode throws SecurityError for storage
+  // access, which used to crash the entire login flow with no user message.
+  // Treat any storage exception as "no save found" so cold-start path takes
+  // over; the user can still battle, just won't persist between reloads
+  // (which is intrinsic to private mode anyway).
+  let raw = null;
+  try { raw = localStorage.getItem(saveKey); }
+  catch { return false; }
   if (!raw) return false;
   try {
     const s = JSON.parse(raw);
@@ -3530,6 +3581,20 @@ function getSortedList() {
   }
 }
 
+// v1.0.211 — Tier tooltip helper. Renders as the title attribute on tier
+// badges so hovering/long-pressing a badge surfaces what the band means
+// without needing a permanent legend in the ranking chrome.
+const _TIER_TOOLTIPS = {
+  S: 'S tier — top 10% of your rankings',
+  A: 'A tier — top 10–25% of your rankings',
+  B: 'B tier — middle 25–55%',
+  C: 'C tier — lower 55–80%',
+  D: 'D tier — bottom 20% of your rankings',
+};
+function _tierTooltip(tier) {
+  return _TIER_TOOLTIPS[tier] || `${tier} tier`;
+}
+
 function _buildRankCard(anime, i, eloRankMap, totalLen) {
   const eloRank = eloRankMap.get(anime.id) ?? i;
   const displayRank = eloRank + 1; // always show true ELO rank, regardless of current sort
@@ -3565,7 +3630,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     : anime.episodes ? `<span class="ep-badge">${anime.episodes} ep</span>` : '';
   card.innerHTML = `
     <span class="rank-number ${numClass}">#${displayRank}</span>
-    <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
+    <span class="tier-badge t-${tier.toLowerCase()}" title="${_tierTooltip(tier)}">${tier}</span>
     <img${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="${esc(displayTitle(anime))}" loading="lazy" />
     <div class="rank-title">${esc(displayTitle(anime))}</div>
     ${epBadge}
@@ -4864,6 +4929,11 @@ function showFranchiseDetail(groupName) {
   byId(IDS.modalGenres).style.display = 'none';
   byId(IDS.modalAnilistBtn).style.display = 'none';
   byId(IDS.modalUnfuzzyBtn).style.display = 'none';
+  // v1.0.211 fix — Battle Next is for a single anime; on a franchise modal
+  // it would queue a STALE anime id (whichever was last opened in a single-
+  // anime detail). Hide it here so it can't be clicked.
+  const battleNextBtn = byId(IDS.modalBattleNextBtn);
+  if (battleNextBtn) battleNextBtn.style.display = 'none';
   // v1.0.161 — fuzzy notice is per-anime; hide on franchise-level modal.
   const fuzzyNoticeEl = byId(IDS.modalFuzzyNotice);
   if (fuzzyNoticeEl) fuzzyNoticeEl.style.display = 'none';
@@ -5127,6 +5197,20 @@ function showResults() {
   switchResultsTab('rankings');
   // Check achievements on load so existing saves are retroactively credited
   setTimeout(_checkAchievements, 500);
+  // v1.0.211 — silent background enrichment for older saves that predate
+  // studios being part of the initial AniList fetch. Without this, the
+  // first click on the Studio picker shows a "Loading…" state with no
+  // explanation. Fires once per session, only if studios are actually
+  // missing, and only after the user is past the first battle so the
+  // initial paint isn't competing for AniList bandwidth.
+  setTimeout(() => {
+    if (_enrichmentAttemptedKey) return;
+    if (!animeList.some(a => !Array.isArray(a.studios))) return;
+    _enrichGenresAndEras().then(() => {
+      _enrichmentAttemptedKey = `${animeList.length}:${animeList[0]?.id || 0}:${animeList[animeList.length - 1]?.id || 0}`;
+      saveState();
+    }).catch(() => { /* silent — picker still has its own retry path */ });
+  }, 4000);
   // Start polling for new anime if logged in via either service (deferred so ranking renders first)
   if ((authToken && authUser) || (malAuthToken && malAuthUser)) setTimeout(_startNewAnimePolling, 2000);
   // Load any queued post-finish prompts (prunes stale ones, shows banner if pending)
@@ -5711,8 +5795,14 @@ function resetAll() {
       if (wasAniList) {
         const input = byId(IDS.usernameInput);
         if (input) input.value = rememberedName;
+        // v1.0.211 fix — release the cloud-save block BEFORE startLoading
+        // re-authenticates. Without this, the fresh saveState calls that
+        // follow re-fetch are silently dropped and every battle made before
+        // the next login cycle fails to sync.
+        _suppressCloudSave = false;
         startLoading();
       } else if (wasMAL) {
+        _suppressCloudSave = false;
         _startMALOAuthSession();
       } else {
         _suppressCloudSave = false; // guest — no cloud anyway
@@ -6289,12 +6379,10 @@ function recCardHtml(media, opts = {}) {
   const cover        = media.coverImage?.large || media.coverImage?.medium;
   const avg          = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
   const relationNote = _getRelationNote(media);
-  const watchedTag   = watched
-    ? '<span style="font-size:0.65rem;background:var(--border-subtle);color:var(--text-secondary);padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">✓ Watched</span>'
-    : '';
-  // Show a taste badge on seasonal cards that match the user's genres well
+  const watchedTag   = watched ? '<span class="rec-badge-watched">✓ Watched</span>' : '';
+  // Show a taste badge on cards that match the user's genres well
   const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
-    ? '<span style="font-size:0.65rem;background:#1a2d1a;color:#3fb950;border:1px solid #238636;padding:2px 6px;border-radius:8px;margin-top:2px;display:inline-block">🎯 Strong match</span>'
+    ? '<span class="rec-badge-strong-match" title="Closely matches your top-rated genres">🎯 Strong match</span>'
     : '';
   const recUrl = (_isMalCloudSession() && media.idMal)
     ? `https://myanimelist.net/anime/${media.idMal}`
@@ -10994,6 +11082,7 @@ async function fetchGuestPool() {
             averageScore
             genres
             seasonYear
+            studios(isMain: true) { nodes { name } }
           }
         }
       }
@@ -11018,6 +11107,11 @@ async function fetchGuestPool() {
       globalScore: m.averageScore || 0,
       genres: m.genres || [],
       seasonYear: m.seasonYear || null,
+      // v1.0.211 fix — guest pool now ships studios from the start so the
+      // Studio filter picker, Studio Affinity panel, and Studio Loyalty
+      // insight all work for guests. Without this every guest session
+      // triggered the 4 s silent enrichment fetch immediately.
+      studios: (m.studios?.nodes || []).map(n => n.name).filter(Boolean),
       elo: 1200, wins: 0, losses: 0, comparisons: 0,
       // v1.0.211 — seedElo is the ELO at the moment this anime entered the
       // ranked list, captured so the Comeback Kid achievement can still
@@ -11083,9 +11177,16 @@ function pickOneOpponent(keepIdx) {
   const n = animeList.length;
   // v1.0.211 — honour both pool restrictions so an exclude-replacement during
   // Battle Within stays inside the franchise pool.
+  // v1.0.211 fix — also honour avoidSameFranchise. Without this, Battle Next
+  // (which also calls into this path) could pair against a same-franchise
+  // opponent even when the user has the toggle on. Falls through to no
+  // franchise filter if zero eligible opponents remain (best-effort, same
+  // pattern as pickOpponents).
+  const keepAnime = animeList[keepIdx];
   const weights = animeList.map(a => {
     if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
     if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return 0;
+    if (avoidSameFranchise && _sameFranchise(keepAnime, a)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
   });
@@ -11106,15 +11207,36 @@ function pickOneOpponent(keepIdx) {
     return pool[Math.floor(Math.random() * pool.length)].i;
   }
 
-  // Fallback: weighted pick from anyone except keepIdx
-  let r = Math.random() * totalW;
+  // v1.0.211 — if avoidSameFranchise zeroed every weight (small franchise +
+  // strict toggle), relax that one constraint inline rather than returning
+  // the last-ditch index 0/1. excludedIds + format filter still apply.
+  let finalWeights = weights;
+  let finalTotal = totalW;
+  if (totalW === 0 && avoidSameFranchise) {
+    finalWeights = animeList.map(a => {
+      if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
+      if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return 0;
+      const base = 1 / (a.comparisons + 1);
+      return a.fuzzy ? base * 0.1 : base;
+    });
+    finalTotal = finalWeights.reduce((s, w) => s + w, 0);
+  }
+  let r = Math.random() * finalTotal;
   for (let i = 0; i < n; i++) {
     if (i === keepIdx) continue;
-    r -= weights[i];
+    r -= finalWeights[i];
     if (r <= 0) return i;
   }
   for (let i = 0; i < n; i++) {
-    if (i !== keepIdx && weights[i] > 0) return i;
+    if (i !== keepIdx && finalWeights[i] > 0) return i;
+  }
+  // v1.0.211 fix — last-ditch fallback used to return raw indices 0 or 1
+  // ignoring excludedIds and hiddenFormatsBattle. Prefer a non-excluded
+  // non-hidden opponent before resorting to "any other index".
+  for (let i = 0; i < n; i++) {
+    if (i === keepIdx) continue;
+    const a = animeList[i];
+    if (a && !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format)) return i;
   }
   return keepIdx === 0 ? 1 : 0;
 }
@@ -13275,7 +13397,16 @@ function _animeMatchesSearchTokens(a, q) {
     const haystack = (a.genres || []).map(g => g.toLowerCase());
     if (!q.genres.some(g => haystack.includes(g))) return false;
   }
-  if (q.studios.length) {
+  // v1.0.211 — exact match for chip-sourced studios, substring match for
+  // typed studio: tokens. Either bucket triggers a match if any value hits.
+  if ((q.studiosExact && q.studiosExact.length) || (q.studiosSubstr && q.studiosSubstr.length)) {
+    const haystack = (a.studios || []).map(s => s.toLowerCase());
+    const exactHit  = (q.studiosExact  || []).some(needle => haystack.includes(needle));
+    const substrHit = (q.studiosSubstr || []).some(needle => haystack.some(h => h.includes(needle)));
+    if (!exactHit && !substrHit) return false;
+  } else if (q.studios && q.studios.length) {
+    // Backward-compat path for any caller that hand-built `q` without going
+    // through `_effectiveSearchQuery` (e.g. tests). Original substring logic.
     const haystack = (a.studios || []).map(s => s.toLowerCase());
     if (!q.studios.some(needle => haystack.some(h => h.includes(needle)))) return false;
   }
@@ -13395,21 +13526,20 @@ async function openSearchPicker(category, btn) {
     _closeSearchPicker();
     return;
   }
-  // v1.0.211 — Lazy-load AniList enrichment data on demand. genres, studios
-  // and seasonYear all come from the same `_enrichGenresAndEras` call.
-  // We trigger this once per category if any anime is missing the field, but
-  // gate the result with _enrichmentAttempted so we don't keep re-fetching
-  // when AniList legitimately has no data for some entries (old OVAs,
-  // certain movies — seasonYear stays null forever, so `some(a => a.seasonYear == null)`
-  // is permanently true). The flag is keyed by list shape so a fresh import
-  // re-arms it automatically.
+  // v1.0.211 — Lazy-load AniList enrichment data on demand. Only STUDIOS
+  // actually need this — the initial AniList list fetch already includes
+  // genres and seasonYear, so triggering an enrichment call for those is
+  // wasted work that shows a "Loading…" state for no benefit. Some anime
+  // legitimately have null seasonYear / empty genres from AniList itself
+  // (old OVAs, unreleased shows) — re-fetching doesn't help.
+  //
+  // The cache key lets a fresh import (which changes list shape) re-arm
+  // the studio fetch automatically.
   const enrichmentListKey = `${animeList.length}:${animeList[0]?.id || 0}:${animeList[animeList.length - 1]?.id || 0}`;
   const alreadyAttempted  = _enrichmentAttemptedKey === enrichmentListKey;
-  const needsEnrichment = !alreadyAttempted && (
-       (category === 'studio' && animeList.some(a => !Array.isArray(a.studios)))
-    || (category === 'genre'  && animeList.some(a => !Array.isArray(a.genres)))
-    || (category === 'year'   && animeList.some(a => a.seasonYear == null))
-  );
+  const needsEnrichment = !alreadyAttempted
+    && category === 'studio'
+    && animeList.some(a => !Array.isArray(a.studios));
   if (needsEnrichment) {
     pop.dataset.category = category;
     pop.innerHTML = `<div class="search-picker-loading">⏳ Loading ${esc(category)} data…</div>`;
@@ -13454,18 +13584,26 @@ async function openSearchPicker(category, btn) {
   const rangeUI = category === 'year' ? `
     <div class="search-picker-range">
       <span>Range:</span>
-      <input type="number" id="search-year-range-from" placeholder="from" min="1900" max="2099" value="${_searchChips.yearRange?.[0] ?? ''}" />
+      <input type="number" id="search-year-range-from" placeholder="from" min="1900" max="2099" value="${_searchChips.yearRange?.[0] ?? ''}" onkeydown="if(event.key==='Enter'){event.preventDefault();_applyYearRange();}" />
       <span>–</span>
-      <input type="number" id="search-year-range-to"   placeholder="to"   min="1900" max="2099" value="${_searchChips.yearRange?.[1] ?? ''}" />
+      <input type="number" id="search-year-range-to"   placeholder="to"   min="1900" max="2099" value="${_searchChips.yearRange?.[1] ?? ''}" onkeydown="if(event.key==='Enter'){event.preventDefault();_applyYearRange();}" />
       <button type="button" class="search-picker-range-apply" onclick="_applyYearRange()">Apply</button>
       ${_searchChips.yearRange ? '<button type="button" class="search-picker-range-clear" onclick="_clearYearRange()">Clear</button>' : ''}
     </div>` : '';
+  // v1.0.211 — inline filter input for long lists. Genre + Studio commonly
+  // have 30-60+ values for users with sizeable AniList libraries; an
+  // unfiltered scroll is annoying. The filter runs client-side via the
+  // _filterPickerList helper bound to the input's oninput.
+  const filterInput = (category === 'genre' || category === 'studio') && values.length > 8
+    ? `<input type="text" class="search-picker-filter" placeholder="Filter ${category}s…" oninput="_filterPickerList(this.value)" autocomplete="off" />`
+    : '';
   pop.innerHTML = `
     <div class="search-picker-header">${esc(heading)}</div>
+    ${filterInput}
     ${rangeUI}
     <div class="search-picker-list">
       ${values.map(v => `
-        <label class="search-picker-item">
+        <label class="search-picker-item" data-pick-label="${esc(v.label.toLowerCase())}">
           <input type="checkbox" ${isChecked(v.value) ? 'checked' : ''}
                  onchange="_toggleSearchChip('${category}', this.value, this.checked)"
                  value="${esc(v.value)}" />
@@ -13510,6 +13648,18 @@ function _closeSearchPicker() {
   const pop = byId(IDS.searchPickerPopover);
   if (pop) pop.setAttribute('hidden', '');
   document.querySelectorAll('.search-pick-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+}
+
+// v1.0.211 — Filter the open picker's list in-place by substring against
+// each item's label. No re-render; just toggles display on the labels.
+function _filterPickerList(query) {
+  const pop = byId(IDS.searchPickerPopover);
+  if (!pop) return;
+  const q = (query || '').toLowerCase().trim();
+  pop.querySelectorAll('.search-picker-item').forEach(item => {
+    const label = item.dataset.pickLabel || '';
+    item.style.display = (!q || label.includes(q)) ? '' : 'none';
+  });
 }
 
 function _toggleSearchChip(category, value, on) {
@@ -13574,25 +13724,78 @@ function _renderSearchChips() {
   };
   const pillIcon = { genre: '🎭', studio: '🎬', year: '📅', format: '📺', length: '📏', yearRange: '📅' };
   const lengthLabel = (v) => (_SEARCH_LENGTH_BUCKETS.find(b => b.value === v)?.label) || v;
-  for (const v of _searchChips.genres)  chips.push({ category: 'genre',  raw: v, label: labelFor('genre',  v) });
-  for (const v of _searchChips.studios) chips.push({ category: 'studio', raw: v, label: labelFor('studio', v) });
-  for (const v of _searchChips.years)   chips.push({ category: 'year',   raw: String(v), label: String(v) });
-  for (const v of _searchChips.formats) chips.push({ category: 'format', raw: v, label: labelFor('format', v) });
-  for (const v of _searchChips.lengths) chips.push({ category: 'length', raw: v, label: lengthLabel(v) });
+  // v1.0.211 — group chips by category so we can render OR between same-
+  // category chips and AND between different categories. The picker logic
+  // is "values within a category OR, values across categories AND", but
+  // that was previously invisible. Now the user can read it directly.
+  const grouped = {
+    genre:  [...(_searchChips.genres  || new Set())].map(v => ({ category: 'genre',  raw: v, label: labelFor('genre', v) })),
+    studio: [...(_searchChips.studios || new Set())].map(v => ({ category: 'studio', raw: v, label: labelFor('studio', v) })),
+    year:   [...(_searchChips.years   || new Set())].map(v => ({ category: 'year',   raw: String(v), label: String(v) })),
+    format: [...(_searchChips.formats || new Set())].map(v => ({ category: 'format', raw: v, label: labelFor('format', v) })),
+    length: [...(_searchChips.lengths || new Set())].map(v => ({ category: 'length', raw: v, label: lengthLabel(v) })),
+  };
   if (_searchChips.yearRange) {
     const [lo, hi] = _searchChips.yearRange;
-    chips.push({ category: 'yearRange', raw: 'range', label: `${lo}–${hi}` });
+    // Treat yearRange as part of the year group so it sits next to year chips.
+    grouped.year.push({ category: 'yearRange', raw: 'range', label: `${lo}–${hi}` });
   }
-  wrap.innerHTML = chips.map(c => `
+  // v1.0.211 fix — read the chip's raw value from data attributes instead
+  // of inlining it into an onclick. Inlining with esc() converted `'` →
+  // `&#39;`, but the Set key was the original `'` — so studios / genres
+  // with apostrophes (e.g. "Doutonbori's") silently failed to remove.
+  // The delegated handler at the end of this function reads data-* directly.
+  const renderChip = (c) => `
     <span class="search-chip" data-category="${c.category}" data-value="${esc(c.raw)}">
       <span class="search-chip-icon" aria-hidden="true">${pillIcon[c.category] || '·'}</span>
       <span class="search-chip-label">${esc(c.label)}</span>
-      <button type="button" class="search-chip-remove" aria-label="Remove filter" onclick="_removeSearchChip('${c.category}', '${esc(c.raw)}')">×</button>
-    </span>
-  `).join('');
-  const anyChip = chips.length > 0;
+      <button type="button" class="search-chip-remove" aria-label="Remove filter" data-chip-remove="1">×</button>
+    </span>`;
+  // Order categories visually in a predictable left-to-right reading order.
+  const categoryOrder = ['genre', 'studio', 'year', 'format', 'length'];
+  const groupBlocks = [];
+  for (const cat of categoryOrder) {
+    const items = grouped[cat];
+    if (!items.length) continue;
+    // Same-category chips get "or" between them. Single chips render naked.
+    const inner = items.map((c, i) => i === 0
+      ? renderChip(c)
+      : `<span class="search-chip-conj">or</span>${renderChip(c)}`
+    ).join('');
+    groupBlocks.push(`<span class="search-chip-group">${inner}</span>`);
+  }
+  // Different categories AND'd together — render a subtle "and" between blocks.
+  const totalChips = Object.values(grouped).reduce((s, arr) => s + arr.length, 0);
+  wrap.innerHTML = groupBlocks.join('<span class="search-chip-conj search-chip-conj-and">and</span>');
+  const anyChip = totalChips > 0;
   if (anyChip) wrap.removeAttribute('hidden'); else wrap.setAttribute('hidden', '');
   if (clearBtn) clearBtn.style.display = anyChip ? '' : 'none';
+  // v1.0.211 — One-time toast the first time a user sees an OR or AND
+  // connector. Without it, the floating "or"/"and" pills between chips
+  // read as typos. Stored under `kessen.ui.chipLogicSeen`.
+  if (anyChip) {
+    const hasOr  = wrap.querySelector('.search-chip-conj-and') ||
+                   document.querySelectorAll('.search-chip-conj').length > document.querySelectorAll('.search-chip-conj-and').length;
+    try {
+      if (hasOr && !localStorage.getItem('kessen.ui.chipLogicSeen')) {
+        showToast('Tip: chips in the same category match with OR, chips across categories match with AND.', 6000);
+        localStorage.setItem('kessen.ui.chipLogicSeen', '1');
+      }
+    } catch { /* storage disabled — silent */ }
+  }
+  // v1.0.211 fix — delegated remove handler. Reads data-* off the parent
+  // .search-chip element so apostrophes / quotes in the raw value survive
+  // round-tripping. Re-binding on every render is fine (small DOM) and
+  // matches the rest of the chip rendering's idempotent style.
+  wrap.onclick = (ev) => {
+    const btn = ev.target?.closest('[data-chip-remove="1"]');
+    if (!btn) return;
+    const chip = btn.closest('.search-chip');
+    if (!chip) return;
+    const category = chip.dataset.category;
+    const raw      = chip.dataset.value;
+    _removeSearchChip(category, raw);
+  };
 }
 
 function _removeSearchChip(category, value) {
@@ -13626,15 +13829,25 @@ function clearSearchChips() {
 // keys still AND. Year range from chips takes precedence over a typed
 // year range (chip UI is the more discoverable surface).
 function _effectiveSearchQuery(parsed) {
+  // v1.0.211 — split studio matching into exact (chip-sourced) vs substring
+  // (typed-token-sourced). The picker stores the canonicalised full studio
+  // name; that should match the exact value, not a substring (so chipping
+  // "TMS" doesn't sweep up everything containing "tms"). Typed
+  // `studio:bones` deliberately stays as substring so users can type
+  // partial names like "ghi" for "Ghibli".
   const out = {
     text: parsed.text,
     genres:  [...new Set([...parsed.genres,  ..._searchChips.genres])],
-    studios: [...new Set([...parsed.studios, ..._searchChips.studios])],
+    studiosExact:  [..._searchChips.studios],
+    studiosSubstr: [...parsed.studios],
     formats: [...new Set([...parsed.formats, ..._searchChips.formats])],
     years:   [...new Set([...parsed.years,   ..._searchChips.years])],
     lengths: [...new Set([...(parsed.lengths || []), ..._searchChips.lengths])],
     yearRange: _searchChips.yearRange || parsed.yearRange,
   };
+  // Legacy alias so any caller still reading `q.studios` continues to work
+  // (substring semantics — used in `_filterFranchise` text-search fallback).
+  out.studios = [...new Set([...out.studiosExact, ...out.studiosSubstr])];
   return out;
 }
 
@@ -13994,6 +14207,11 @@ function toggleStudioAnimePanel(panelId, studioName) {
 // Silently fetch genres + seasonYear + studios for existing anime that predate
 // those fields. Used by the Stats tab; the Taste Profile tab further extends
 // this via _enrichTasteMetadata() to also pull tags + source.
+// v1.0.211 fix — Bump the franchise group cache after enrichment so the
+// authoritative grouper sees the freshly-loaded `relations` data. Without
+// this, `_sameFranchise`, Rivalries, Tower down-weight, and Avoid-Same-
+// Franchise all read the relations-less map until the next list-shape
+// change (which can be never within a session).
 async function _enrichGenresAndEras(onProgress) {
   const ids = animeList.map(a => a.id);
   const PAGE_SIZE = 50;
@@ -14054,6 +14272,10 @@ async function _enrichGenresAndEras(onProgress) {
     }
     if (i + PAGE_SIZE < ids.length) await new Promise(r => setTimeout(r, 350));
   }
+  // v1.0.211 fix — relations data just landed for many anime; invalidate the
+  // franchise group cache so _getFranchiseIdMap (used by _sameFranchise,
+  // Rivalries, Tower down-weight, Avoid-Same-Franchise) sees the new edges.
+  _bumpFranchiseGroupCache();
   saveState();
 }
 
@@ -15177,27 +15399,74 @@ function toggleLanguage() {
 const _sortToTh = { elo: 'th-elo', title: 'th-title', winrate: 'th-wr', battles: 'th-bt', score: 'th-sc', tier: 'th-tier', confidence: 'th-conf' };
 
 function _syncSortUI() {
-  // Update sort buttons
-  document.querySelectorAll('.sort-btn').forEach(b => {
-    const active = b.dataset.sort === currentSort;
-    b.classList.toggle('active', active);
-    const label = b.dataset.label || b.textContent.replace(/ [↑↓]$/, '');
-    // For asc-first sorts (title/tier/confidence), flip the arrow so ↓ always
-    // means "natural/default direction" and ↑ means reversed — consistent with ELO.
-    const ascFirst = _ascFirstSorts.has(currentSort);
-    const showUp = ascFirst ? !sortAsc : sortAsc;
-    b.textContent = active ? `${label} ${showUp ? '↑' : '↓'}` : label;
+  const ascFirst = _ascFirstSorts.has(currentSort);
+  const showUp = ascFirst ? !sortAsc : sortAsc;
+  document.querySelectorAll('.sort-menu-item').forEach(item => {
+    const active = item.dataset.sort === currentSort;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-checked', active ? 'true' : 'false');
+    const label = item.dataset.label || item.textContent;
+    item.textContent = active ? `${label} ${showUp ? '↑' : '↓'}` : label;
   });
+  // Update the dropdown trigger label
+  const currentEl = byId(IDS.sortMenuCurrent);
+  if (currentEl) {
+    const activeItem = document.querySelector(`.sort-menu-item[data-sort="${currentSort}"]`);
+    const label = activeItem?.dataset?.label || currentSort;
+    currentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
+  }
   // Update table headers
   document.querySelectorAll('#ranking-table thead th[id]').forEach(th => {
     const isActive = th.id === (_sortToTh[currentSort] || '');
     th.classList.toggle('sorted', isActive);
-    // Strip any existing arrow then add current one
     const base = th.textContent.replace(/ [▾▴]$/, '');
-    const ascFirst = _ascFirstSorts.has(currentSort);
-    const showUp = ascFirst ? !sortAsc : sortAsc;
     th.textContent = isActive ? `${base} ${showUp ? '▴' : '▾'}` : base;
   });
+}
+
+// v1.0.211 — Sort dropdown handlers. The Rankings sort row used to be 7
+// always-visible buttons (plus 2 conditional franchise sorts on a sub-row);
+// they now live behind one "Sort: ELO ↓ ▾" dropdown so the right-side
+// Fuzzy / Franchise / view toggles get breathing room and the page chrome
+// shrinks by a full row on narrow viewports.
+function toggleSortMenu(event) {
+  event?.stopPropagation();
+  const pop = byId(IDS.sortMenuPopover);
+  const btn = byId(IDS.sortMenuBtn);
+  if (!pop || !btn) return;
+  const open = pop.hasAttribute('hidden');
+  if (open) {
+    pop.removeAttribute('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+    const closer = (e) => {
+      if (pop.contains(e.target) || btn.contains(e.target)) return;
+      _closeSortMenu();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    const escCloser = (e) => {
+      if (e.key !== 'Escape') return;
+      _closeSortMenu();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    setTimeout(() => {
+      document.addEventListener('click', closer, true);
+      document.addEventListener('keydown', escCloser);
+    }, 0);
+  } else {
+    _closeSortMenu();
+  }
+}
+function _closeSortMenu() {
+  const pop = byId(IDS.sortMenuPopover);
+  const btn = byId(IDS.sortMenuBtn);
+  if (pop) pop.setAttribute('hidden', '');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function setSortFromMenu(type) {
+  _closeSortMenu();
+  setSort(type);
 }
 
 // Sort types where ascending is the natural first direction
@@ -15896,11 +16165,11 @@ function setMode(name) {
     btn.classList.toggle('active-wso',    wsoMode);
     btn.classList.remove('active-tower');
     btn.textContent =
-      settleMode ? '🎯 Mode: Settle' :
-      blindMode  ? '🙈 Mode: Blind'  :
-      trioMode   ? '🎲 Mode: Trio'   :
-      wsoMode    ? '🔥 Mode: Winner Stays' :
-                   '⚙ Mode';
+      settleMode ? '🎯 Mode: Settle ▾' :
+      blindMode  ? '🙈 Mode: Blind ▾'  :
+      trioMode   ? '🎲 Mode: Trio ▾'   :
+      wsoMode    ? '🔥 Mode: Winner Stays ▾' :
+                   '⚙ Mode ▾';
   }
 
   // Banners (mutually exclusive)
@@ -17096,7 +17365,7 @@ function pickWinnerTower(side) {
 function finishTower() {
   towerMode = false;
   const modeBtn = byId(IDS.modeBtn);
-  if (modeBtn) { modeBtn.classList.remove('active-tower'); modeBtn.textContent = '⚙ Mode'; }
+  if (modeBtn) { modeBtn.classList.remove('active-tower'); modeBtn.textContent = '⚙ Mode ▾'; }
   _setFilterBtnTowerLock(false); // v1.0.209
   byId(IDS.towerProgressWrap).style.display = 'none';
   byId(IDS.towerStatus).style.display = 'none';
@@ -18475,15 +18744,18 @@ const APP_VERSION = (() => {
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    'Franchise pack — Battle Within Franchise (settle "which Re:Zero season is best?"), Bulk Exclude, Avoid Same Franchise filter, plus Tower now down-weights same-franchise opponents.',
-    'Battle Within auto-stops once every pair in the franchise has been battled — no more endless repeats after you\'ve settled the order.',
-    'Rankings filter picker — five chip categories (Genre, Studio, Year, Format, Length) with live counts. Replaces the old format and length rows so the filter model is consistent everywhere.',
+    'New franchise tools — Battle Within Franchise (settle "which AoT season is best?") with auto-stop once every pair has been battled, Bulk Exclude, Avoid Same Franchise filter, and a softer Tower down-weight for same-franchise opponents.',
+    'Rankings filter picker — five chip categories (Genre, Studio, Year, Format, Length) with live counts. Replaces the old format and length button rows with a single consistent model.',
+    'Smarter chip logic — values inside the same category match with OR, values across categories match with AND. The pills now render with "or" / "and" between them so the boolean logic is visible.',
     '⚔ Battle Next chip on the anime detail modal — queues the open anime as one half of your next battle in one tap.',
-    'Rivalries now use the same franchise grouper as Rankings (so Pokémon spin-offs merge), and the threshold tightened so 19-1 stomps no longer show up as "rivalries".',
-    '🎯 Strong match badges now appear on every Discover section (For You, Genre Dive, Hidden Gems, Mood) — not just Seasonal.',
-    'Achievement system rebuild — Hot Streak / Top Dog / Comeback Kid bugs fixed, plus four overlapping count-based achievements replaced with All-Stars, Loyalist, Tastemaker, and Era Curator.',
+    'Sort dropdown replacing the row of 7 sort buttons. Franchise-only sorts live inside the same dropdown.',
+    'Inline filter search inside Genre / Studio popovers, and Year range supports Enter-to-apply.',
+    '🎯 Strong match badges now show up across every Discover section (For You, Genre Dive, Hidden Gems, Mood) — not just Seasonal.',
+    'Rivalries uses the same franchise grouper as Rankings (so Pokémon spin-offs merge), and the threshold tightened so 19-1 stomps no longer show up as "rivalries".',
+    'Achievement system rebuild — Hot Streak / Top Dog / Comeback Kid bugs fixed, plus four overlapping achievements replaced with All-Stars, Loyalist, Tastemaker, and Era Curator.',
     'Reset Everything now actually wipes the cloud copy too (it was silently restoring from cloud before).',
-    'Visual polish across every card surface — unified hover language, list-mode column stability, franchise modal "← Back" button.',
+    'Studios load with your initial AniList list now, so the Studio picker is instant. Older saves get a silent background top-up.',
+    'Polished card layouts, tier badges now explain themselves on hover, and a "See what\'s new" link lives inside the Help modal so you can re-read these notes any time.',
   ],
 };
 
@@ -18509,6 +18781,16 @@ function _checkAppUpdateNotif() {
     title:       WHATS_NEW.title,
     bullets:     WHATS_NEW.bullets,
   });
+}
+
+// v1.0.211 — Manually open the "What's new" modal from places other than the
+// bell entry (e.g. the Help modal link). Always uses the latest WHATS_NEW
+// constant rather than reading from a notif's stored data, since the user
+// may want to re-read the current release's notes after dismissing the bell.
+function openWhatsNewModal() {
+  // Close the Help modal if it's open so the dialog stack doesn't pile up.
+  if (byId(IDS.helpModal)?.style.display === 'flex') closeHelp();
+  ncActionShowWhatsNew(null);
 }
 
 // Triggered by the "View details" action button on the app_update bell entry.

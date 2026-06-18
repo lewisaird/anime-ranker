@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.211" />
+  <meta name="version" content="1.0.212" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -676,7 +676,7 @@
         <p class="login-card-heading">🔵 AniList</p>
 
         <!-- OAuth login (hidden when logged in) -->
-        <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Login with AniList</button>
+        <button class="btn-anilist-login" id="auth-login-btn" onclick="startOAuthFlow()">🔐 Log in with AniList</button>
         <p style="font-size:0.72rem;color:#8b949e;margin:-4px 0 0;text-align:center" id="anilist-new-hint">New? <a href="https://anilist.co/register" target="_blank" rel="noopener" style="color:#58a6ff">Create a free AniList account ↗</a></p>
         <p id="auth-error-msg" style="font-size:0.8rem;color:#f85149;margin:0"></p>
 
@@ -897,7 +897,7 @@
       <button class="btn-secondary" id="skip-btn" onclick="skipBattle()">⏭ Skip</button>
       <button class="btn-secondary" onclick="showResults()">📊 Rankings</button>
       <div class="mode-control">
-        <button class="btn-secondary" id="mode-btn" onclick="toggleModeMenu(event)" aria-haspopup="menu" aria-expanded="false" title="Choose battle mode">⚙ Mode</button>
+        <button class="btn-secondary" id="mode-btn" onclick="toggleModeMenu(event)" aria-haspopup="menu" aria-expanded="false" title="Choose battle mode">⚙ Mode ▾</button>
         <div id="mode-popover" role="menu" aria-labelledby="mode-btn">
           <button type="button" role="menuitemradio" data-mode="normal" onclick="setMode('normal')" aria-checked="true">
             <span class="mode-icon" aria-hidden="true">⚙</span>
@@ -927,7 +927,7 @@
         </div>
       </div>
       <div class="mode-control">
-        <button class="btn-secondary" id="filter-btn" onclick="toggleFilterMenu(event)" aria-haspopup="menu" aria-expanded="false" title="Filter formats from battle pool">≡ Filter</button>
+        <button class="btn-secondary" id="filter-btn" onclick="toggleFilterMenu(event)" aria-haspopup="menu" aria-expanded="false" title="Filter formats from battle pool">≡ Filter ▾</button>
         <div id="filter-popover" role="menu" aria-labelledby="filter-btn">
           <div class="filter-popover-title">Battle pool formats</div>
           <div class="filter-format-grid">
@@ -1024,14 +1024,32 @@
         <div id="search-picker-popover" class="search-picker-popover" hidden></div>
       </div>
       <div id="search-chips" class="search-chips" hidden></div>
+      <!-- v1.0.211 — Sort row decluttered. The 7 standard sort options +
+           2 conditional franchise sorts collapsed into a single dropdown so
+           the right-side toggles (Fuzzy / Franchise / view) get breathing
+           room on narrow viewports. Dropdown options are listed in the
+           popover; the franchise-only ones gate on body.franchise-mode-on. -->
       <div class="list-controls">
-        <button class="sort-btn active" data-sort="elo"     data-label="ELO"        onclick="setSort('elo')">ELO ↓</button>
-        <button class="sort-btn"        data-sort="title"   data-label="Title"      onclick="setSort('title')">Title</button>
-        <button class="sort-btn"        data-sort="winrate" data-label="Win Rate"   onclick="setSort('winrate')">Win Rate</button>
-        <button class="sort-btn"        data-sort="battles" data-label="Battles"    onclick="setSort('battles')">Battles</button>
-        <button class="sort-btn"        data-sort="score"      data-label="AniList Avg"  onclick="setSort('score')">AniList Avg</button>
-        <button class="sort-btn"        data-sort="tier"       data-label="Tier"         onclick="setSort('tier')">Tier</button>
-        <button class="sort-btn"        data-sort="confidence" data-label="Confidence"   onclick="setSort('confidence')">Confidence</button>
+        <div class="sort-menu-wrap">
+          <button type="button" class="sort-menu-btn" id="sort-menu-btn"
+                  onclick="toggleSortMenu(event)" aria-haspopup="menu" aria-expanded="false">
+            <span class="sort-menu-label-prefix">Sort:</span>
+            <span class="sort-menu-label" id="sort-menu-current">ELO ↓</span>
+            <span class="sort-menu-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div id="sort-menu-popover" class="sort-menu-popover" hidden role="menu">
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="elo"        data-label="ELO"          onclick="setSortFromMenu('elo')">ELO</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="title"      data-label="Title"        onclick="setSortFromMenu('title')">Title</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="winrate"    data-label="Win Rate"     onclick="setSortFromMenu('winrate')">Win Rate</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="battles"    data-label="Battles"      onclick="setSortFromMenu('battles')">Battles</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="score"      data-label="AniList Avg"  onclick="setSortFromMenu('score')">AniList Avg</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="tier"       data-label="Tier"         onclick="setSortFromMenu('tier')">Tier</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="confidence" data-label="Confidence"   onclick="setSortFromMenu('confidence')">Confidence</button>
+            <div class="sort-menu-franchise-divider" aria-hidden="true">⛓ Franchise sorts</div>
+            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="peak"    data-label="Top ELO"      onclick="setSortFromMenu('peak')">★ Top ELO</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="members" data-label="Member count" onclick="setSortFromMenu('members')">Members</button>
+          </div>
+        </div>
         <div id="ranking-controls-right">
           <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">〰️ Fuzzy only</button>
           <button class="view-btn" id="franchise-btn" onclick="toggleFranchiseMode()" title="Group sequels and seasons together" aria-pressed="false">⛓ Franchise</button>
@@ -1040,15 +1058,6 @@
             <button class="view-btn"        id="view-list-btn" onclick="setRankingView('list')" title="List view" aria-label="List view" aria-pressed="false">☰</button>
           </div>
         </div>
-      </div>
-      <!-- v1.0.211 — Franchise-only sort sub-row. Hidden by default; shown
-           only when body.franchise-mode-on so the franchise-specific sort
-           options live in their own clearly-labelled space instead of
-           cluttering the main sort row. -->
-      <div class="franchise-sort-row">
-        <span class="franchise-sort-label">⛓ Franchise sorts:</span>
-        <button class="sort-btn franchise-only" data-sort="peak"    data-label="Top ELO"      onclick="setSort('peak')">★ Top ELO</button>
-        <button class="sort-btn franchise-only" data-sort="members" data-label="Member count" onclick="setSort('members')">Members</button>
       </div>
       <div class="ranking-list" id="ranking-list"></div>
       <div id="ranking-table-wrap" style="display:none">
@@ -1523,7 +1532,7 @@
     <div class="help-modal-box">
       <button class="modal-close" onclick="closeHelp()" aria-label="Close">✕</button>
       <h3 id="help-modal-title">How It Works</h3>
-      <p>A quick guide to every feature.</p>
+      <p>A quick guide to every feature. <button type="button" class="help-whats-new-link" onclick="openWhatsNewModal()">✨ See what's new in this version</button></p>
             <div class="help-sections">
 
         <div class="help-section">

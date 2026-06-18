@@ -999,6 +999,29 @@
     }
     .help-modal-box h3 { font-size: 1.1rem; color: var(--text-bright); margin-bottom: 4px; }
     .help-modal-box > p { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 16px; }
+
+    /* v1.0.211 — inline "What's new" link inside the Help modal intro line.
+       Styled as a borderless button so it reads as text but stays an
+       accessible button. Replaces the need for users to wait for the
+       version-change boot detection to see release notes. */
+    .help-whats-new-link {
+      background: none;
+      border: none;
+      color: var(--accent-blue);
+      padding: 0;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      margin-left: 6px;
+    }
+    .help-whats-new-link:hover { color: var(--accent-blue-dark); }
+    .help-whats-new-link:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
     .help-sections {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1975,13 +1998,17 @@
       flex-wrap: wrap;
     }
     .search-picker-range input {
-      width: 64px;
+      width: 84px;
       background: var(--bg-primary);
       border: 1px solid var(--border-default);
       color: var(--text-bright);
-      padding: 4px 6px;
+      padding: 5px 8px;
       border-radius: 6px;
-      font-size: 0.82rem;
+      font-size: 0.85rem;
+    }
+    .search-picker-range input:focus {
+      outline: none;
+      border-color: var(--accent-blue);
     }
     .search-picker-range-apply,
     .search-picker-range-clear {
@@ -1997,6 +2024,21 @@
       background: transparent;
       color: var(--accent-amber);
       border: 1px solid var(--accent-amber);
+    }
+    .search-picker-filter {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-default);
+      color: var(--text-bright);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+    }
+    .search-picker-filter:focus {
+      outline: none;
+      border-color: var(--accent-blue);
     }
     .search-picker-list {
       overflow-y: auto;
@@ -2069,6 +2111,27 @@
     .search-chip-remove:hover {
       background: rgba(248, 81, 73, 0.18);
       color: var(--accent-red);
+    }
+    /* v1.0.211 — OR / AND connectors between chips so users can read the
+       boolean logic at a glance. Same category = OR, across categories = AND. */
+    .search-chip-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .search-chip-conj {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+      padding: 0 2px;
+      user-select: none;
+    }
+    .search-chip-conj-and {
+      color: var(--accent-blue);
+      opacity: 0.75;
+      padding: 0 4px;
     }
 
     /* v1.0.211 — Empty-state banner was removed entirely; the picker row's
@@ -2710,6 +2773,98 @@
       border-top: 1px solid var(--border-subtle);
       margin-top: 4px;
     }
+
+    /* v1.0.211 — Sort dropdown that replaced the row of 7 sort buttons.
+       Single trigger + popover menu — the franchise-only options inside
+       gate on body.franchise-mode-on. */
+    .sort-menu-wrap { position: relative; }
+    .sort-menu-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      color: var(--text-bright);
+      padding: 6px 12px 6px 14px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .sort-menu-btn:hover,
+    .sort-menu-btn[aria-expanded="true"] {
+      border-color: var(--accent-blue);
+      background: rgba(88, 166, 255, 0.08);
+    }
+    .sort-menu-label-prefix {
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+    }
+    .sort-menu-label {
+      font-weight: 600;
+      color: var(--accent-blue);
+    }
+    .sort-menu-chevron {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      margin-left: 2px;
+    }
+    .sort-menu-popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      min-width: 180px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 10px;
+      padding: 6px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.40);
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .sort-menu-popover[hidden] { display: none; }
+    .sort-menu-item {
+      background: transparent;
+      border: none;
+      color: var(--text-bright);
+      text-align: left;
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .sort-menu-item:hover {
+      background: rgba(88, 166, 255, 0.10);
+      color: var(--accent-blue);
+    }
+    .sort-menu-item.active {
+      background: var(--hover-blue-bg);
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+    .sort-menu-franchise-divider {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+      padding: 8px 12px 2px;
+      border-top: 1px solid var(--border-subtle);
+      margin-top: 4px;
+    }
+    /* Franchise-only items mirror the existing .franchise-only behaviour:
+       hidden by default, revealed when body.franchise-mode-on is set. The
+       divider also follows so the section header doesn't dangle on its own. */
+    .sort-menu-item.franchise-only,
+    .sort-menu-franchise-divider {
+      display: none;
+    }
+    body.franchise-mode-on .sort-menu-item.franchise-only,
+    body.franchise-mode-on .sort-menu-franchise-divider {
+      display: block;
+    }
     .sort-btn {
       background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
       font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer;
@@ -2736,32 +2891,9 @@
        users can see at a glance "these sorts only matter when grouped".
        Buttons inside use the standard .sort-btn style — no extra tint needed,
        the row itself does the visual grouping. */
-    .franchise-sort-row { display: none; }
-    body.franchise-mode-on .franchise-sort-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: -4px; /* tuck just under the main sort row */
-      margin-bottom: 10px;
-      padding: 8px 12px;
-      border-left: 3px solid var(--accent-blue);
-      background: rgba(56,139,253,0.05);
-      border-radius: 0 6px 6px 0;
-      flex-wrap: wrap;
-    }
-    .franchise-sort-label {
-      font-size: 0.7rem;
-      color: var(--accent-blue);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin-right: 8px;
-    }
-    body.light-mode .franchise-sort-row {
-      background: #f0f6ff;
-      border-left-color: #0969da;
-    }
-    body.light-mode .franchise-sort-label { color: #0969da; }
+    /* v1.0.211 — .franchise-sort-row and .franchise-sort-label CSS removed.
+       The HTML row was replaced by franchise-only options inside the sort
+       dropdown popover (.sort-menu-item.franchise-only). */
     #ranking-controls-right {
       display: flex; align-items: center; gap: 6px; margin-left: auto;
     }
@@ -3884,6 +4016,34 @@
       color: var(--accent-blue);
       margin-top: 3px;
     }
+    /* v1.0.211 — Strong match + Watched badges. Moved out of inline
+       app.js styles so light mode actually overrides them. The dark hex
+       previously hard-coded (#1a2d1a / #3fb950 / #238636) showed dark
+       green on a white card in light mode. */
+    .rec-badge-strong-match {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 8px;
+      margin-top: 2px;
+      background: rgba(63, 185, 80, 0.12);
+      color: var(--accent-green);
+      border: 1px solid rgba(63, 185, 80, 0.35);
+    }
+    body.light-mode .rec-badge-strong-match {
+      background: rgba(46, 160, 67, 0.10);
+      color: #1a7f37;
+      border-color: rgba(46, 160, 67, 0.40);
+    }
+    .rec-badge-watched {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 8px;
+      margin-top: 2px;
+      background: var(--border-subtle);
+      color: var(--text-secondary);
+    }
 
     .rec-relation-note {
       font-size: 0.68rem;
@@ -4726,25 +4886,9 @@
       #search-wrap input { width: 100%; box-sizing: border-box; }
       #search-wrap { width: 100%; }
 
-      /* Collapsible filters toggle — shown only on mobile */
-      .mobile-filter-toggle {
-        display: flex !important;
-        align-items: center;
-        gap: 6px;
-        background: var(--border-subtle);
-        border: 1px solid var(--border-default);
-        color: var(--text-secondary);
-        font-size: 0.78rem;
-        padding: 5px 12px;
-        border-radius: 6px;
-        cursor: pointer;
-        margin-bottom: 8px;
-        width: 100%;
-        justify-content: center;
-      }
-      .mobile-filter-toggle.active { border-color: var(--accent-blue); color: var(--accent-blue); }
-      #collapsible-filters { display: none; }
-      #collapsible-filters.open { display: block; }
+      /* v1.0.211 — .mobile-filter-toggle and #collapsible-filters removed
+         when the format/length button rows were folded into the chip picker.
+         The picker is the sole filter surface on mobile and desktop now. */
 
       /* Format/length rows — horizontal scroll on mobile */
       .format-row {
