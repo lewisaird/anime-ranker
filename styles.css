@@ -3760,38 +3760,31 @@
     .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 90px; }   /* AniList Avg */
     .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 56px; }   /* Tier */
     .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 130px; }  /* Confidence */
-    /* v1.0.213 — Mobile list view rewrite. v1.0.212 hid only the rightmost
-       three columns and tried to give title a min-width, but `table-layout:
-       fixed` ignores min-width on auto-sized columns — title still collapsed
-       to ~20-30px on iPhones because the remaining auto width was tiny after
-       cover + # + ELO + Win Rate + Battles. Result: the screen showed "F..."
-       / "A..." with no readable titles.
-       New approach:
-         · Hide the cover-thumbnail column entirely on mobile (purely
-           decorative in list view — the user already tapped Rankings, the
-           title is what they need).
-         · Switch the table to `table-layout: auto` on mobile so title takes
-           all remaining width naturally.
-         · Tighter padding so the four numeric columns still fit. */
+    /* v1.0.214 — Mobile list view: keep ALL columns + covers, just let the
+       table be wider than the viewport so users can swipe horizontally to
+       see everything. v1.0.213 hid the cover column and three rightmost
+       numeric columns — that removed the visual ID (covers) and the
+       ability to scroll to AniList Avg / Tier / Confidence. The wrap
+       (#ranking-table-wrap) already has `overflow-x: auto`, so all we need
+       is `table-layout: auto` + explicit widths that make the leftmost
+       visible columns (#, cover, title, ELO) usable without scrolling.
+       Title gets a sensible min-width so it can ellipsise gracefully and
+       the rest of the columns are reachable via the natural horizontal
+       swipe gesture. */
     @media (max-width: 640px) {
-      .ranking-table { table-layout: auto; }
-      .ranking-table th:nth-child(2), .ranking-table td:nth-child(2),
-      .ranking-table th:nth-child(7), .ranking-table td:nth-child(7),
-      .ranking-table th:nth-child(8), .ranking-table td:nth-child(8),
-      .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) {
-        display: none;
-      }
+      .ranking-table { table-layout: auto; min-width: 660px; }
       .ranking-table th:nth-child(3), .ranking-table td:nth-child(3) {
-        width: auto;
+        min-width: 160px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 1px; /* trick — paired with width:auto forces ellipsis */
       }
       .ranking-table th, .ranking-table td { padding: 7px 6px; font-size: 0.78rem; }
-      .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 56px; }
-      .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 56px; }
-      .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 50px; }
+      .ranking-table th:nth-child(2), .ranking-table td:nth-child(2) { width: 40px; }
+      .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 60px; }
+      .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 70px; }
+      .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 60px; }
+      .tbl-cover { width: 32px; height: 46px; }
     }
     .ranking-table th {
       text-align: left; padding: 8px 10px;
@@ -4976,35 +4969,30 @@
       #ranking-controls-right { flex-shrink: 0; gap: 4px; }
       #view-toggle-wrap { flex-shrink: 0; }
 
-      /* v1.0.213 — Mobile Rankings polish. The screenshot review showed the
-         controls area as fragmented strips (Filters label + 5 chips wrapping
-         to two rows, then a near-empty Sort row, then a separate right-
-         aligned view-toggle row). These rules tighten everything into one
-         visual block:
-           · Filter row: hide the "FILTERS:" label (the chip icons already
-             carry meaning), shrink chip padding so all 5 fit in one wrap.
-           · Sort row: drop the "Sort:" / "Franchise sort:" word prefixes
-             (the dropdown text already says "ELO ↓") and squeeze padding
-             so both dropdowns + Fuzzy + Franchise + view toggle live on a
-             single row when possible. */
-      .search-picker-label { display: none; }
-      .search-pick-btn { font-size: 0.74rem; padding: 5px 10px; }
-      .sort-menu-btn { font-size: 0.74rem; padding: 5px 10px 5px 11px; }
-      .sort-menu-label-prefix { display: none; }
-      .sort-menu-franchise .sort-menu-btn { padding-left: 8px; }
-      .sort-menu-franchise .sort-menu-label-prefix {
-        /* Keep the chain icon on the franchise-sort button as the only prefix
-           so users still see the "this is the franchise variant" cue. */
-        display: inline;
-        font-size: 0.78rem;
-        margin-right: 2px;
-      }
-      /* Inside the franchise prefix, the long "Franchise sort:" text hides on
-         mobile — the icon alone carries the cue and the dropdown's label
-         ("Top ELO" / "Members" / "—") tells the user what's active. */
-      .sort-menu-franchise .sort-menu-prefix-text { display: none; }
+      /* v1.0.214 — Mobile Rankings polish, second attempt. The first attempt
+         (v1.0.213) hid the section labels and tried to inline everything; on
+         test that made the dropdowns look like floating buttons with no
+         anchor. The actual source of the "jumbled" feel was elsewhere:
+           1. `#ranking-controls-right` has `margin-left: auto` which deliberately
+              pushes Fuzzy/Franchise/view-toggle to the FAR right, leaving an
+              empty gap in the middle of the row.
+           2. Filter chips wrap 4+1 with Length orphaned on its own row.
+         Fix:
+           · Drop the auto-margin on mobile so all controls flow as one
+             continuous left-aligned toolbar. If it overflows, it wraps
+             naturally (still left-aligned, no empty gap).
+           · Tighter chip padding so 5 chips wrap to 3+2 (balanced) rather
+             than 4+1 (orphan).
+           · Keep "Sort:" + "FILTERS:" labels — they anchor the controls
+             visually. */
+      .search-pick-btn { font-size: 0.75rem; padding: 5px 11px; }
+      .sort-menu-btn { font-size: 0.78rem; padding: 5px 10px 5px 12px; }
+      #ranking-controls-right { margin-left: 0; }
       .fuzzy-filter-btn { padding: 5px 9px; }
       .view-btn { padding: 4px 8px; }
+      /* Slightly tighter "Franchise sort:" prefix on mobile so the franchise
+         dropdown isn't dramatically wider than the main one when both show. */
+      .sort-menu-franchise .sort-menu-prefix-text { font-size: 0.72rem; }
 
       /* ── Results util bar — allow wrapping ── */
       .results-util-bar { flex-wrap: wrap; }
