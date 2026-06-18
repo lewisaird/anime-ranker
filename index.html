@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.212" />
+  <meta name="version" content="1.0.213" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1076,7 +1076,7 @@
         <div class="sort-menu-wrap sort-menu-franchise" id="franchise-sort-wrap">
           <button type="button" class="sort-menu-btn" id="franchise-sort-menu-btn"
                   onclick="toggleFranchiseSortMenu(event)" aria-haspopup="menu" aria-expanded="false">
-            <span class="sort-menu-label-prefix">⛓ Franchise sort:</span>
+            <span class="sort-menu-label-prefix"><span class="sort-menu-prefix-icon">⛓</span> <span class="sort-menu-prefix-text">Franchise sort:</span></span>
             <span class="sort-menu-label" id="franchise-sort-menu-current">—</span>
             <span class="sort-menu-chevron" aria-hidden="true">▾</span>
           </button>

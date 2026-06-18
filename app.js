@@ -18888,7 +18888,7 @@ const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
     'Battle pool watch-status filter — the ≡ Filter popover can now hide currently-watching and rewatching anime so airing shows stay out of battles until they finish.',
-    'Mobile polish — list view shows full titles again, the sort dropdown opens cleanly on narrow viewports, Studio Affinity gets bigger covers + a stronger left rail, and the back button stays inside Kessen instead of escaping to the browser.',
+    'Mobile Rankings polish — the controls toolbar is denser (no more split half-rows), list view shows the full title (cover thumb hides on phones so titles get the room), Studio Affinity has bigger covers + a stronger left rail, the back button stays inside Kessen, and the sort dropdown opens cleanly on narrow viewports.',
     'Franchise sort split into its own dropdown next to the main sort — clearer that it only applies when Franchise mode is on.',
     'New franchise tools — Battle Within Franchise (settle "which AoT season is best?") with auto-stop once every pair has been battled, Bulk Exclude, Avoid Same Franchise filter, and a softer Tower down-weight for same-franchise opponents.',
     'Rankings filter picker — five chip categories (Genre, Studio, Year, Format, Length) with live counts. Replaces the old format and length button rows with a single consistent model.',
