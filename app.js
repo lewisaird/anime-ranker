@@ -6163,7 +6163,7 @@ async function fetchRecommendationsForYou() {
             rating
             mediaRecommendation {
               id idMal title { romaji english } coverImage { large medium }
-              averageScore format status
+              averageScore format status genres
             }
           }
         }
@@ -6323,7 +6323,7 @@ async function _fetchHighlyRatedUnseen(ownIds) {
       Page(perPage: 50) {
         media(type: ANIME, sort: SCORE_DESC,
               status: FINISHED, averageScore_greater: 78, popularity_greater: 30000) {
-          id idMal title { romaji english } coverImage { large medium } averageScore format
+          id idMal title { romaji english } coverImage { large medium } averageScore format genres
         }
       }
     }`;
@@ -6365,7 +6365,7 @@ async function fetchGenreDeepDive() {
       Page(perPage: 20) {
         media(type: ANIME, genre_in: [$genre], sort: SCORE_DESC,
               averageScore_greater: 72, status_not_in: [NOT_YET_RELEASED, CANCELLED]) {
-          id idMal title { romaji english } coverImage { large medium } averageScore format
+          id idMal title { romaji english } coverImage { large medium } averageScore format genres
         }
       }
     }`;
@@ -6394,7 +6394,7 @@ async function fetchHiddenGems() {
               averageScore_greater: 70,
               popularity_lesser: 150000,
               status_in: [FINISHED, RELEASING]) {
-          id idMal title { romaji english } coverImage { large medium } averageScore format
+          id idMal title { romaji english } coverImage { large medium } averageScore format genres
         }
       }
     }`;
@@ -6448,9 +6448,7 @@ async function fetchSeasonalRecommendations() {
   const { season, year } = getCurrentSeason();
   const next = getNextSeason(season, year);
   const genreAffinityMap = _buildGenreAffinity();
-  const eloValues = animeList.map(a => a.elo);
-  const eloMin = eloValues.length ? Math.min(...eloValues) : 0;
-  const eloMax = (eloValues.length ? Math.max(...eloValues) : 1) - eloMin || 1;
+  const { eloMin, eloRange } = _tasteEloRange();
 
   const seasons = [
     { s: season,      y: year,      label: `${season} ${year}` },
@@ -6485,18 +6483,12 @@ async function fetchSeasonalRecommendations() {
 
     // Score each item by taste + community
     items.forEach(r => {
-      if (genreAffinityMap.size > 0) {
-        const hits = (r.media.genres || [])
-          .map(g => genreAffinityMap.get(g))
-          .filter(v => v !== undefined);
-        r._tasteScore = hits.length
-          ? (hits.reduce((s, v) => s + v, 0) / hits.length - eloMin) / eloMax
-          : 0.5;
-      } else {
-        r._tasteScore = 0.5;
-      }
+      r._tasteScore = _computeTasteScore(r.media, genreAffinityMap, eloMin, eloRange);
+      // For ranking we still need a number — fall back to 0.5 (median) when
+      // tasteScore is null so unscored items don't sink to the bottom.
+      const tasteForRanking = r._tasteScore == null ? 0.5 : r._tasteScore;
       const commNorm = (r.media.averageScore || 60) / 100;
-      r._score = r._tasteScore * 0.65 + commNorm * 0.35;
+      r._score = tasteForRanking * 0.65 + commNorm * 0.35;
     });
 
     // Sort: unwatched first, then by taste+community score, cap at 8
@@ -6535,6 +6527,34 @@ function _buildGenreAffinity() {
     if (v.count >= 2) map.set(g, v.sum / v.count);
   });
   return map;
+}
+
+// v1.0.211 — Shared taste-score helper used by every Discover section.
+// Returns a normalised 0..1 score representing how well a media's genres
+// align with the user's high-ELO ranks. Returns null if the user's list
+// hasn't been enriched with genres yet, or the media has no genre data —
+// callers should treat null as "no score available, don't show badge".
+//
+// Encapsulated so we don't have four copies of the same formula across
+// For You / Seasonal / Genre Dive / Hidden Gems. Pass a precomputed
+// affinity map + elo range to avoid rebuilding them per-item.
+function _computeTasteScore(media, genreAffinityMap, eloMin, eloRange) {
+  if (!genreAffinityMap || genreAffinityMap.size === 0) return null;
+  const genres = Array.isArray(media.genres) ? media.genres : null;
+  if (!genres || !genres.length) return null;
+  const hits = genres.map(g => genreAffinityMap.get(g)).filter(v => v !== undefined);
+  if (!hits.length) return null;
+  const meanGenreElo = hits.reduce((s, v) => s + v, 0) / hits.length;
+  return (meanGenreElo - eloMin) / eloRange;
+}
+
+// Shared elo-range derivation. Same min/max-min math the seasonal code uses.
+function _tasteEloRange() {
+  const vals = animeList.map(a => a.elo);
+  if (!vals.length) return { eloMin: 0, eloRange: 1 };
+  const eloMin = Math.min(...vals);
+  const eloMax = Math.max(...vals);
+  return { eloMin, eloRange: (eloMax - eloMin) || 1 };
 }
 
 function _recsSkeletonHtml(count = 8) {
@@ -6609,12 +6629,20 @@ async function _loadRecsGrid() {
     : (result.items || []).map(r => r.media.id);
   await _fetchRecRelations(allRecIds);
 
+  // v1.0.211 — pre-compute taste data once and pass tasteScore through to
+  // every rendered card. Previously only Seasonal carried this score; For
+  // You / Genre Dive / Hidden Gems all called recCardHtml without it so the
+  // 🎯 Strong match badge was invisible on the tab most users default to.
+  const tasteAffinity = _buildGenreAffinity();
+  const tasteRange    = _tasteEloRange();
+  const ts = (media) => _computeTasteScore(media, tasteAffinity, tasteRange.eloMin, tasteRange.eloRange);
+
   let mainHtml;
   if (result.grouped && result.groups.length) {
     mainHtml = result.groups.map(({ seed, recs }) => `
       <div class="recs-group">
         <h4 class="recs-group-heading">Because you loved <em>${esc(displayTitle(seed))}</em></h4>
-        <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media)).join('')}</div>
+        <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')}</div>
       </div>`).join('');
   } else {
     const items = result.items || [];
@@ -6622,7 +6650,7 @@ async function _loadRecsGrid() {
       grid.innerHTML = '<p style="color:#8b949e;text-align:center">No recommendations yet — keep ranking!</p>';
       return;
     }
-    mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media)).join('')}</div>`;
+    mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')}</div>`;
   }
 
   // Render main recs + placeholder sections for async extras
@@ -6650,12 +6678,12 @@ async function _loadRecsGrid() {
   }
   if (genreGridEl) {
     genreGridEl.innerHTML = genreResult.items.length
-      ? genreResult.items.map(({ media }) => recCardHtml(media)).join('')
+      ? genreResult.items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
       : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>';
   }
   if (gemsGridEl) {
     gemsGridEl.innerHTML = gemItems.length
-      ? gemItems.map(({ media }) => recCardHtml(media)).join('')
+      ? gemItems.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
       : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>';
   }
 }
@@ -13268,6 +13296,13 @@ function _animeMatchesSearchTokens(a, q) {
 // v1.0.211 — Chip-based filter state. Lives alongside the text input;
 // filterRankings unions both before matching. Sets dedupe values cheaply
 // and keep insertion order deterministic enough for chip rendering.
+// v1.0.211 — Session-scoped guard for the picker's lazy enrichment fetch.
+// Keyed by `${animeList.length}:firstId:lastId` so a fresh import (which
+// rebuilds animeList) re-arms it automatically. AniList legitimately has
+// no seasonYear / studios for some entries, so a "still missing" check
+// will never resolve to false on those lists — we'd re-fetch on every
+// picker click otherwise.
+let _enrichmentAttemptedKey = '';
 let _searchChips = {
   genres:  new Set(),
   studios: new Set(),
@@ -13361,16 +13396,20 @@ async function openSearchPicker(category, btn) {
     return;
   }
   // v1.0.211 — Lazy-load AniList enrichment data on demand. genres, studios
-  // and seasonYear all come from the same `_enrichGenresAndEras` call, which
-  // is only triggered today when the user visits the Taste tab. Before this
-  // fix the Studio picker was empty for any save predating the enrichment
-  // (or any user who hadn't opened Taste yet) — opening Taste once magically
-  // "fixed" it, which is the exact symptom Lewis hit. Now the picker
-  // triggers the same fetch itself, showing a loading state while it runs.
-  const needsEnrichment =
+  // and seasonYear all come from the same `_enrichGenresAndEras` call.
+  // We trigger this once per category if any anime is missing the field, but
+  // gate the result with _enrichmentAttempted so we don't keep re-fetching
+  // when AniList legitimately has no data for some entries (old OVAs,
+  // certain movies — seasonYear stays null forever, so `some(a => a.seasonYear == null)`
+  // is permanently true). The flag is keyed by list shape so a fresh import
+  // re-arms it automatically.
+  const enrichmentListKey = `${animeList.length}:${animeList[0]?.id || 0}:${animeList[animeList.length - 1]?.id || 0}`;
+  const alreadyAttempted  = _enrichmentAttemptedKey === enrichmentListKey;
+  const needsEnrichment = !alreadyAttempted && (
        (category === 'studio' && animeList.some(a => !Array.isArray(a.studios)))
     || (category === 'genre'  && animeList.some(a => !Array.isArray(a.genres)))
-    || (category === 'year'   && animeList.some(a => a.seasonYear == null));
+    || (category === 'year'   && animeList.some(a => a.seasonYear == null))
+  );
   if (needsEnrichment) {
     pop.dataset.category = category;
     pop.innerHTML = `<div class="search-picker-loading">⏳ Loading ${esc(category)} data…</div>`;
@@ -13385,6 +13424,7 @@ async function openSearchPicker(category, btn) {
     }
     try {
       await _enrichGenresAndEras();
+      _enrichmentAttemptedKey = enrichmentListKey;
       saveState();
     } catch (e) {
       pop.innerHTML = `<div class="search-picker-empty">Could not fetch ${esc(category)} data: ${esc(e.message || 'network error')}</div>`;
@@ -14599,7 +14639,7 @@ async function applyMoodRec(moodKey) {
           rating
           mediaRecommendation {
             id idMal title { romaji english } coverImage { large medium }
-            averageScore format status
+            averageScore format status genres
           }
         }
       }
@@ -14643,11 +14683,15 @@ async function applyMoodRec(moodKey) {
     <p style="color:#8b949e;font-size:0.82rem;margin:0">
       Based on your top-ranked ${mood.label.toLowerCase()} anime</p>
   </div>`;
+  // v1.0.211 — precompute taste scoring once for the mood section.
+  const _moodAffinity = _buildGenreAffinity();
+  const _moodRange    = _tasteEloRange();
+  const _moodTs = (media) => _computeTasteScore(media, _moodAffinity, _moodRange.eloMin, _moodRange.eloRange);
   const cardsHtml = groups.map(({ seed, recs }) => `
     <div class="recs-group">
       <div class="recs-group-label">Because you liked <strong>${esc(displayTitle(seed))}</strong></div>
       <div class="recs-row">
-        ${recs.map(r => recCardHtml(r.media, {})).join('')}
+        ${recs.map(r => recCardHtml(r.media, { tasteScore: _moodTs(r.media) })).join('')}
       </div>
     </div>`).join('');
 
@@ -18431,14 +18475,15 @@ const APP_VERSION = (() => {
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    'Cross-device sync — your milestones and "How you\'ve changed" timeline now follow you between phone and desktop.',
-    'Three theme modes: Dark, Light, and a new Warm option (in Manage → Appearance).',
-    'Winner Stays On — champion keeps fighting until knocked off, with a streak counter.',
-    'Tower / Settle / Trio / Blind / WSO now share consistent banners, prompts, and Mode-button highlights.',
-    'Manage tab redesigned with balanced column layout.',
-    'Last-synced timestamp on the Backup card so you can see sync is working.',
-    'Light mode is now actually usable — pastel pills, readable banners, fixed contrast across confidence badges and mode highlights.',
-    'Many small mobile readability fixes.',
+    'Franchise pack — Battle Within Franchise (settle "which Re:Zero season is best?"), Bulk Exclude, Avoid Same Franchise filter, plus Tower now down-weights same-franchise opponents.',
+    'Battle Within auto-stops once every pair in the franchise has been battled — no more endless repeats after you\'ve settled the order.',
+    'Rankings filter picker — five chip categories (Genre, Studio, Year, Format, Length) with live counts. Replaces the old format and length rows so the filter model is consistent everywhere.',
+    '⚔ Battle Next chip on the anime detail modal — queues the open anime as one half of your next battle in one tap.',
+    'Rivalries now use the same franchise grouper as Rankings (so Pokémon spin-offs merge), and the threshold tightened so 19-1 stomps no longer show up as "rivalries".',
+    '🎯 Strong match badges now appear on every Discover section (For You, Genre Dive, Hidden Gems, Mood) — not just Seasonal.',
+    'Achievement system rebuild — Hot Streak / Top Dog / Comeback Kid bugs fixed, plus four overlapping count-based achievements replaced with All-Stars, Loyalist, Tastemaker, and Era Curator.',
+    'Reset Everything now actually wipes the cloud copy too (it was silently restoring from cloud before).',
+    'Visual polish across every card surface — unified hover language, list-mode column stability, franchise modal "← Back" button.',
   ],
 };
 

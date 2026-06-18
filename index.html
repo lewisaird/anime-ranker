@@ -938,10 +938,9 @@
             <button type="button" class="filter-fmt-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT', 'battle')">Short</button>
             <button type="button" class="filter-fmt-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL', 'battle')">Special</button>
           </div>
-          <p class="filter-popover-hint">Hidden formats are excluded from the battle pool only — your Rankings still show them.</p>
           <!-- v1.0.211 — Avoid same franchise. When on, the picker skips pairs
-               whose anime share a franchise group (so you don't get Re:Zero S1
-               vs Re:Zero S2 repeatedly when ranking sequels you've already
+               whose anime share a franchise group (so you don't get AoT S1
+               vs AoT S2 repeatedly when ranking sequels you've already
                compared). Applies to Classic / Settle / Blind / Trio / WSO. Tower
                uses a softer down-weight instead so small franchises still play. -->
           <div class="filter-divider"></div>
@@ -949,7 +948,7 @@
             <input type="checkbox" id="avoid-same-franchise-chk" onchange="toggleAvoidSameFranchise()" />
             <span class="filter-toggle-text">
               Avoid same franchise
-              <span class="filter-toggle-sub">Skip Re:Zero vs Re:Zero etc.</span>
+              <span class="filter-toggle-sub">Skip AoT S1 vs AoT S2 etc.</span>
             </span>
           </label>
         </div>
@@ -1562,12 +1561,18 @@
           <strong>🎯 Settle</strong> — targets uncertain matchups first so shaky rankings lock in faster.<br>
           <strong>🙈 Blind</strong> — hides ELO scores so you pick purely on instinct, without being anchored by numbers.<br>
           <strong>🎲 Trio</strong> — three anime at once; drag or tap to rank them 1st, 2nd, 3rd.<br>
+          <strong>🔥 Winner Stays On</strong> — the champion keeps fighting until knocked off, with a streak counter. Great for finding your true top picks.<br>
           <strong>⚡ Tower</strong> — pick a champion and pit it against 10 opponents spread across the rankings. A fun way to stress-test how highly you really rate a show.</p>
         </div>
 
         <div class="help-section">
           <h4>≡ Battle Pool Filter</h4>
-          <p>Tap the Filter button in the battle screen to exclude formats (TV, Movie, OVA…) from matchmaking. Useful if you only want to rank one type at a time. Your filter is remembered between sessions.</p>
+          <p>Tap the Filter button in the battle screen to exclude formats (TV, Movie, OVA…) from matchmaking. Useful if you only want to rank one type at a time. The same popover has an <strong>Avoid same franchise</strong> toggle that stops the picker from pairing sequels against each other (so you don't keep getting AoT S1 vs AoT S2). Both settings persist between sessions.</p>
+        </div>
+
+        <div class="help-section">
+          <h4>⚔ Battle Next</h4>
+          <p>Tapping an anime card opens its detail view, where you can hit <strong>⚔ Battle Next</strong> to queue it as one side of your next battle against a similar-ELO opponent. Great for "wait, why is this ranked so low?" moments.</p>
         </div>
 
         <div class="help-section">
@@ -1577,19 +1582,22 @@
 
         <div class="help-section">
           <h4>📋 Rankings</h4>
-          <p>Filter by <strong>format</strong> (TV, Movie, OVA…) and <strong>episode length</strong> (≤12 · 13–24 · 25–70 · 70+ · Unknown). Use the <strong>Fuzzy</strong> filter to show only fuzzy-marked entries, or <strong>Franchise</strong> to group sequels. Sort by ELO, Title, Win Rate, Battles, AniList Score, Tier, or Confidence. Toggle grid or list view. All filters and sort are remembered between sessions.</p>
+          <p>Title search at the top, then a row of filter chips: <strong>+ Genre</strong>, <strong>+ Studio</strong>, <strong>+ Year</strong>, <strong>+ Format</strong>, <strong>+ Length</strong>. Each opens a popover listing the actual values from your list with counts, so you can see at a glance what's worth filtering by. Picks become removable chips — combine across categories (AND) or pick multiple values in one category (OR). One <strong>⤫ Clear filters</strong> button wipes everything. Sort by ELO, Title, Win Rate, Battles, AniList Score, Tier, or Confidence. Toggle grid or list view. Fuzzy-only and Franchise mode live in the row below.</p>
         </div>
 
         <div class="help-section">
           <h4>⛓ Franchise Mode</h4>
-          <p>Groups sequels and seasons together in the Rankings view so you can see a franchise's overall standing at a glance. Toggle it with the Franchise button above the rankings list. Individual entries keep their own ELO — franchise mode is a display filter only.</p>
+          <p>Groups sequels and seasons together in the Rankings view so you can see a franchise's overall standing at a glance. Each franchise card shows the average ELO, a <strong>★ Top</strong> badge for the highest-rated entry, and the franchise's <strong>all-time best</strong> ELO. Tap a card to drill in, then use:</p>
+          <p><strong>⚔ Battle within</strong> — restrict the next battles to entries inside the franchise so you can settle "which Re:Zero season is best?". Auto-stops once every pair has been battled.<br>
+          <strong>🚫 Exclude all from battles</strong> — bulk-remove the whole franchise from your battle pool (with undo).</p>
+          <p>Franchise mode unlocks two extra sort options: <strong>★ Top ELO</strong> and <strong>Members</strong>.</p>
         </div>
 
         <div class="help-section">
           <h4>📊 Tabs</h4>
-          <p><strong>Battles</strong> — stats, biggest upsets, rivalries, and full battle history.<br>
+          <p><strong>Battles</strong> — stats, biggest upsets, rivalries, and full battle history. Total Battles + Fuzzy Flagged tiles are clickable shortcuts.<br>
           <strong>Profile</strong> — two sub-tabs: <em>Taste</em> (your archetype, genre &amp; era breakdowns, studio affinity, taste vs the community, score distribution) and <em>Achievements</em> (milestones and badges earned through ranking).<br>
-          <strong>Discover</strong> — personalised picks (✨ For You), airing anime (📅 This Season), mood-based recs, and tier predictions (🔮 Predict).<br>
+          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime), <em>This Season</em> (airing now + next), <em>Moods</em> (taste-grouped collections), and <em>Predict</em> (tier guess for any anime you haven't ranked). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
           <strong>Social</strong> — multiplayer modes and taste comparison (see below).<br>
           <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, and reset.</p>
         </div>
@@ -1609,7 +1617,7 @@
 
         <div class="help-section">
           <h4>🔔 Notifications</h4>
-          <p>The bell icon in the header shows alerts for newly added anime on your list, cloud sync events, and other activity. Tap it to open the notification centre and review or clear alerts.</p>
+          <p>The bell icon in the header shows alerts for newly added anime on your list, cloud sync events, finish-watching prompts, and a one-time <strong>✨ What's new</strong> entry whenever Kessen updates to a new version (tap it to see the release highlights). Tap the bell to open the notification centre and review or clear alerts.</p>
         </div>
 
                 <div class="help-section" id="help-anilist-section" style="display:none">
