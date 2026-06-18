@@ -1419,6 +1419,17 @@
       font-weight: 600;
       line-height: 1.3;
       color: var(--text-bright);
+      /* v1.0.215 — clamp to 2 lines max so a really long title (e.g.
+         "Is It Wrong to Try to Pick Up Girls in a Dungeon?: Is It Wrong to
+         Expect a Hot Spring in a Dungeon?") doesn't stretch its grid card
+         taller than its neighbours. Without this, adjacent cards have
+         visibly different heights and the grid looks ragged. */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-break: break-word;
     }
 
     .rank-elo {
@@ -3760,31 +3771,39 @@
     .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 90px; }   /* AniList Avg */
     .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 56px; }   /* Tier */
     .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 130px; }  /* Confidence */
-    /* v1.0.214 — Mobile list view: keep ALL columns + covers, just let the
-       table be wider than the viewport so users can swipe horizontally to
-       see everything. v1.0.213 hid the cover column and three rightmost
-       numeric columns — that removed the visual ID (covers) and the
-       ability to scroll to AniList Avg / Tier / Confidence. The wrap
-       (#ranking-table-wrap) already has `overflow-x: auto`, so all we need
-       is `table-layout: auto` + explicit widths that make the leftmost
-       visible columns (#, cover, title, ELO) usable without scrolling.
-       Title gets a sensible min-width so it can ellipsise gracefully and
-       the rest of the columns are reachable via the natural horizontal
-       swipe gesture. */
+    /* v1.0.215 — Mobile list view, third attempt. The v1.0.214 horizontal-
+       scroll approach (`min-width: 660px` + scroll wrap) created an awkward
+       scrolled state where the title cell's empty area on the right looked
+       like a layout bug. Confirmed by user: it just looks broken when
+       scrolled past the title column.
+       Final design: drop horizontal scroll entirely. Hide the three
+       lowest-priority columns (AniList Avg, Tier, Confidence) on mobile —
+       all three are reachable by tapping into the anime detail modal. The
+       table fits the viewport with no scroll, no blank areas. Visible on
+       mobile: # | cover | title | ELO | Win Rate | Battles. Title uses
+       `table-layout: auto` so it gets whatever space remains after the
+       fixed-size numeric columns. */
     @media (max-width: 640px) {
-      .ranking-table { table-layout: auto; min-width: 660px; }
+      .ranking-table { table-layout: auto; }
+      .ranking-table th:nth-child(7), .ranking-table td:nth-child(7),
+      .ranking-table th:nth-child(8), .ranking-table td:nth-child(8),
+      .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) {
+        display: none;
+      }
       .ranking-table th:nth-child(3), .ranking-table td:nth-child(3) {
-        min-width: 160px;
+        width: auto;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        max-width: 1px; /* paired with width:auto, forces table to give
+                          the cell remaining space and ellipsise text */
       }
       .ranking-table th, .ranking-table td { padding: 7px 6px; font-size: 0.78rem; }
       .ranking-table th:nth-child(2), .ranking-table td:nth-child(2) { width: 40px; }
-      .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 60px; }
-      .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 70px; }
-      .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 60px; }
-      .tbl-cover { width: 32px; height: 46px; }
+      .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 56px; }
+      .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 64px; }
+      .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 56px; }
+      .tbl-cover { width: 28px; height: 40px; }
     }
     .ranking-table th {
       text-align: left; padding: 8px 10px;
@@ -4969,30 +4988,39 @@
       #ranking-controls-right { flex-shrink: 0; gap: 4px; }
       #view-toggle-wrap { flex-shrink: 0; }
 
-      /* v1.0.214 — Mobile Rankings polish, second attempt. The first attempt
-         (v1.0.213) hid the section labels and tried to inline everything; on
-         test that made the dropdowns look like floating buttons with no
-         anchor. The actual source of the "jumbled" feel was elsewhere:
-           1. `#ranking-controls-right` has `margin-left: auto` which deliberately
-              pushes Fuzzy/Franchise/view-toggle to the FAR right, leaving an
-              empty gap in the middle of the row.
-           2. Filter chips wrap 4+1 with Length orphaned on its own row.
-         Fix:
-           · Drop the auto-margin on mobile so all controls flow as one
-             continuous left-aligned toolbar. If it overflows, it wraps
-             naturally (still left-aligned, no empty gap).
-           · Tighter chip padding so 5 chips wrap to 3+2 (balanced) rather
-             than 4+1 (orphan).
-           · Keep "Sort:" + "FILTERS:" labels — they anchor the controls
-             visually. */
+      /* v1.0.215 — Mobile Rankings toolbar, third attempt. v1.0.214 removed
+         `margin-left: auto` on the right-side controls (Fuzzy / Franchise /
+         view-toggle) so the toolbar flowed as one row. That worked for ELO
+         sort, but switching to a wider-label sort like "Win Rate" or
+         "AniList Avg" made the sort dropdown grow, which reflowed the rest
+         of the controls onto a second row — visible as the menu "jumping
+         around" when the user changed sort.
+         Final design:
+           · Pin the sort dropdown to a fixed min-width so its width is
+             constant regardless of which sort is selected. No more reflow
+             when the label changes.
+           · Keep `margin-left: 0` on the right-side group so the toolbar
+             reads as one continuous left-aligned block (no barbell gap).
+           · On the franchise-sort dropdown specifically, hide the prefix
+             text ("Franchise sort:") and keep just the ⛓ icon so both
+             dropdowns are similar widths when franchise mode is on. */
       .search-pick-btn { font-size: 0.75rem; padding: 5px 11px; }
-      .sort-menu-btn { font-size: 0.78rem; padding: 5px 10px 5px 12px; }
+      .sort-menu-btn {
+        font-size: 0.78rem;
+        padding: 5px 10px 5px 12px;
+        min-width: 138px;          /* fits "Sort: AniList Avg ▾" comfortably */
+        justify-content: flex-start;
+      }
+      .sort-menu-franchise .sort-menu-btn {
+        min-width: 96px;           /* tighter — franchise sort labels are short */
+      }
       #ranking-controls-right { margin-left: 0; }
       .fuzzy-filter-btn { padding: 5px 9px; }
       .view-btn { padding: 4px 8px; }
-      /* Slightly tighter "Franchise sort:" prefix on mobile so the franchise
-         dropdown isn't dramatically wider than the main one when both show. */
-      .sort-menu-franchise .sort-menu-prefix-text { font-size: 0.72rem; }
+      /* Franchise sort prefix: just the ⛓ icon on mobile — the dropdown
+         label ("Top ELO" / "Members" / "—") plus the brand-blue left border
+         already say "this is the franchise variant". */
+      .sort-menu-franchise .sort-menu-prefix-text { display: none; }
 
       /* ── Results util bar — allow wrapping ── */
       .results-util-bar { flex-wrap: wrap; }

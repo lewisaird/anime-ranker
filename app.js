@@ -3561,37 +3561,63 @@ function skipBattle() {
 
 // ─── RESULTS ────────────────────────────────────────────────────────────────
 function getSortedList() {
-  const dir = sortAsc ? 1 : -1;
+  // v1.0.216 — Tied-entry order fix. The previous implementation used a
+  // `* dir` multiplier on the comparator. JavaScript's Array.prototype.sort
+  // is stable, so when two entries had equal sort keys (e.g., two anime at
+  // ELO 1089), they kept their insertion order in animeList — and the
+  // SAME order whether sorted ASC or DESC. That created a visible bug at
+  // the bottom of an ascending ELO sort: tied ranks appeared as e.g.
+  // #344, #345 instead of the expected #345, #344 (since ASC should put
+  // the higher rank number first when ELO is tied).
+  //
+  // Fix: sort in the canonical direction for each sort type (DESC for
+  // numeric sorts where higher is "better" — ELO, Win Rate, etc.; ASC
+  // for Title/Tier/Confidence which feel natural in that direction),
+  // then reverse if the user picked the non-canonical direction. Tied
+  // entries now mirror cleanly between the two directions.
+  const canonical = _ascFirstSorts.has(currentSort) ? sortAsc : !sortAsc;
+  let sorted;
   switch (currentSort) {
     case 'winrate':
-      return [...animeList].sort((a, b) => {
+      sorted = [...animeList].sort((a, b) => {
         const ra = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
         const rb = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
-        return (ra - rb) * dir;
+        return rb - ra; // DESC (canonical)
       });
-    case 'battles':  return [...animeList].sort((a, b) => ((a.battles || 0) - (b.battles || 0)) * dir);
-    case 'score':    return [...animeList].sort((a, b) => ((a.globalScore || 0) - (b.globalScore || 0)) * dir);
-    case 'title':    return [...animeList].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b)) * dir);
+      break;
+    case 'battles':
+      sorted = [...animeList].sort((a, b) => (b.battles || 0) - (a.battles || 0));
+      break;
+    case 'score':
+      sorted = [...animeList].sort((a, b) => (b.globalScore || 0) - (a.globalScore || 0));
+      break;
+    case 'title':
+      sorted = [...animeList].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b))); // ASC (canonical)
+      break;
     case 'tier': {
       const tierOrder = { S: 0, A: 1, B: 2, C: 3, D: 4 };
       const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
       const rankMap   = new Map(eloSorted.map((a, i) => [a.id, i]));
-      return [...animeList].sort((a, b) => {
+      sorted = [...animeList].sort((a, b) => {
         const ta = tierOrder[getTier(rankMap.get(a.id) ?? 0, animeList.length)] ?? 5;
         const tb = tierOrder[getTier(rankMap.get(b.id) ?? 0, animeList.length)] ?? 5;
-        return ta !== tb ? (ta - tb) * dir : (b.elo - a.elo); // within tier, sort by ELO
+        return ta !== tb ? (ta - tb) : (b.elo - a.elo); // within tier, ELO desc
       });
+      break;
     }
     case 'confidence': {
       const confOrder = { confident: 0, settling: 1, uncertain: 2 };
-      return [...animeList].sort((a, b) => {
+      sorted = [...animeList].sort((a, b) => {
         const ca = confOrder[confidenceLabel(a.battles || 0).cls] ?? 3;
         const cb = confOrder[confidenceLabel(b.battles || 0).cls] ?? 3;
-        return ca !== cb ? (ca - cb) * dir : (b.elo - a.elo); // within confidence, sort by ELO
+        return ca !== cb ? (ca - cb) : (b.elo - a.elo); // within confidence, ELO desc
       });
+      break;
     }
-    default:         return [...animeList].sort((a, b) => (a.elo - b.elo) * dir);
+    default:
+      sorted = [...animeList].sort((a, b) => b.elo - a.elo); // DESC (canonical)
   }
+  return canonical ? sorted : sorted.reverse();
 }
 
 // v1.0.211 — Tier tooltip helper. Renders as the title attribute on tier
