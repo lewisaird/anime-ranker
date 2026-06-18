@@ -3771,38 +3771,43 @@
     .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 90px; }   /* AniList Avg */
     .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 56px; }   /* Tier */
     .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 130px; }  /* Confidence */
-    /* v1.0.215 — Mobile list view, third attempt. The v1.0.214 horizontal-
-       scroll approach (`min-width: 660px` + scroll wrap) created an awkward
-       scrolled state where the title cell's empty area on the right looked
-       like a layout bug. Confirmed by user: it just looks broken when
-       scrolled past the title column.
-       Final design: drop horizontal scroll entirely. Hide the three
-       lowest-priority columns (AniList Avg, Tier, Confidence) on mobile —
-       all three are reachable by tapping into the anime detail modal. The
-       table fits the viewport with no scroll, no blank areas. Visible on
-       mobile: # | cover | title | ELO | Win Rate | Battles. Title uses
-       `table-layout: auto` so it gets whatever space remains after the
-       fixed-size numeric columns. */
+    /* v1.0.217 — Mobile list view, horizontal-scroll restored properly.
+       Earlier attempts:
+         v1.0.213: hid cover + 3 rightmost columns → broke visual ID
+         v1.0.214: table-layout: auto + min-width: 660px → blank space in
+                   scrolled state because auto layout gave the title column
+                   variable width that didn't match the scroll geometry
+         v1.0.215: hid 3 rightmost columns → can't see AniList Avg / Tier /
+                   Confidence on mobile at all (user feedback)
+       This attempt uses `table-layout: fixed` with EXPLICIT widths on every
+       column. Total column width is wider than viewport, so the existing
+       `#ranking-table-wrap { overflow-x: auto }` enables horizontal swipe.
+       Because every column has a fixed width, the scrolled state is
+       predictable: no blank gaps, no shifting widths.
+       Visible without scroll on a typical phone (~380px content): #,
+       cover, title (truncated with ellipsis), ELO, partial Win Rate.
+       Swipe left to reveal: full Win Rate, Battles, AniList Avg, Tier,
+       Confidence. */
     @media (max-width: 640px) {
-      .ranking-table { table-layout: auto; }
-      .ranking-table th:nth-child(7), .ranking-table td:nth-child(7),
-      .ranking-table th:nth-child(8), .ranking-table td:nth-child(8),
-      .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) {
-        display: none;
+      .ranking-table {
+        table-layout: fixed;
+        min-width: 700px;
       }
+      .ranking-table th:nth-child(1), .ranking-table td:nth-child(1) { width: 36px; }
+      .ranking-table th:nth-child(2), .ranking-table td:nth-child(2) { width: 40px; }
       .ranking-table th:nth-child(3), .ranking-table td:nth-child(3) {
-        width: auto;
+        width: 170px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 1px; /* paired with width:auto, forces table to give
-                          the cell remaining space and ellipsise text */
       }
-      .ranking-table th, .ranking-table td { padding: 7px 6px; font-size: 0.78rem; }
-      .ranking-table th:nth-child(2), .ranking-table td:nth-child(2) { width: 40px; }
       .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 56px; }
       .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 64px; }
       .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 56px; }
+      .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 72px; }
+      .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 50px; }
+      .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 116px; }
+      .ranking-table th, .ranking-table td { padding: 7px 6px; font-size: 0.78rem; }
       .tbl-cover { width: 28px; height: 40px; }
     }
     .ranking-table th {
