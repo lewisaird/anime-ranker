@@ -168,6 +168,10 @@ const IDS = Object.freeze({
   sortMenuBtn:            'sort-menu-btn',
   sortMenuCurrent:        'sort-menu-current',
   sortMenuPopover:        'sort-menu-popover',
+  franchiseSortMenuBtn:       'franchise-sort-menu-btn',
+  franchiseSortMenuCurrent:   'franchise-sort-menu-current',
+  franchiseSortMenuPopover:   'franchise-sort-menu-popover',
+  franchiseSortWrap:          'franchise-sort-wrap',
   sessionSummaryList:     'session-summary-list',
   sessionSummaryModal:    'session-summary-modal',
   sessionSummarySubtitle: 'session-summary-subtitle',
@@ -252,6 +256,8 @@ const IDS = Object.freeze({
   whatsNewCloseBtn:       'whats-new-close-btn',
   // v1.0.211 — Franchise pack
   avoidSameFranchiseChk:  'avoid-same-franchise-chk',
+  hideCurrentChk:         'hide-current-chk',
+  hideRepeatingChk:       'hide-repeating-chk',
   withinFranchiseBanner:  'within-franchise-banner',
   withinFranchiseMsg:     'within-franchise-msg',
   modalFranchiseBackBtn:  'modal-franchise-back-btn',
@@ -418,6 +424,11 @@ let excludedIds     = new Set(); // anime IDs permanently removed from battle po
 //   - Battle "≡ Filter" popover  → hiddenFormatsBattle  / hiddenEpRangesBattle
 //   - Rankings format / length   → hiddenFormatsRanking / hiddenEpRangesRanking
 let hiddenFormatsBattle   = new Set(); // formats hidden from the battle pool only
+// v1.0.212 — Watch-status filter for the battle pool. Default empty (all
+// statuses included). Users hide CURRENT (Watching) or REPEATING (Rewatching)
+// from their battle pool — useful for keeping airing shows out until they
+// finish, or skipping a rewatch you're partway through.
+let hiddenStatusesBattle  = new Set();
 let hiddenFormatsRanking  = new Set(); // formats hidden from the Rankings list only
 let hiddenEpRangesBattle  = new Set(); // episode-length buckets hidden from battles
 let hiddenEpRangesRanking = new Set(); // episode-length buckets hidden from Rankings
@@ -807,6 +818,7 @@ function _clearRankingState() {
   battleHistory     = [];
   excludedIds       = new Set();
   hiddenFormatsBattle     = new Set();
+  hiddenStatusesBattle    = new Set();
   hiddenFormatsRanking    = new Set();
   hiddenEpRangesBattle    = new Set();
   hiddenEpRangesRanking   = new Set();
@@ -2759,7 +2771,7 @@ function pickOpponents() {
 
   // weight: 0 for excluded, lower for fuzzy, higher for fewer comparisons
   const weights = animeList.map(a => {
-    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return 0;
     if (inFranchisePool && !inFranchisePool(a)) return 0;
     const base = 1 / (a.comparisons + 1);
     return a.fuzzy ? base * 0.1 : base;
@@ -3078,7 +3090,7 @@ function _takeValidPreloadedPair() {
   const [a, b] = pair;
   const ok = i => Number.isInteger(i) && i >= 0 && i < animeList.length
     && !excludedIds.has(animeList[i].id)
-    && !hiddenFormatsBattle.has(animeList[i].format);
+    && !hiddenFormatsBattle.has(animeList[i].format) && !hiddenStatusesBattle.has(animeList[i].status);
   return (a !== b && ok(a) && ok(b)) ? pair : null;
 }
 
@@ -3144,7 +3156,7 @@ function _wsoChampionValid() {
   const a = animeList[wsoWinnerIdx];
   if (!a) return false;
   if (excludedIds.has(a.id)) return false;
-  if (hiddenFormatsBattle.has(a.format)) return false;
+  if (hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return false;
   return true;
 }
 
@@ -3156,6 +3168,7 @@ function _pickWsoOpponent() {
     if (i === wsoWinnerIdx) continue;
     if (excludedIds.has(animeList[i].id)) continue;
     if (hiddenFormatsBattle.has(animeList[i].format)) continue;
+    if (hiddenStatusesBattle.has(animeList[i].status)) continue;
     // v1.0.211 — battle-within-franchise constrains the WSO pool too
     if (battleWithinFranchise && !battleWithinFranchise.ids.has(animeList[i].id)) continue;
     eligible.push(i);
@@ -11196,7 +11209,7 @@ function pickOneOpponent(keepIdx) {
   // pattern as pickOpponents).
   const keepAnime = animeList[keepIdx];
   const weights = animeList.map(a => {
-    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return 0;
     if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return 0;
     if (avoidSameFranchise && _sameFranchise(keepAnime, a)) return 0;
     const base = 1 / (a.comparisons + 1);
@@ -11226,7 +11239,7 @@ function pickOneOpponent(keepIdx) {
   let finalTotal = totalW;
   if (totalW === 0 && avoidSameFranchise) {
     finalWeights = animeList.map(a => {
-      if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return 0;
+      if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return 0;
       if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return 0;
       const base = 1 / (a.comparisons + 1);
       return a.fuzzy ? base * 0.1 : base;
@@ -11248,7 +11261,7 @@ function pickOneOpponent(keepIdx) {
   for (let i = 0; i < n; i++) {
     if (i === keepIdx) continue;
     const a = animeList[i];
-    if (a && !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format)) return i;
+    if (a && !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format) && !hiddenStatusesBattle.has(a.status)) return i;
   }
   return keepIdx === 0 ? 1 : 0;
 }
@@ -14203,11 +14216,14 @@ function toggleStudioAnimePanel(panelId, studioName) {
 
   panel.innerHTML = anime.map(a => {
     const rank    = rankedIds.indexOf(a.id);
-    const rankStr = rank >= 0 ? `#${rank + 1}` : '—';
+    // v1.0.212 — `#` prefix wrapped in a separate span so a mobile media
+    // query can hide it (saving ~10px of horizontal real estate per row
+    // for titles, which is the actual scarce resource on a phone).
+    const rankHtml = rank >= 0 ? `<span class="rank-hash">#</span>${rank + 1}` : '—';
     const idx     = animeList.indexOf(a);
     return `
       <div class="studio-anime-item" onclick="openDetail(${idx})">
-        <span class="studio-anime-rank">${rankStr}</span>
+        <span class="studio-anime-rank">${rankHtml}</span>
         <img class="studio-anime-cover"${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy"
              onerror="this.style.display='none'" />
         <span class="studio-anime-title">${esc(displayTitle(a))}</span>
@@ -15425,12 +15441,34 @@ function _syncSortUI() {
     const label = item.dataset.label || item.textContent;
     item.textContent = active ? `${label} ${showUp ? '↑' : '↓'}` : label;
   });
-  // Update the dropdown trigger label
+  // v1.0.212 — Franchise sorts now live in their own visible dropdown next
+  // to the main one when franchise mode is on. The main dropdown label
+  // shows a standard sort (default ELO ↓) when active; the franchise
+  // dropdown label shows the active franchise sort if one is selected,
+  // otherwise reads "—".
+  const isFranchiseSort = currentSort === 'peak' || currentSort === 'members';
   const currentEl = byId(IDS.sortMenuCurrent);
   if (currentEl) {
-    const activeItem = document.querySelector(`.sort-menu-item[data-sort="${currentSort}"]`);
-    const label = activeItem?.dataset?.label || currentSort;
-    currentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
+    if (isFranchiseSort) {
+      // The active sort is a franchise sort; leave the main dropdown
+      // showing a stable default (ELO ↓) so users have a clear path back
+      // to standard sorting. The franchise dropdown gets the active label.
+      currentEl.textContent = 'ELO ↓';
+    } else {
+      const activeItem = document.querySelector(`.sort-menu-item[data-sort="${currentSort}"]`);
+      const label = activeItem?.dataset?.label || currentSort;
+      currentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
+    }
+  }
+  const franchiseCurrentEl = byId(IDS.franchiseSortMenuCurrent);
+  if (franchiseCurrentEl) {
+    if (isFranchiseSort) {
+      const activeItem = document.querySelector(`#franchise-sort-menu-popover .sort-menu-item[data-sort="${currentSort}"]`);
+      const label = activeItem?.dataset?.label || currentSort;
+      franchiseCurrentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
+    } else {
+      franchiseCurrentEl.textContent = '—';
+    }
   }
   // Update table headers
   document.querySelectorAll('#ranking-table thead th[id]').forEach(th => {
@@ -15483,6 +15521,49 @@ function _closeSortMenu() {
 }
 function setSortFromMenu(type) {
   _closeSortMenu();
+  setSort(type);
+}
+
+// v1.0.212 — Franchise sort dropdown handlers. Mirrors the main sort menu
+// but anchored to its own button + popover. Visibility is CSS-controlled
+// by body.franchise-mode-on (set/cleared in toggleFranchiseMode + boot).
+function toggleFranchiseSortMenu(event) {
+  event?.stopPropagation();
+  const pop = byId(IDS.franchiseSortMenuPopover);
+  const btn = byId(IDS.franchiseSortMenuBtn);
+  if (!pop || !btn) return;
+  const open = pop.hasAttribute('hidden');
+  if (open) {
+    pop.removeAttribute('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+    const closer = (e) => {
+      if (pop.contains(e.target) || btn.contains(e.target)) return;
+      _closeFranchiseSortMenu();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    const escCloser = (e) => {
+      if (e.key !== 'Escape') return;
+      _closeFranchiseSortMenu();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    setTimeout(() => {
+      document.addEventListener('click', closer, true);
+      document.addEventListener('keydown', escCloser);
+    }, 0);
+  } else {
+    _closeFranchiseSortMenu();
+  }
+}
+function _closeFranchiseSortMenu() {
+  const pop = byId(IDS.franchiseSortMenuPopover);
+  const btn = byId(IDS.franchiseSortMenuBtn);
+  if (pop) pop.setAttribute('hidden', '');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function setFranchiseSortFromMenu(type) {
+  _closeFranchiseSortMenu();
   setSort(type);
 }
 
@@ -15584,6 +15665,35 @@ function toggleFormat(fmt, scope = 'ranking') {
 // the filter), re-render the active mode if the currently-shown pair is now
 // disallowed. Also re-highlights the filter button so users see they have an
 // active filter.
+// v1.0.212 — Watch-status filter toggle for the battle pool. Mirrors the
+// avoidSameFranchise pattern: persist state via _saveViewPrefs, invalidate
+// the preloaded pair (it was picked under the old filter), then re-render
+// the current arena so a now-hidden anime is replaced immediately.
+function toggleHideStatus(statusKey) {
+  if (hiddenStatusesBattle.has(statusKey)) hiddenStatusesBattle.delete(statusKey);
+  else                                     hiddenStatusesBattle.add(statusKey);
+  _saveViewPrefs();
+  _preloadedPair = null;
+  _preloadedImgs = null;
+  const battleVisible = byId(IDS.battleScreen)?.style.display !== 'none';
+  if (!battleVisible || towerMode) return;
+  if (trioMode) {
+    // If the current trio includes a hidden-status anime, repaint with a
+    // fresh trio from the new pool.
+    const anyHidden = currentTrio.some(i => hiddenStatusesBattle.has(animeList[i]?.status));
+    if (anyHidden) { pickTrio(); renderTrio(); }
+    return;
+  }
+  if (currentA != null && currentB != null) {
+    const a = animeList[currentA], b = animeList[currentB];
+    if (hiddenStatusesBattle.has(a?.status) || hiddenStatusesBattle.has(b?.status)) {
+      renderBattle();
+    }
+  } else {
+    renderBattle();
+  }
+}
+
 function toggleAvoidSameFranchise() {
   const chk = byId(IDS.avoidSameFranchiseChk);
   avoidSameFranchise = !!(chk && chk.checked);
@@ -15643,11 +15753,16 @@ function syncFormatButtons() {
   // highlight so any active filter (format or franchise-avoid) draws the eye.
   const avoidChk = byId(IDS.avoidSameFranchiseChk);
   if (avoidChk) avoidChk.checked = avoidSameFranchise;
+  // v1.0.212 — sync the watch-status checkboxes too.
+  const hideCurrentChk = byId(IDS.hideCurrentChk);
+  if (hideCurrentChk) hideCurrentChk.checked = hiddenStatusesBattle.has('CURRENT');
+  const hideRepeatingChk = byId(IDS.hideRepeatingChk);
+  if (hideRepeatingChk) hideRepeatingChk.checked = hiddenStatusesBattle.has('REPEATING');
   // Highlight the battle-screen filter button if any battle-scope filter is active
   const filterBtn = byId(IDS.filterBtn);
   if (filterBtn) {
     filterBtn.classList.toggle('has-filter',
-      hiddenFormatsBattle.size > 0 || avoidSameFranchise);
+      hiddenFormatsBattle.size > 0 || avoidSameFranchise || hiddenStatusesBattle.size > 0);
   }
 }
 
@@ -16253,6 +16368,7 @@ function _recordBattleWithinPair(idA, idB) {
     battleWithinFranchise.ids.has(a.id)
     && !excludedIds.has(a.id)
     && !hiddenFormatsBattle.has(a.format)
+    && !hiddenStatusesBattle.has(a.status)
   );
   const n = eligible.length;
   if (n < 2) {
@@ -16289,7 +16405,7 @@ function startBattleWithinFranchise(name) {
   // existing pool filters so Battle Within respects the user's mental model
   // of "active battle pool". If that knocks the set under 2, we tell them.
   const eligible = group.members.filter(a =>
-    !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format)
+    !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format) && !hiddenStatusesBattle.has(a.status)
   );
   if (eligible.length < 2) {
     showToast(`⚠️ "${name}" needs ≥2 eligible entries to battle (try removing format filters).`, 4500);
@@ -16367,6 +16483,12 @@ function battleNextFromModal() {
   // their own filter — call it out.
   if (hiddenFormatsBattle.has(animeList[idx].format)) {
     showToast('That anime’s format is currently hidden from battles. Adjust your format filter to queue it.', 4500);
+    return;
+  }
+  // v1.0.212 — status filter parity. CURRENT/REPEATING entries can't validly
+  // enter the queue if the user has filtered out that status from battles.
+  if (hiddenStatusesBattle.has(animeList[idx].status)) {
+    showToast('That anime’s watch status is currently hidden from battles. Adjust your status filter to queue it.', 4500);
     return;
   }
   // Battle Within is a stricter pool than the user expects when they click
@@ -16624,7 +16746,7 @@ function pickTrio() {
   const pool    = [];
   const weights = [];
   animeList.forEach((a, i) => {
-    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return;
     // v1.0.211 — battle-within-franchise restriction applies to trio too
     if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return;
     pool.push(i);
@@ -16846,7 +16968,7 @@ function trioExcludeAnime(event, pos) {
   const candidates = [];
   const weights    = [];
   animeList.forEach((a, i) => {
-    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) return;
+    if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return;
     if (keepIndices.has(i)) return;
     candidates.push(i);
     const base = 1 / ((a.comparisons || 0) + 1);
@@ -17133,6 +17255,7 @@ function pickSettlePair() {
     .filter(({ a }) =>
       !excludedIds.has(a.id) &&
       !hiddenFormatsBattle.has(a.format) &&
+      !hiddenStatusesBattle.has(a.status) &&
       (!battleWithinFranchise || battleWithinFranchise.ids.has(a.id)) &&
       (a.battles || 0) < TARGET_BATTLES_PER_ANIME
     );
@@ -17148,7 +17271,7 @@ function pickSettlePair() {
     // of Settle whenever filters wiped the pool — inconsistent with the
     // other modes which leave the user in-mode and just hide the arena.
     const eligibleCount = animeList.filter(a =>
-      !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format)
+      !excludedIds.has(a.id) && !hiddenFormatsBattle.has(a.format) && !hiddenStatusesBattle.has(a.status)
     ).length;
     if (eligibleCount >= 2) setMode('normal'); // case (a) — confidence threshold met
     return null; // either way, signal to caller
@@ -17222,6 +17345,7 @@ function populateTowerList(q) {
     .filter(({ a }) =>
       !excludedIds.has(a.id) &&
       !hiddenFormatsBattle.has(a.format) &&
+      !hiddenStatusesBattle.has(a.status) &&
       (!q || displayTitle(a).toLowerCase().includes(q))
     )
     .sort((x, y) => y.a.elo - x.a.elo);
@@ -17307,7 +17431,7 @@ function _pickNextTowerOpponent(champIdx) {
     for (let i = 0; i < animeList.length; i++) {
       if (i === champIdx) continue;
       const a = animeList[i];
-      if (!a || excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format)) continue;
+      if (!a || excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) continue;
       if (usedIds.has(a.id)) continue;
       if (Math.abs((a.elo || 1200) - (champion.elo || 1200)) > bandWidth) continue;
       candidates.push(i);
@@ -17453,6 +17577,7 @@ function _saveViewPrefs() {
       // behaviour the old format-row had via the saveState route.
       JSON.stringify({
         rankingView, franchiseMode, avoidSameFranchise,
+        hiddenStatusesBattle: [...hiddenStatusesBattle],
         searchChips: _serialiseSearchChips(),
       }));
   } catch { /* storage full — not critical */ }
@@ -17465,6 +17590,7 @@ function _loadViewPrefs() {
     if (p.rankingView) rankingView = p.rankingView;
     if (p.franchiseMode != null) franchiseMode = p.franchiseMode;
     if (p.avoidSameFranchise != null) avoidSameFranchise = !!p.avoidSameFranchise;
+    if (Array.isArray(p.hiddenStatusesBattle)) hiddenStatusesBattle = new Set(p.hiddenStatusesBattle);
     if (p.searchChips) _deserialiseSearchChips(p.searchChips);
   } catch { /* corrupt — ignore */ }
 }
@@ -18761,6 +18887,9 @@ const APP_VERSION = (() => {
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
+    'Battle pool watch-status filter — the ≡ Filter popover can now hide currently-watching and rewatching anime so airing shows stay out of battles until they finish.',
+    'Mobile polish — list view shows full titles again, the sort dropdown opens cleanly on narrow viewports, Studio Affinity gets bigger covers + a stronger left rail, and the back button stays inside Kessen instead of escaping to the browser.',
+    'Franchise sort split into its own dropdown next to the main sort — clearer that it only applies when Franchise mode is on.',
     'New franchise tools — Battle Within Franchise (settle "which AoT season is best?") with auto-stop once every pair has been battled, Bulk Exclude, Avoid Same Franchise filter, and a softer Tower down-weight for same-franchise opponents.',
     'Rankings filter picker — five chip categories (Genre, Studio, Year, Format, Length) with live counts. Replaces the old format and length button rows with a single consistent model.',
     'Smarter chip logic — values inside the same category match with OR, values across categories match with AND. The pills now render with "or" / "and" between them so the boolean logic is visible.',

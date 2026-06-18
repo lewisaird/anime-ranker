@@ -1799,6 +1799,35 @@
       color: var(--text-bright);
     }
 
+    /* v1.0.212 — Mobile polish for the Studio Affinity expanded panel.
+       Desktop sizing felt too cramped on a phone (28x40 covers = postage
+       stamps, # prefix wastes width, subtle grey rail was almost invisible).
+       Below, the panel rail becomes a brand-blue accent matching the
+       franchise-sort dropdown's left bar, covers grow to anime-cover
+       proportions, the # prefix hides to give titles more room, and the
+       row gap tightens so the 4 entries fit without the screen feeling
+       sparse. */
+    @media (max-width: 640px) {
+      .studio-anime-panel {
+        border-left-color: var(--accent-blue);
+        border-left-width: 3px;
+        padding-left: 12px;
+      }
+      .studio-anime-rank {
+        width: 28px;
+        font-size: 0.74rem;
+      }
+      .studio-anime-rank .rank-hash { display: none; }
+      .studio-anime-cover {
+        width: 40px;
+        height: 56px;
+      }
+      .studio-anime-item {
+        padding: 6px 4px;
+        gap: 10px;
+      }
+    }
+
     .studio-anime-elo {
       flex-shrink: 0;
       color: var(--text-secondary);
@@ -2845,25 +2874,15 @@
       color: var(--accent-blue);
       font-weight: 600;
     }
-    .sort-menu-franchise-divider {
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--text-secondary);
-      padding: 8px 12px 2px;
-      border-top: 1px solid var(--border-subtle);
-      margin-top: 4px;
-    }
-    /* Franchise-only items mirror the existing .franchise-only behaviour:
-       hidden by default, revealed when body.franchise-mode-on is set. The
-       divider also follows so the section header doesn't dangle on its own. */
-    .sort-menu-item.franchise-only,
-    .sort-menu-franchise-divider {
-      display: none;
-    }
-    body.franchise-mode-on .sort-menu-item.franchise-only,
-    body.franchise-mode-on .sort-menu-franchise-divider {
-      display: block;
+    /* v1.0.212 — The franchise sort dropdown is its own visible control
+       next to the main sort dropdown (more discoverable than buried inside
+       the main menu). Hidden by default; body.franchise-mode-on reveals it.
+       Picks up the same styling as the main sort menu. */
+    .sort-menu-franchise { display: none; }
+    body.franchise-mode-on .sort-menu-franchise { display: block; }
+    .sort-menu-franchise .sort-menu-btn {
+      border-left: 3px solid var(--accent-blue);
+      padding-left: 11px;
     }
     .sort-btn {
       background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
@@ -3741,6 +3760,30 @@
     .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 90px; }   /* AniList Avg */
     .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 56px; }   /* Tier */
     .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 130px; }  /* Confidence */
+    /* v1.0.212 — Mobile list view fix. With table-layout: fixed and ~762px
+       of summed column widths, the title column (width: auto) collapsed to
+       0px on phones — the screen just showed numbers with no titles. On
+       narrow viewports, hide the lower-priority columns (AniList Avg,
+       Tier, Confidence) and let title take the remaining space with a
+       sensible minimum. Win Rate + Battles + ELO + cover + # still fit. */
+    @media (max-width: 640px) {
+      .ranking-table th:nth-child(3), .ranking-table td:nth-child(3) {
+        width: auto;
+        min-width: 140px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ranking-table th:nth-child(7), .ranking-table td:nth-child(7),
+      .ranking-table th:nth-child(8), .ranking-table td:nth-child(8),
+      .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) {
+        display: none;
+      }
+      .ranking-table th, .ranking-table td { padding: 7px 6px; font-size: 0.78rem; }
+      .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 60px; }
+      .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 64px; }
+      .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 56px; }
+    }
     .ranking-table th {
       text-align: left; padding: 8px 10px;
       color: var(--text-secondary); border-bottom: 1px solid var(--border-default);
@@ -4901,16 +4944,19 @@
       .format-row::-webkit-scrollbar { display: none; }
       .format-btn { flex-shrink: 0; font-size: 0.7rem; padding: 4px 10px; }
 
-      /* Sort/control row — horizontal scroll on mobile */
+      /* v1.0.212 — Sort row on mobile. Was previously a horizontal-scroll
+         container built for the row of 7 sort buttons. With the new sort
+         dropdown the row only contains 4 items (dropdown + Fuzzy +
+         Franchise + view toggle), all of which fit comfortably with wrap.
+         The old `overflow-x: auto` had a nasty side effect: per spec, when
+         either axis is non-visible, the other becomes auto too — which
+         clipped the sort dropdown popover (positioned below the button)
+         vertically. On mobile that just meant tapping ELO did nothing. */
       .list-controls {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
+        flex-wrap: wrap;
         gap: 5px;
         padding-bottom: 4px;
       }
-      .list-controls::-webkit-scrollbar { display: none; }
       .sort-btn { flex-shrink: 0; font-size: 0.72rem; padding: 4px 8px; }
       .fuzzy-filter-btn { flex-shrink: 0; font-size: 0.72rem; padding: 4px 8px; }
       #franchise-btn { flex-shrink: 0; }

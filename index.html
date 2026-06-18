@@ -938,6 +938,27 @@
             <button type="button" class="filter-fmt-btn active" data-format="TV_SHORT" onclick="toggleFormat('TV_SHORT', 'battle')">Short</button>
             <button type="button" class="filter-fmt-btn active" data-format="SPECIAL"  onclick="toggleFormat('SPECIAL', 'battle')">Special</button>
           </div>
+          <!-- v1.0.212 — Watch-status filter. Battle pool includes Completed,
+               Currently watching (CURRENT), and Rewatching (REPEATING) by
+               default. Users with active shows often want to keep them out
+               of the pool until they're done. Two checkboxes since Completed
+               is implicit (excluding it would empty the pool). -->
+          <div class="filter-divider"></div>
+          <div class="filter-popover-title" style="margin-top: 4px">Battle pool status</div>
+          <label class="filter-toggle-row" for="hide-current-chk">
+            <input type="checkbox" id="hide-current-chk" onchange="toggleHideStatus('CURRENT')" />
+            <span class="filter-toggle-text">
+              Hide currently watching
+              <span class="filter-toggle-sub">Keep airing shows out until finished</span>
+            </span>
+          </label>
+          <label class="filter-toggle-row" for="hide-repeating-chk">
+            <input type="checkbox" id="hide-repeating-chk" onchange="toggleHideStatus('REPEATING')" />
+            <span class="filter-toggle-text">
+              Hide rewatching
+              <span class="filter-toggle-sub">Skip shows you're going through again</span>
+            </span>
+          </label>
           <!-- v1.0.211 — Avoid same franchise. When on, the picker skips pairs
                whose anime share a franchise group (so you don't get AoT S1
                vs AoT S2 repeatedly when ranking sequels you've already
@@ -1045,9 +1066,23 @@
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="score"      data-label="AniList Avg"  onclick="setSortFromMenu('score')">AniList Avg</button>
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="tier"       data-label="Tier"         onclick="setSortFromMenu('tier')">Tier</button>
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="confidence" data-label="Confidence"   onclick="setSortFromMenu('confidence')">Confidence</button>
-            <div class="sort-menu-franchise-divider" aria-hidden="true">⛓ Franchise sorts</div>
-            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="peak"    data-label="Top ELO"      onclick="setSortFromMenu('peak')">★ Top ELO</button>
-            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="members" data-label="Member count" onclick="setSortFromMenu('members')">Members</button>
+          </div>
+        </div>
+        <!-- v1.0.212 — Franchise sort got promoted out of the main dropdown
+             into its own visible button so users can see the franchise-only
+             options at a glance when franchise mode is on. Hidden by default;
+             body.franchise-mode-on reveals it. The label shows the active
+             franchise sort if one is selected, otherwise reads "Sort". -->
+        <div class="sort-menu-wrap sort-menu-franchise" id="franchise-sort-wrap">
+          <button type="button" class="sort-menu-btn" id="franchise-sort-menu-btn"
+                  onclick="toggleFranchiseSortMenu(event)" aria-haspopup="menu" aria-expanded="false">
+            <span class="sort-menu-label-prefix">⛓ Franchise sort:</span>
+            <span class="sort-menu-label" id="franchise-sort-menu-current">—</span>
+            <span class="sort-menu-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div id="franchise-sort-menu-popover" class="sort-menu-popover" hidden role="menu">
+            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="peak"    data-label="Top ELO"      onclick="setFranchiseSortFromMenu('peak')">★ Top ELO</button>
+            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="members" data-label="Member count" onclick="setFranchiseSortFromMenu('members')">Members</button>
           </div>
         </div>
         <div id="ranking-controls-right">
