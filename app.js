@@ -4839,7 +4839,8 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   return card;
 }
 
-function showFranchiseDetail(groupName) {
+function showFranchiseDetail(groupName, opts) {
+  const skipHistoryPush = !!(opts && opts.skipHistoryPush);
   // Use unfiltered list so all franchise members show regardless of active filters
   const groups = _buildFranchiseGroups(getSortedList());
   const group  = groups.find(g => g.name === groupName);
@@ -5013,7 +5014,9 @@ function showFranchiseDetail(groupName) {
 
   byId(IDS.detailModal).style.display = 'flex';
   byId(IDS.detailModal).scrollTop = 0;
-  pushModalBack('detail', closeDetailModal);
+  // v1.0.212 — skipHistoryPush is used by navigateBackToFranchise when
+  // swapping content in an already-open detail modal. See showAnimeDetail.
+  if (!skipHistoryPush) pushModalBack('detail', closeDetailModal);
 }
 
 function closeDetailModal() {
@@ -5035,11 +5038,19 @@ function closeDetailModal() {
 // (after showAnimeDetail repaints the modal) and hidden by closeDetailModal /
 // a direct showAnimeDetail call.
 let _detailFranchiseBack = null;
+// v1.0.212 fix — Was previously doing `closeDetailModal()` + `showAnimeDetail()`
+// in the same synchronous block, which races the `history.back()` /
+// `history.pushState` calls inside each. The browser would sometimes pop past
+// the synthetic detail-modal entry, navigating away from the app entirely.
+// Now we swap modal content in place — the modal element stays open and the
+// "detail" entry stays in the back stack the whole transition, so the in-modal
+// ← Back button just re-renders content rather than touching history at all.
 function navigateToFranchiseMember(id, franchiseName) {
   _detailFranchiseBack = franchiseName || null;
-  closeDetailModal(); // resets back state — restore it after
+  showAnimeDetail(id, { skipHistoryPush: true });
+  // showAnimeDetail clears the back state because it doesn't know it's
+  // being called from a franchise → member transition. Re-set after.
   _detailFranchiseBack = franchiseName || null;
-  showAnimeDetail(id);
   const backBtn = byId(IDS.modalFranchiseBackBtn);
   if (backBtn && _detailFranchiseBack) backBtn.style.display = '';
 }
@@ -5047,8 +5058,9 @@ function navigateBackToFranchise() {
   const name = _detailFranchiseBack;
   if (!name) { closeDetailModal(); return; }
   _detailFranchiseBack = null;
-  closeDetailModal();
-  showFranchiseDetail(name);
+  const backBtn = byId(IDS.modalFranchiseBackBtn);
+  if (backBtn) backBtn.style.display = 'none';
+  showFranchiseDetail(name, { skipHistoryPush: true });
 }
 
 function toggleFranchiseExpand(el) {
@@ -15222,7 +15234,8 @@ function _paintTasteEras(el, data /*, overallAvg */) {
 }
 
 // ─── ANIME DETAIL MODAL ───────────────────────────────────────────────────────
-function showAnimeDetail(id) {
+function showAnimeDetail(id, opts) {
+  const skipHistoryPush = !!(opts && opts.skipHistoryPush);
   const anime = animeList.find(a => a.id === id);
   if (!anime) return;
 
@@ -15332,7 +15345,11 @@ function showAnimeDetail(id) {
   byId(IDS.detailModal).style.display = 'block';
   byId(IDS.detailModal).scrollTop = 0;
   byId(IDS.modalDescription).scrollTop = 0;
-  pushModalBack('detail', closeDetail);
+  // v1.0.212 — skipHistoryPush is used by navigateToFranchiseMember when
+  // it's swapping content in an already-open detail modal. The existing
+  // 'detail' entry in the back stack stays valid (it points to a close
+  // function that still works for this content).
+  if (!skipHistoryPush) pushModalBack('detail', closeDetail);
 }
 
 function closeDetail() {
