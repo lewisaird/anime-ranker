@@ -19330,7 +19330,16 @@ async function togglePushMaster(checked) {
         endpoint:   sub.endpoint,
         syncedAt:   Date.now(),
       });
-      toast('Phone notifications enabled.', 'ok');
+      // v1.0.218 — server returns `towerRetryError` when the Tower-retry
+      // opt-in snapshot failed. In that case the registration still
+      // succeeded (subscription saved, WT/LC categories on) but Tower-retry
+      // was forced off in the saved record. Tell the user so they can
+      // retry the toggle instead of silently sitting in a broken state.
+      if (result.towerRetryError) {
+        toast(`Notifications enabled. Tower-retry couldn’t set up (${result.towerRetryError}) — toggle it again to retry.`, 'warn');
+      } else {
+        toast('Phone notifications enabled.', 'ok');
+      }
       // v1.0.170 — Notification.permission can lag by a tick in Chrome / Edge
       // after requestPermission() resolves 'granted'. The immediate
       // _pushRefreshUI() at the bottom of this function reads the stale
@@ -19373,7 +19382,24 @@ async function setPushCategory(name, checked) {
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
-      if (sub) await _pushRegisterServer(sub, local.categories);
+      if (sub) {
+        const result = await _pushRegisterServer(sub, local.categories);
+        // v1.0.218 — server is source of truth for categories. If the
+        // snapshot failed when ticking the Tower-retry checkbox, the
+        // server forces towerRetry off in the saved record AND returns
+        // towerRetryError. Reflect that locally so the UI matches reality
+        // (the checkbox snaps back off) and tell the user to retry. Without
+        // this the same silent-broken-state we just fixed at master-toggle
+        // would happen here too.
+        if (result?.categories) {
+          local.categories = { ...local.categories, ...result.categories };
+          _pushSaveLocal(local);
+        }
+        if (result?.towerRetryError) {
+          toast(`Tower-retry couldn’t set up (${result.towerRetryError}) — try again in a moment.`, 'warn');
+          _pushRefreshUI();
+        }
+      }
     } catch { /* best-effort; the toggle reverts on next refresh */ }
   }
 }
