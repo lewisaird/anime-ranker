@@ -7925,20 +7925,27 @@ function _wtClearDeepLink() {
 // v1.0.219 — Tower-retry push deep link. The /api/tower-retry-poll Netlify
 // function delivers pushes with `?tower=1&mediaId=N` for a single-anime push
 // (or just `?tower=1` for a batched push covering several completions). Tap
-// the notification → app opens at that URL → this handler runs once the
-// rankings are loaded → it starts a Tower run with that anime as the climber.
+// the notification → handler runs (either at boot OR via SW postMessage,
+// see _installNotificationClickListener) → it starts a Tower run with that
+// anime as the climber.
 //
-// Unlike _lcCheckDeepLink and _wtCheckDeepLink, this one MUST run after the
-// AniList sync has populated `animeList`, because we need the array index of
-// the target anime to call startTower(). It's invoked from the end of
-// `showResults()` rather than from the initial username-screen handler.
-function _towerCheckDeepLink() {
-  const params = new URLSearchParams(window.location.search);
+// v1.0.220 — accepts an optional `urlOverride` so the SW postMessage path
+// can pass the deep-link URL directly. When called from showResults() at
+// boot, urlOverride is undefined and we fall back to window.location.search.
+function _towerCheckDeepLink(urlOverride) {
+  let params;
+  try {
+    params = urlOverride
+      ? new URL(urlOverride, window.location.origin).searchParams
+      : new URLSearchParams(window.location.search);
+  } catch { return; }
   if (params.get('tower') !== '1') return;
   const mediaIdRaw = params.get('mediaId');
   const mediaId = mediaIdRaw ? Number(mediaIdRaw) : null;
 
-  _towerClearDeepLink();
+  // Only clear the URL when the deep link came from the URL itself, not from
+  // a SW postMessage (in which case the URL bar may be on something else).
+  if (!urlOverride) _towerClearDeepLink();
 
   if (Number.isFinite(mediaId)) {
     // Look the anime up in the user's current Kessen list.
@@ -7960,6 +7967,40 @@ function _towerCheckDeepLink() {
   // open the Tower picker so the user can find what they want manually.
   try { openTowerModal(); } catch { /* defensive */ }
 }
+
+// v1.0.220 — SW → client deep-link bridge. The Service Worker postMessages
+// us when the user taps a notification while the app is already loaded
+// (foreground or background TWA). Without this, deep links from notifications
+// on a running TWA were lost: WindowClient.navigate() is unreliable in TWAs,
+// and even when it works the boot-time handlers in showResults() don't re-run
+// when the URL changes on a live page.
+//
+// We install the listener as early as possible (inline at script load, not
+// inside DOMContentLoaded) so it's ready before any push notification can
+// fire — the SW won't queue messages if no listener exists yet.
+function _installNotificationClickListener() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || msg.type !== 'kessen-notification-click') return;
+    const url = msg.url || '/';
+    // Dispatch to the right handler based on the deep-link path/params.
+    // Tower-retry is the only one currently piped through postMessage; WT/LC
+    // use a separate flow (deep links land on a fresh page or trigger their
+    // own auto-rejoin code path), but we leave room here to extend.
+    try {
+      const parsed = new URL(url, window.location.origin);
+      const p = parsed.searchParams;
+      if (p.get('tower') === '1') {
+        _towerCheckDeepLink(url);
+        return;
+      }
+      // Future deep-link types (e.g. wt=, lc= delivered via SW postMessage)
+      // can dispatch from here.
+    } catch { /* defensive — bad URL on the way in */ }
+  });
+}
+_installNotificationClickListener();
 
 function _towerClearDeepLink() {
   try {

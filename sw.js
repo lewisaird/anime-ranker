@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.219';
+const APP_VERSION  = '1.0.220';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -246,10 +246,29 @@ self.addEventListener('push', event => {
 });
 
 // Notification click — focus an existing Kessen tab if one is open, otherwise
-// open a new one at the payload's deep-link target. Standard PWA pattern.
+// open a new one at the payload's deep-link target.
+//
+// v1.0.220 — When the TWA is in the background and the user taps a
+// notification, the previous "navigate + focus" approach was structurally
+// broken in two ways:
+//   1. WindowClient.navigate() is unreliable inside TWAs / standalone PWAs:
+//      it either throws or returns without triggering a true page load.
+//      The catch silently swallowed the error and we'd just focus the
+//      existing window at whatever URL it was already on — the deep-link
+//      query string ('?tower=1&mediaId=…') never reached the client.
+//   2. Even if the navigation HAD happened, the client's deep-link handlers
+//      (_towerCheckDeepLink etc.) only run once at boot from inside
+//      showResults(). A background TWA is past boot; navigating it doesn't
+//      re-run that path, so the handler never fires even with the right URL.
+// New approach: ALWAYS postMessage the deep-link data to the focused client.
+// The client has a 'message' listener that calls the appropriate deep-link
+// handler in-app, without depending on URL change or page reload. We still
+// try navigate() as a courtesy so the URL bar reflects the deep link, but
+// nothing depends on it succeeding.
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const target = event.notification.data?.url || '/';
+  const data   = event.notification.data || {};
+  const target = data.url || '/';
 
   event.waitUntil((async () => {
     const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -257,12 +276,23 @@ self.addEventListener('notificationclick', event => {
     for (const c of allClients) {
       const sameOrigin = new URL(c.url).origin === self.location.origin;
       if (sameOrigin && 'focus' in c) {
+        // Best-effort URL update so the address bar reflects the deep link.
         if (c.navigate && target !== '/') {
-          try { await c.navigate(target); } catch { /* navigate can throw on cross-origin or stale clients */ }
+          try { await c.navigate(target); } catch { /* unreliable in TWAs */ }
         }
+        // Authoritative: postMessage drives the in-app handler.
+        try {
+          c.postMessage({
+            type: 'kessen-notification-click',
+            url:  target,
+            data,
+          });
+        } catch { /* defensive */ }
         return c.focus();
       }
     }
+    // No existing client — open a fresh one at the target. The boot-time
+    // deep-link handlers will pick up the URL params normally.
     if (self.clients.openWindow) {
       return self.clients.openWindow(target);
     }
