@@ -57,7 +57,10 @@ function buildPushPayload(newOnes) {
       kind:  'tower-retry',
       title: 'Ready for the Tower',
       body:  `You finished ${t}. Take it to the Tower?`,
-      url:   '/?tower=1',
+      // v1.0.219 — deep link now includes the specific anime's media ID,
+      // so the client can start a Tower run with that exact anime as the
+      // climber instead of just opening the Tower picker.
+      url:   `/?tower=1&mediaId=${newOnes[0].id}`,
       tag:   `tower-retry-${newOnes[0].id}`,
       icon:  newOnes[0].cover || '/icon-192.png',
       data:  { mediaIds: [newOnes[0].id] },
@@ -67,6 +70,8 @@ function buildPushPayload(newOnes) {
     kind:  'tower-retry',
     title: 'Ready for the Tower',
     body:  `You finished ${newOnes.length} anime. Bring them to the Tower?`,
+    // Batch push: no single anime to deep-link to, so the client falls back
+    // to opening the Tower picker (where the user can scan their list).
     url:   '/?tower=1',
     tag:   `tower-retry-batch`,
     data:  { mediaIds: newOnes.map(n => n.id) },

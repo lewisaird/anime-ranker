@@ -19010,10 +19010,10 @@ const APP_VERSION = (() => {
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
+    'Tower-retry push notifications, properly working end-to-end — fixed a race where the first anime you finished after enabling notifications didn\'t fire, sped polling up to every 15 minutes (was hourly), and tapping the notification now drops you straight into a Tower run with that anime as the climber instead of just opening the app.',
     'Battle pool watch-status filter — the ≡ Filter popover can now hide currently-watching and rewatching anime so airing shows stay out of battles until they finish.',
-    'Tower-retry push fix — a race condition meant the first anime you finished after enabling Tower-retry notifications didn\'t actually push. Re-enable the toggle to take a fresh snapshot and future completions will fire normally.',
     'Sort order fix — tied ELO entries now appear in the correct order when sorting ascending. Previously the bottom of the list could read like #346, #344, #345, #343 instead of the expected #346, #345, #344, #343.',
-    'Mobile Rankings polish — list view restored to show every column (swipe sideways for the wider stats), the controls toolbar stays put when you change sort instead of jumping around, long grid titles cap at 2 lines so cards stay the same height, and the back button stays inside Kessen instead of escaping to the browser.',
+    'Mobile Rankings polish — list view shows every column (swipe sideways for the wider stats), the controls toolbar stays put when you change sort instead of jumping around, long grid titles cap at 2 lines so cards stay the same height, and the back button stays inside Kessen instead of escaping to the browser.',
     'Franchise sort split into its own dropdown next to the main sort — clearer that it only applies when Franchise mode is on.',
   ],
 };
@@ -19053,16 +19053,27 @@ function openWhatsNewModal() {
 }
 
 // Triggered by the "View details" action button on the app_update bell entry.
+//
+// v1.0.221 — always show the CURRENT release's WHATS_NEW.bullets, regardless
+// of which bell entry was tapped. Previously this read the bullets from the
+// saved bell entry (`notif?.data.bullets`), which baked whatever WHATS_NEW
+// existed at notification-creation time into the entry. If a user updated
+// while running cached JS with an older WHATS_NEW (e.g. the 15-bullet
+// accumulated list from v1.0.211), the bell entry stored those 15 bullets
+// — and they'd keep showing forever, even after subsequent updates where
+// the maintained WHATS_NEW.bullets had been trimmed to the current release.
+// Now the modal always reads from the live WHATS_NEW constant. The bell
+// entry's stored fromVersion / toVersion are still useful as metadata
+// (could surface "v1.0.211 → v1.0.221" later) but the body content is
+// authoritative from the running build.
 function ncActionShowWhatsNew(id) {
-  const notif = _notifCentre.find(n => n.id === id);
   const modal = byId(IDS.whatsNewModal);
   if (!modal) return;
   const title    = byId(IDS.whatsNewTitle);
   const bulletsEl = byId(IDS.whatsNewBullets);
-  const data = notif?.data || WHATS_NEW;
-  if (title)    title.textContent = data.title || WHATS_NEW.title;
+  if (title)    title.textContent = WHATS_NEW.title;
   if (bulletsEl) {
-    bulletsEl.innerHTML = (data.bullets || []).map(b => `<li>${esc(String(b))}</li>`).join('');
+    bulletsEl.innerHTML = (WHATS_NEW.bullets || []).map(b => `<li>${esc(String(b))}</li>`).join('');
   }
   modal.style.display = 'flex';
   // Hook Escape + browser-back close, matching the rest of the modal stack.
