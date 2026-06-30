@@ -18910,24 +18910,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
+// v1.0.218 — These bullets describe THIS RELEASE only. When the next release
+// ships, REPLACE this list with that release's notable changes — don't append.
+// Previous releases were accumulating bullets here, making "What's new" read
+// as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
     'Battle pool watch-status filter — the ≡ Filter popover can now hide currently-watching and rewatching anime so airing shows stay out of battles until they finish.',
-    'Mobile Rankings polish — the controls toolbar flows as one row (no more split half-rows or empty gap in the middle), list view keeps the covers + every column and swipes sideways for the wider stats, filter chips wrap balanced 3+2 instead of 4+1, Studio Affinity has bigger covers + a stronger left rail, the back button stays inside Kessen, and the sort dropdown opens cleanly on narrow viewports.',
+    'Tower-retry push fix — a race condition meant the first anime you finished after enabling Tower-retry notifications didn\'t actually push. Re-enable the toggle to take a fresh snapshot and future completions will fire normally.',
+    'Sort order fix — tied ELO entries now appear in the correct order when sorting ascending. Previously the bottom of the list could read like #346, #344, #345, #343 instead of the expected #346, #345, #344, #343.',
+    'Mobile Rankings polish — list view restored to show every column (swipe sideways for the wider stats), the controls toolbar stays put when you change sort instead of jumping around, long grid titles cap at 2 lines so cards stay the same height, and the back button stays inside Kessen instead of escaping to the browser.',
     'Franchise sort split into its own dropdown next to the main sort — clearer that it only applies when Franchise mode is on.',
-    'New franchise tools — Battle Within Franchise (settle "which AoT season is best?") with auto-stop once every pair has been battled, Bulk Exclude, Avoid Same Franchise filter, and a softer Tower down-weight for same-franchise opponents.',
-    'Rankings filter picker — five chip categories (Genre, Studio, Year, Format, Length) with live counts. Replaces the old format and length button rows with a single consistent model.',
-    'Smarter chip logic — values inside the same category match with OR, values across categories match with AND. The pills now render with "or" / "and" between them so the boolean logic is visible.',
-    '⚔ Battle Next chip on the anime detail modal — queues the open anime as one half of your next battle in one tap.',
-    'Sort dropdown replacing the row of 7 sort buttons. Franchise-only sorts live inside the same dropdown.',
-    'Inline filter search inside Genre / Studio popovers, and Year range supports Enter-to-apply.',
-    '🎯 Strong match badges now show up across every Discover section (For You, Genre Dive, Hidden Gems, Mood) — not just Seasonal.',
-    'Rivalries uses the same franchise grouper as Rankings (so Pokémon spin-offs merge), and the threshold tightened so 19-1 stomps no longer show up as "rivalries".',
-    'Achievement system rebuild — Hot Streak / Top Dog / Comeback Kid bugs fixed, plus four overlapping achievements replaced with All-Stars, Loyalist, Tastemaker, and Era Curator.',
-    'Reset Everything now actually wipes the cloud copy too (it was silently restoring from cloud before).',
-    'Studios load with your initial AniList list now, so the Studio picker is instant. Older saves get a silent background top-up.',
-    'Polished card layouts, tier badges now explain themselves on hover, and a "See what\'s new" link lives inside the Help modal so you can re-read these notes any time.',
   ],
 };
 

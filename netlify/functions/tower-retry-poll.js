@@ -83,12 +83,29 @@ async function pollOne(userId, record, context) {
   // If we didn't manage the initial snapshot at register time (network blip,
   // etc.) take it now and skip any push this round — the user's existing
   // backlog isn't what they wanted notified.
+  //
+  // v1.0.218 — when filling in a delayed snapshot, use `optedInAt` as a
+  // cutoff so we only capture completions that existed at the moment the
+  // user opted in. Without this, the user could mark anime X complete after
+  // opting in but before this delayed snapshot runs, and X would silently
+  // enter `notifiedCompletions` as "already pushed". When `optedInAt` is
+  // absent (very old records from before register-time stamping), we fall
+  // back to the original behaviour — there's nothing better we can do.
   if (!record.initialSnapshotDone) {
     try {
-      const completed = await fetchCompletedAnime(record.aniListToken, record.aniListUserId);
+      const cutoffSec = Number.isFinite(record.optedInAt) && record.optedInAt > 0
+        ? Math.floor(record.optedInAt / 1000)
+        : null;
+      const completed = await fetchCompletedAnime(
+        record.aniListToken,
+        record.aniListUserId,
+        20,
+        cutoffSec !== null ? { beforeSeconds: cutoffSec } : {},
+      );
       record.notifiedCompletions = completed.map(c => c.id);
       record.initialSnapshotDone = true;
       record.lastPolledAt        = Date.now();
+      if (!record.optedInAt) record.optedInAt = Date.now();
       await savePushRecord(userId, record, context);
       return { snapshot: completed.length };
     } catch (e) {
@@ -234,7 +251,16 @@ export default async (_request, context) => {
   return Response.json(summary);
 };
 
-// Netlify scheduled-function syntax. The cron string says "every hour at :00".
+// Netlify scheduled-function syntax. The cron string says "every 15 minutes
+// (at :00, :15, :30, :45)". Bumped from hourly in v1.0.218 so Tower-retry
+// pushes feel near-real-time — worst-case lag between marking an anime
+// COMPLETED on AniList and getting the push drops from ~60 min to ~15 min.
+// Per-user AniList load is unchanged (each user is still queried once per
+// cycle); aggregate function invocation count is 4× hourly. At current
+// scale that's negligible against Netlify's free-tier function quota and
+// well under the 10-minute per-execution soft limit (see SOFT_USER_LIMIT
+// above for the cap; with the 15-min schedule, soft limit applies per
+// 15-min window rather than per hour, but still calculated the same way).
 export const config = {
-  schedule: '0 * * * *',
+  schedule: '*/15 * * * *',
 };

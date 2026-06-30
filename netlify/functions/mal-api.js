@@ -29,7 +29,9 @@ const ALLOWED_ORIGIN_PATTERNS = [
   ...EXTRA_ALLOWED,
   /^https:\/\/[a-z0-9-]+--kessen\.netlify\.app$/,  // deploy previews
   /^https:\/\/kessen\.netlify\.app$/,               // main Netlify URL
-  /^https:\/\/[a-z0-9-]+\.netlify\.app$/,           // generic *.netlify.app
+  // NOTE: deliberately NO generic *.netlify.app pattern — that would let any
+  // Netlify account use this proxy (and our client-secret quota) from a free
+  // site. Add one-off origins via the ALLOWED_ORIGINS env var instead.
   /^http:\/\/localhost(:\d+)?$/,                    // netlify dev
   /^http:\/\/127\.0\.0\.1(:\d+)?$/,
 ];

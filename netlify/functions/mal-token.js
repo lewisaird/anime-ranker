@@ -34,7 +34,7 @@ const ALLOWED_ORIGIN_PATTERNS = [
   ...EXTRA_ALLOWED,
   /^https:\/\/[a-z0-9-]+--kessen\.netlify\.app$/,
   /^https:\/\/kessen\.netlify\.app$/,
-  /^https:\/\/[a-z0-9-]+\.netlify\.app$/,
+  // No generic *.netlify.app — see mal-api.js. Use ALLOWED_ORIGINS env var.
   /^http:\/\/localhost(:\d+)?$/,
   /^http:\/\/127\.0\.0\.1(:\d+)?$/,
 ];

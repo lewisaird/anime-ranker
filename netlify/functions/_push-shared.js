@@ -229,14 +229,25 @@ export async function callAniList(token, query, variables = {}) {
 }
 
 // Fetch all COMPLETED anime media IDs for a user. Paginates 50 per page.
-// Returns: [{ id, titleEn, titleRo, cover }]. Most-recently-updated first.
-export async function fetchCompletedAnime(token, userId, maxPages = 20) {
+// Returns: [{ id, titleEn, titleRo, cover, updatedAt }]. Most-recently-updated
+// first.
+//
+// v1.0.218 — added `updatedAt` (AniList list-entry updatedAt, seconds since
+// epoch) and an optional `opts.beforeSeconds` cutoff. When the cutoff is set,
+// entries with `updatedAt >= beforeSeconds` are filtered out. This lets the
+// delayed-snapshot path in tower-retry-poll.js take a snapshot of the user's
+// state *as of opt-in time* even when running hours later — closing the
+// race condition where a register-time snapshot failure caused the
+// delayed snapshot to capture (and silently swallow) anime the user
+// completed in the gap between opting in and the next poll.
+export async function fetchCompletedAnime(token, userId, maxPages = 20, opts = {}) {
   const query = `
     query($userId:Int,$page:Int){
       Page(page:$page,perPage:50){
         pageInfo{ hasNextPage }
         mediaList(userId:$userId,status:COMPLETED,type:ANIME,sort:UPDATED_TIME_DESC){
           mediaId
+          updatedAt
           media{
             id
             title{ english romaji }
@@ -245,17 +256,35 @@ export async function fetchCompletedAnime(token, userId, maxPages = 20) {
         }
       }
     }`;
+  const beforeSeconds = Number.isFinite(opts.beforeSeconds) ? opts.beforeSeconds : null;
   const all = [];
-  for (let page = 1; page <= maxPages; page++) {
+  pages: for (let page = 1; page <= maxPages; page++) {
     const data = await callAniList(token, query, { userId, page });
     const entries = data?.Page?.mediaList || [];
     for (const e of entries) {
+      const updatedAt = Number.isFinite(e.updatedAt) ? e.updatedAt : 0;
+      // With the cutoff in play, skip anything updated at-or-after it. The
+      // list is UPDATED_TIME_DESC, so as we walk a page we hit older entries.
+      // Mid-page entries with updatedAt >= cutoff are dropped; older ones
+      // are kept. We don't break inside the loop because a single skipped
+      // entry doesn't tell us the rest of the page is uniformly newer or
+      // older (the sort is stable per second; ties can interleave).
+      if (beforeSeconds !== null && updatedAt >= beforeSeconds) continue;
       all.push({
-        id:      e.media?.id || e.mediaId,
-        titleEn: e.media?.title?.english || null,
-        titleRo: e.media?.title?.romaji  || null,
-        cover:   e.media?.coverImage?.medium || null,
+        id:        e.media?.id || e.mediaId,
+        titleEn:   e.media?.title?.english || null,
+        titleRo:   e.media?.title?.romaji  || null,
+        cover:     e.media?.coverImage?.medium || null,
+        updatedAt,
       });
+    }
+    // Cheap pagination shortcut: when a cutoff is set and the last entry on
+    // this page is already much older than the cutoff (>30d), the next page
+    // is also all older — no value in continuing past pageInfo guidance.
+    if (beforeSeconds !== null && entries.length > 0) {
+      const last = entries[entries.length - 1];
+      const lastUpd = Number.isFinite(last.updatedAt) ? last.updatedAt : 0;
+      if (lastUpd > 0 && (beforeSeconds - lastUpd) > 30 * 24 * 60 * 60) break pages;
     }
     if (!data?.Page?.pageInfo?.hasNextPage) break;
     // Polite delay between pages to stay well clear of AniList's 90 req/min cap.
