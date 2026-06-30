@@ -7984,6 +7984,14 @@ function _installNotificationClickListener() {
     const msg = event.data;
     if (!msg || msg.type !== 'kessen-notification-click') return;
     const url = msg.url || '/';
+    // v1.0.222 — diagnostic toast. v1.0.220's postMessage path appears not
+    // to be firing for at least one user (TWA on Play Store build). This
+    // toast confirms whether the SW → client message round-trip is alive.
+    // If you tap a notification and DON'T see this toast, the SW isn't
+    // posting or the listener isn't installed. If you DO see it, the bug
+    // is downstream (in the URL parsing or startTower call). Remove in the
+    // next release once the path is known-good.
+    try { showToast(`🔔 link: ${url}`, 3500); } catch { /* defensive */ }
     // Dispatch to the right handler based on the deep-link path/params.
     // Tower-retry is the only one currently piped through postMessage; WT/LC
     // use a separate flow (deep links land on a fresh page or trigger their
@@ -7992,12 +8000,15 @@ function _installNotificationClickListener() {
       const parsed = new URL(url, window.location.origin);
       const p = parsed.searchParams;
       if (p.get('tower') === '1') {
+        try { showToast(`⚡ tower handler firing, mediaId=${p.get('mediaId')}`, 3500); } catch {}
         _towerCheckDeepLink(url);
         return;
       }
       // Future deep-link types (e.g. wt=, lc= delivered via SW postMessage)
       // can dispatch from here.
-    } catch { /* defensive — bad URL on the way in */ }
+    } catch (e) {
+      try { showToast(`⚠️ deep-link parse failed: ${e.message}`, 4000); } catch {}
+    }
   });
 }
 _installNotificationClickListener();

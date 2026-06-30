@@ -1,6 +1,6 @@
 {
   "name": "anime-elo-ranker",
-  "version": "1.0.221",
+  "version": "1.0.222",
   "private": true,
   "scripts": {
     "screenshots:login": "node tools/screenshots.mjs --login",
