@@ -5274,6 +5274,10 @@ function showResults() {
   _initNewBadges();
   // Sync taste badge now that battleCount is known
   _syncTasteNewBadge();
+  // v1.0.219 — Tower-retry push deep link. animeList is populated by here,
+  // so we can resolve the mediaId from `?tower=1&mediaId=N` and start a
+  // Tower run with the matching anime as the climber.
+  _towerCheckDeepLink();
 }
 
 // ─── CONFIDENCE ──────────────────────────────────────────────────────────────
@@ -7914,6 +7918,54 @@ function _wtClearDeepLink() {
   try {
     const url = new URL(window.location.href);
     url.searchParams.delete('wt');
+    window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
+  } catch { /* defensive */ }
+}
+
+// v1.0.219 — Tower-retry push deep link. The /api/tower-retry-poll Netlify
+// function delivers pushes with `?tower=1&mediaId=N` for a single-anime push
+// (or just `?tower=1` for a batched push covering several completions). Tap
+// the notification → app opens at that URL → this handler runs once the
+// rankings are loaded → it starts a Tower run with that anime as the climber.
+//
+// Unlike _lcCheckDeepLink and _wtCheckDeepLink, this one MUST run after the
+// AniList sync has populated `animeList`, because we need the array index of
+// the target anime to call startTower(). It's invoked from the end of
+// `showResults()` rather than from the initial username-screen handler.
+function _towerCheckDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tower') !== '1') return;
+  const mediaIdRaw = params.get('mediaId');
+  const mediaId = mediaIdRaw ? Number(mediaIdRaw) : null;
+
+  _towerClearDeepLink();
+
+  if (Number.isFinite(mediaId)) {
+    // Look the anime up in the user's current Kessen list.
+    const idx = animeList.findIndex(a => a.id === mediaId);
+    if (idx >= 0) {
+      // Found it — jump straight into a Tower run with that anime as the
+      // climber. This matches the push body ("Take it to the Tower?") —
+      // one tap = one Tower battle queued, no extra picking required.
+      try { startTower(idx); return; }
+      catch { /* fall through to picker */ }
+    }
+    // Not in animeList yet — most likely it's still in `_pendingNewAnime`
+    // (the user just finished it on AniList; the in-app sync hasn't moved
+    // it into the rankings yet). Surface a hint and open the picker so
+    // they can either add the pending anime or pick a different one.
+    showToast('Add the new anime to your list first, then take it to the Tower.', 4000);
+  }
+  // Either no mediaId (batched push) or the anime isn't in animeList yet —
+  // open the Tower picker so the user can find what they want manually.
+  try { openTowerModal(); } catch { /* defensive */ }
+}
+
+function _towerClearDeepLink() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('tower');
+    url.searchParams.delete('mediaId');
     window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
   } catch { /* defensive */ }
 }
