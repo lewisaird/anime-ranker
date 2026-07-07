@@ -5209,12 +5209,6 @@ function renderRankingList() {
 }
 
 function showResults() {
-  // v1.0.227 — DIAGNOSTIC: prove that showResults runs and see if the URL
-  // still contains the tower params by this point.
-  try {
-    const search = window.location.search || '(no search)';
-    showToast(`📊 showResults ran, URL=${search}`, 5000);
-  } catch { /* defensive */ }
   hide('battle-screen');
   hide('username-screen');
   hide('tower-summary-screen');
@@ -7945,23 +7939,13 @@ function _wtClearDeepLink() {
 // can pass the deep-link URL directly. When called from showResults() at
 // boot, urlOverride is undefined and we fall back to window.location.search.
 function _towerCheckDeepLink(urlOverride) {
-  // v1.0.227 — DIAGNOSTIC: prove the handler is called and what URL it sees.
-  try {
-    showToast(`⚓ _towerCheckDeepLink called, override=${urlOverride ? 'yes' : 'no'}, url=${urlOverride || window.location.search || '(empty)'}`, 5500);
-  } catch { /* defensive */ }
   let params;
   try {
     params = urlOverride
       ? new URL(urlOverride, window.location.origin).searchParams
       : new URLSearchParams(window.location.search);
-  } catch {
-    try { showToast('❌ URL parse failed in _towerCheckDeepLink', 4500); } catch {}
-    return;
-  }
-  if (params.get('tower') !== '1') {
-    try { showToast(`⏭️ no tower=1 in params (got: "${params.get('tower')}")`, 4500); } catch {}
-    return;
-  }
+  } catch { return; }
+  if (params.get('tower') !== '1') return;
   const mediaIdRaw = params.get('mediaId');
   const mediaId = mediaIdRaw ? Number(mediaIdRaw) : null;
 
@@ -8035,29 +8019,15 @@ function _installNotificationClickListener() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('message', (event) => {
     const msg = event.data;
-    // v1.0.223 — DIAGNOSTIC: toast for ANY message received, regardless of
-    // type. v1.0.222 only toasted for matching kessen-notification-click,
-    // so a user who tapped a notification and saw nothing could mean either
-    // (a) no message arrived at all, or (b) a message arrived but the type
-    // didn't match. This widens the net so we can tell the two apart.
-    try {
-      const t = msg?.type || '(no type)';
-      showToast(`📩 sw msg: ${t}`, 3500);
-    } catch { /* defensive */ }
     if (!msg || msg.type !== 'kessen-notification-click') return;
     const url = msg.url || '/';
-    try { showToast(`🔔 link: ${url}`, 3500); } catch { /* defensive */ }
     try {
       const parsed = new URL(url, window.location.origin);
       const p = parsed.searchParams;
       if (p.get('tower') === '1') {
-        try { showToast(`⚡ tower handler firing, mediaId=${p.get('mediaId')}`, 3500); } catch {}
         _towerCheckDeepLink(url);
-        return;
       }
-    } catch (e) {
-      try { showToast(`⚠️ deep-link parse failed: ${e.message}`, 4000); } catch {}
-    }
+    } catch { /* defensive */ }
   });
 }
 _installNotificationClickListener();
@@ -20333,32 +20303,48 @@ document.addEventListener('error', e => {
 }, true);
 
 window.addEventListener('load', () => {
-  // v1.0.227 — DIAGNOSTIC: prove the page load handler runs and what URL
-  // it sees. Deep-link testing is producing "nothing happens" — we need
-  // to know whether load fires at all with the params intact.
-  try {
-    const search = window.location.search || '(no search)';
-    setTimeout(() => showToast(`🚀 boot: ${search}`, 5000), 800);
-  } catch { /* defensive */ }
-
   if (tryLoadSharedView()) {
     hide('username-screen');
-    try { setTimeout(() => showToast('🔀 shared-view path', 4000), 1200); } catch {}
     return;
   }
   const input = byId(IDS.usernameInput);
   const hasName = !!(input && input.value.trim());
-  try {
-    setTimeout(() =>
-      showToast(`👤 hasName=${hasName} → ${hasName ? 'startLoading' : 'stay on username screen'}`, 4500),
-      1600);
-  } catch { /* defensive */ }
   if (hasName) startLoading();
   // Auto-open Live Challenge join if a ?lc= deep link is present
   _lcCheckDeepLink();
   // v1.0.173 — same for Watch Together via ?wt= (used by push invites)
   _wtCheckDeepLink();
+  // v1.0.228 — Tower-retry deep link. This is the FIX for the fundamental
+  // hook-site bug. `_towerCheckDeepLink` was previously only called at the
+  // end of `showResults()`, but startLoading takes the user straight to
+  // the battle screen and NEVER calls showResults on boot — showResults
+  // is only invoked when the user manually clicks Rankings. So my earlier
+  // hook site never actually fired on boot; the deep link only worked if
+  // the user happened to visit Rankings, which is why every fix before
+  // v1.0.228 "didn't work". Hooking directly from the load handler after
+  // startLoading is scheduled fixes this: wait a moment for the async
+  // load to populate animeList / _pendingNewAnime, then process the
+  // deep link.
+  _towerCheckDeepLinkAfterBoot();
 });
+
+// v1.0.228 — Wait for boot to finish populating state, then run the tower
+// deep-link handler. Uses a simple poll loop (up to 30s) — animeList lands
+// as soon as either the cached session restores or the AniList fetch
+// resolves. If the mediaId isn't found there yet, the handler stashes it
+// and the checkForNewAnime retry closes the race a few seconds later.
+async function _towerCheckDeepLinkAfterBoot() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tower') !== '1') return;
+  // Poll for up to 30 seconds waiting for state to load. Kessen boots
+  // quickly for logged-in users (cached session), so this usually settles
+  // within 1-2 seconds.
+  for (let i = 0; i < 60; i++) {
+    if (animeList.length > 0) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  _towerCheckDeepLink();
+}
 
 // Save to cloud when the user closes the tab or navigates away.
 // sendBeacon is the first choice — it fires even during unload. For payloads
