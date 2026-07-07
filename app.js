@@ -20344,6 +20344,19 @@ async function _towerCheckDeepLinkAfterBoot() {
     await new Promise(r => setTimeout(r, 500));
   }
   _towerCheckDeepLink();
+  // v1.0.229 — If the handler had to stash the mediaId (anime not yet in
+  // animeList or _pendingNewAnime), kick off checkForNewAnime NOW to
+  // populate _pendingNewAnime. Without this, checkForNewAnime doesn't
+  // run until the user manually visits Rankings (it's scheduled from
+  // showResults), and the retry hook that closes the race never fires.
+  // Same underlying issue as the v1.0.228 fix — polling was tied to
+  // showResults rather than being part of the boot flow.
+  if (_pendingDeepLinkTowerMediaId != null) {
+    const isAniList = !!(authToken && authUser);
+    const isMAL     = !!(malAuthToken && malAuthUser);
+    if (isAniList)      checkForNewAnime();
+    else if (isMAL)     checkForNewAnimeMAL();
+  }
 }
 
 // Save to cloud when the user closes the tab or navigates away.
