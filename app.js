@@ -7982,20 +7982,18 @@ function _installNotificationClickListener() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('message', (event) => {
     const msg = event.data;
+    // v1.0.223 — DIAGNOSTIC: toast for ANY message received, regardless of
+    // type. v1.0.222 only toasted for matching kessen-notification-click,
+    // so a user who tapped a notification and saw nothing could mean either
+    // (a) no message arrived at all, or (b) a message arrived but the type
+    // didn't match. This widens the net so we can tell the two apart.
+    try {
+      const t = msg?.type || '(no type)';
+      showToast(`📩 sw msg: ${t}`, 3500);
+    } catch { /* defensive */ }
     if (!msg || msg.type !== 'kessen-notification-click') return;
     const url = msg.url || '/';
-    // v1.0.222 — diagnostic toast. v1.0.220's postMessage path appears not
-    // to be firing for at least one user (TWA on Play Store build). This
-    // toast confirms whether the SW → client message round-trip is alive.
-    // If you tap a notification and DON'T see this toast, the SW isn't
-    // posting or the listener isn't installed. If you DO see it, the bug
-    // is downstream (in the URL parsing or startTower call). Remove in the
-    // next release once the path is known-good.
     try { showToast(`🔔 link: ${url}`, 3500); } catch { /* defensive */ }
-    // Dispatch to the right handler based on the deep-link path/params.
-    // Tower-retry is the only one currently piped through postMessage; WT/LC
-    // use a separate flow (deep links land on a fresh page or trigger their
-    // own auto-rejoin code path), but we leave room here to extend.
     try {
       const parsed = new URL(url, window.location.origin);
       const p = parsed.searchParams;
@@ -8004,14 +8002,48 @@ function _installNotificationClickListener() {
         _towerCheckDeepLink(url);
         return;
       }
-      // Future deep-link types (e.g. wt=, lc= delivered via SW postMessage)
-      // can dispatch from here.
     } catch (e) {
       try { showToast(`⚠️ deep-link parse failed: ${e.message}`, 4000); } catch {}
     }
   });
 }
 _installNotificationClickListener();
+
+// v1.0.223 — DIAGNOSTIC: ping the active SW for its version on boot. If the
+// running SW is the v1.0.223 build (or newer), it replies with its APP_VERSION
+// and we toast it. If the SW is OLDER than v1.0.223, it doesn't know about
+// this message type and won't reply; we time out after 2 seconds and toast
+// that fact. This definitively answers whether the SW running on the device
+// is current or stale, which would explain why notification postMessages
+// aren't firing in v1.0.222.
+function _checkSwVersionDiagnostic() {
+  if (!('serviceWorker' in navigator)) return;
+  setTimeout(() => {
+    try {
+      const ctrl = navigator.serviceWorker.controller;
+      if (!ctrl) {
+        showToast('⚠️ no SW controller — push & deep links will not work', 4500);
+        return;
+      }
+      let replied = false;
+      const handler = (event) => {
+        if (event.data?.type !== 'kessen-version-reply') return;
+        replied = true;
+        showToast(`✅ SW v${event.data.version || '?'} active`, 4000);
+        navigator.serviceWorker.removeEventListener('message', handler);
+      };
+      navigator.serviceWorker.addEventListener('message', handler);
+      ctrl.postMessage({ type: 'kessen-version-check' });
+      setTimeout(() => {
+        if (!replied) {
+          showToast('⚠️ SW didn\'t reply — running an old version (please force-close and reopen Kessen)', 5500);
+          navigator.serviceWorker.removeEventListener('message', handler);
+        }
+      }, 2000);
+    } catch { /* defensive */ }
+  }, 1500); // wait for DOM toast element to be ready
+}
+_checkSwVersionDiagnostic();
 
 function _towerClearDeepLink() {
   try {

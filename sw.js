@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.222';
+const APP_VERSION  = '1.0.223';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -223,6 +223,22 @@ self.addEventListener('fetch', event => {
 // Missing / malformed payload still shows a generic fallback so we never
 // suppress a notification the user expected — push delivery itself is a
 // strong signal of intent.
+
+// v1.0.223 — DIAGNOSTIC: respond to client version-check pings. Lets the
+// client confirm whether the running SW is this v1.0.223 build or an older
+// stale one — invaluable for figuring out why notification postMessages
+// aren't firing. Old SWs ignore this message type (no handler), so the
+// client times out and knows the SW is stale.
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'kessen-version-check') return;
+  event.waitUntil((async () => {
+    try {
+      const clients = await self.clients.matchAll();
+      const payload = { type: 'kessen-version-reply', version: APP_VERSION };
+      clients.forEach(c => { try { c.postMessage(payload); } catch { /* defensive */ } });
+    } catch { /* defensive */ }
+  })());
+});
 
 self.addEventListener('push', event => {
   let payload = {};
