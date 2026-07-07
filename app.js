@@ -5209,6 +5209,12 @@ function renderRankingList() {
 }
 
 function showResults() {
+  // v1.0.227 — DIAGNOSTIC: prove that showResults runs and see if the URL
+  // still contains the tower params by this point.
+  try {
+    const search = window.location.search || '(no search)';
+    showToast(`📊 showResults ran, URL=${search}`, 5000);
+  } catch { /* defensive */ }
   hide('battle-screen');
   hide('username-screen');
   hide('tower-summary-screen');
@@ -7939,13 +7945,23 @@ function _wtClearDeepLink() {
 // can pass the deep-link URL directly. When called from showResults() at
 // boot, urlOverride is undefined and we fall back to window.location.search.
 function _towerCheckDeepLink(urlOverride) {
+  // v1.0.227 — DIAGNOSTIC: prove the handler is called and what URL it sees.
+  try {
+    showToast(`⚓ _towerCheckDeepLink called, override=${urlOverride ? 'yes' : 'no'}, url=${urlOverride || window.location.search || '(empty)'}`, 5500);
+  } catch { /* defensive */ }
   let params;
   try {
     params = urlOverride
       ? new URL(urlOverride, window.location.origin).searchParams
       : new URLSearchParams(window.location.search);
-  } catch { return; }
-  if (params.get('tower') !== '1') return;
+  } catch {
+    try { showToast('❌ URL parse failed in _towerCheckDeepLink', 4500); } catch {}
+    return;
+  }
+  if (params.get('tower') !== '1') {
+    try { showToast(`⏭️ no tower=1 in params (got: "${params.get('tower')}")`, 4500); } catch {}
+    return;
+  }
   const mediaIdRaw = params.get('mediaId');
   const mediaId = mediaIdRaw ? Number(mediaIdRaw) : null;
 
@@ -20317,12 +20333,27 @@ document.addEventListener('error', e => {
 }, true);
 
 window.addEventListener('load', () => {
+  // v1.0.227 — DIAGNOSTIC: prove the page load handler runs and what URL
+  // it sees. Deep-link testing is producing "nothing happens" — we need
+  // to know whether load fires at all with the params intact.
+  try {
+    const search = window.location.search || '(no search)';
+    setTimeout(() => showToast(`🚀 boot: ${search}`, 5000), 800);
+  } catch { /* defensive */ }
+
   if (tryLoadSharedView()) {
     hide('username-screen');
+    try { setTimeout(() => showToast('🔀 shared-view path', 4000), 1200); } catch {}
     return;
   }
   const input = byId(IDS.usernameInput);
-  if (input.value.trim()) startLoading();
+  const hasName = !!(input && input.value.trim());
+  try {
+    setTimeout(() =>
+      showToast(`👤 hasName=${hasName} → ${hasName ? 'startLoading' : 'stay on username screen'}`, 4500),
+      1600);
+  } catch { /* defensive */ }
+  if (hasName) startLoading();
   // Auto-open Live Challenge join if a ?lc= deep link is present
   _lcCheckDeepLink();
   // v1.0.173 — same for Watch Together via ?wt= (used by push invites)
