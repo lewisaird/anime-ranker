@@ -7948,22 +7948,45 @@ function _towerCheckDeepLink(urlOverride) {
   if (!urlOverride) _towerClearDeepLink();
 
   if (Number.isFinite(mediaId)) {
-    // Look the anime up in the user's current Kessen list.
+    // 1. Anime is already in the user's ranked list — jump straight into a
+    // Tower run with it as the climber.
     const idx = animeList.findIndex(a => a.id === mediaId);
     if (idx >= 0) {
-      // Found it — jump straight into a Tower run with that anime as the
-      // climber. This matches the push body ("Take it to the Tower?") —
-      // one tap = one Tower battle queued, no extra picking required.
       try { startTower(idx); return; }
-      catch { /* fall through to picker */ }
+      catch { /* fall through */ }
     }
-    // Not in animeList yet — most likely it's still in `_pendingNewAnime`
-    // (the user just finished it on AniList; the in-app sync hasn't moved
-    // it into the rankings yet). Surface a hint and open the picker so
-    // they can either add the pending anime or pick a different one.
-    showToast('Add the new anime to your list first, then take it to the Tower.', 4000);
+    // 2. v1.0.225 — Anime was detected on AniList and is waiting in the
+    // `_pendingNewAnime` queue (the "Add these new anime?" banner). Because
+    // the user tapped "Take it to the Tower", they've already answered the
+    // implicit "want it in your list?" question — auto-add with a smart-ELO
+    // seed and start Tower immediately. Mirrors ncActionAddAndTower's flow.
+    // Without this, tapping a Tower-retry push for a freshly-watched anime
+    // just opened the Tower picker (invisibly, behind the battle screen)
+    // and the user had to navigate to Rankings to accept the banner first.
+    const pendingIdx = _pendingNewAnime.findIndex(a => a.id === mediaId);
+    if (pendingIdx >= 0) {
+      try {
+        const newAnime = _pendingNewAnime[pendingIdx];
+        const { elo } = _calcSmartElo(newAnime);
+        newAnime.elo = elo;
+        newAnime.eloHistory = [elo];
+        newAnime.seedElo = elo;
+        animeList.push(newAnime);
+        _pendingNewAnime.splice(pendingIdx, 1);
+        saveState();
+        if (!_pendingNewAnime.length) {
+          byId(IDS.newAnimeBanner)?.classList.remove('active');
+        }
+        startTower(animeList.length - 1);
+        return;
+      } catch { /* fall through */ }
+    }
+    // 3. Neither ranked nor pending — probably the AniList sync hasn't
+    // pulled the entry through yet. Nothing to auto-start; show a toast so
+    // the user knows what happened and fall through to the picker.
+    showToast('That anime isn\'t in your Kessen list yet — pull to refresh, then try again.', 4500);
   }
-  // Either no mediaId (batched push) or the anime isn't in animeList yet —
+  // Either no mediaId (batched push) or the anime isn't in animeList / pending —
   // open the Tower picker so the user can find what they want manually.
   try { openTowerModal(); } catch { /* defensive */ }
 }
