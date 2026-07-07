@@ -708,6 +708,10 @@ const KESSEN_KEYS = {
     // Notification Centre — persisted list of {id, type, msg, timestamp, read, data}
     // Keyed per user so switching accounts shows the right notifications.
     notifCentre: (key) => `kessen.data.notifCentre.${key || 'guest'}`,
+    // v1.0.231 — recently-dismissed notif ids (with expiries), used by the
+    // cross-device sync merge to filter out items we just dismissed so
+    // stale Firebase snapshots can't resurrect them.
+    notifTombstones: (key) => `kessen.data.notifTombstones.${key || 'guest'}`,
     // v1.0.154 — Live Challenge battle-history records (was a module-level
     // _LC_HISTORY_KEY const). Used to recap recent matches in the LC modal.
     // Literal preserved as 'kessen_lc_history' so existing user history
@@ -2698,6 +2702,20 @@ function showToast(msg, duration = 3000) {
   el.classList.add('show');
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// v1.0.231 — `toast(msg, level)` alias. `togglePushMaster` and
+// `setPushCategory` were calling `toast(...)` on every branch (success,
+// warning, error), but no `toast` function was ever defined — showToast was
+// the actual helper. Every push toggle silently ReferenceError'd inside a
+// try/catch, the catch handler ALSO called toast() and threw, so the user
+// got no success/error confirmation at all when enabling push notifications.
+// This wrapper keeps the intended semantics (level just influences duration —
+// no visual styling per-level; warnings/errors stay up longer so they can be
+// read).
+function toast(msg, level) {
+  const duration = (level === 'warn' || level === 'err') ? 5000 : 3000;
+  showToast(msg, duration);
 }
 
 window.addEventListener('unhandledrejection', e => {
@@ -19046,9 +19064,24 @@ function _ncStartSync() {
     const remote = snap.val();
     if (!remote?.items || remote.updatedBy === _deviceId) return;
 
-    // Merge: add any unread notifications from the other device that we don't have
+    // Merge: add any unread notifications from the other device that we don't
+    // have and haven't recently dismissed.
+    //
+    // v1.0.231 — filter against a tombstone set of recently-dismissed IDs.
+    // Previously, when the user tapped a bell action here we'd dismiss
+    // locally and push to Firebase on a 1.5s debounce. If a snapshot from
+    // another device (or a stale one from before our dismiss was mirrored)
+    // arrived in that window, the dismissed item was re-inserted because its
+    // id was no longer in `existingIds` — which was the exact "notification
+    // still there after adding an anime" bug the user reported.
+    const tombstones = _ncLoadTombstones();
     const existingIds = new Set(_notifCentre.map(n => n.id));
-    const newItems = remote.items.filter(n => n && n.id && !existingIds.has(n.id) && !n.read);
+    const newItems = remote.items.filter(n =>
+      n && n.id
+      && !existingIds.has(n.id)
+      && !tombstones.has(n.id)
+      && !n.read,
+    );
     if (!newItems.length) return;
 
     _notifCentre = [...newItems, ..._notifCentre].slice(0, 50);
@@ -19058,6 +19091,41 @@ function _ncStartSync() {
     _ncUpdateBell();
     // Don't call _ncSave() here — that would re-trigger _ncPushToFirebase and loop
   }, () => { _ncFirebaseRef = null; _ncFirebaseListener = null; });
+}
+
+// v1.0.231 — Dismissal tombstones. Every time a notification is dismissed
+// (via any of the action buttons or the ✕), its id is recorded here so the
+// Firebase merge in _ncStartSync can filter it out. Tombstones expire after
+// 24 hours — long enough that any pending remote snapshot will have been
+// updated (via our _ncPushToFirebase debounce), short enough that
+// localStorage doesn't fill up with stale IDs. Stored as { id: expiresAt }.
+const NC_TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
+function _ncLoadTombstones() {
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.data.notifTombstones(saveKey));
+    if (!raw) return new Set();
+    const obj = JSON.parse(raw);
+    const now = Date.now();
+    const valid = new Set();
+    for (const [id, exp] of Object.entries(obj)) {
+      if (Number.isFinite(exp) && exp > now) valid.add(id);
+    }
+    return valid;
+  } catch { return new Set(); }
+}
+function _ncAddTombstone(id) {
+  if (!id) return;
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.data.notifTombstones(saveKey));
+    const obj = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    // GC expired entries while we're here so this doesn't grow unbounded.
+    for (const key of Object.keys(obj)) {
+      if (!Number.isFinite(obj[key]) || obj[key] <= now) delete obj[key];
+    }
+    obj[id] = now + NC_TOMBSTONE_TTL_MS;
+    localStorage.setItem(KESSEN_KEYS.data.notifTombstones(saveKey), JSON.stringify(obj));
+  } catch { /* quota / storage disabled — degrade gracefully */ }
 }
 
 function _ncStopSync() {
@@ -19129,9 +19197,16 @@ function _checkAppUpdateNotif() {
 // bell entry (e.g. the Help modal link). Always uses the latest WHATS_NEW
 // constant rather than reading from a notif's stored data, since the user
 // may want to re-read the current release's notes after dismissing the bell.
+// v1.0.231 — When the What's New modal was launched from the Help modal
+// "See what's new" link, we close Help while What's New is showing so the
+// dialog stack doesn't pile up. Remember that so we can re-open Help when
+// What's New closes — otherwise the user gets abruptly dumped from Help
+// into the app screen behind it, losing their place in the Help modal.
+let _whatsNewReopenHelp = false;
+
 function openWhatsNewModal() {
-  // Close the Help modal if it's open so the dialog stack doesn't pile up.
-  if (byId(IDS.helpModal)?.style.display === 'flex') closeHelp();
+  _whatsNewReopenHelp = byId(IDS.helpModal)?.style.display === 'flex';
+  if (_whatsNewReopenHelp) closeHelp();
   ncActionShowWhatsNew(null);
 }
 
@@ -19169,6 +19244,12 @@ function ncActionShowWhatsNew(id) {
 function closeWhatsNewModal() {
   const modal = byId(IDS.whatsNewModal);
   if (modal) modal.style.display = 'none';
+  // v1.0.231 — restore the Help modal if that was our launch context, so the
+  // user isn't abruptly dumped from Help onto whatever's behind it.
+  if (_whatsNewReopenHelp) {
+    _whatsNewReopenHelp = false;
+    if (typeof showHelp === 'function') showHelp();
+  }
 }
 
 function _ncAdd(type, msg, data = {}) {
@@ -19258,6 +19339,13 @@ function _ncActionBtn(n) {
 // when the entry represents a single new anime (most useful for films/OVAs
 // that bypass the CURRENT→COMPLETED finish prompt).
 function ncActionAddAndTower(id) {
+  // v1.0.231 — optimistic feedback. On slow devices _calcSmartElo + saveState
+  // can take a noticeable beat; without this the modal stays frozen and the
+  // user taps again, sometimes creating duplicates. Disable the button (and
+  // its sibling) synchronously so the tap is unambiguous.
+  const btn = document.querySelector(`.nc-action-btn[onclick*="ncActionAddAndTower('${id}')"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
+
   const notif = _notifCentre.find(n => n.id === id);
   const newAnime = notif?.data?.anime?.[0];
   if (!newAnime) return;
@@ -19278,8 +19366,11 @@ function ncActionAddAndTower(id) {
   }
   ncDismiss(id);
   closeNotifCentre();
-  // If no more pending new anime, drop the banner
-  if (!_pendingNewAnime.length) byId(IDS.newAnimeBanner)?.classList.remove('active');
+  // v1.0.231 — refresh the "N new anime on your AniList" banner so its count
+  // reflects the reduced _pendingNewAnime, rather than staying stuck on the
+  // pre-add number. Also hides the banner entirely if we've cleared the last
+  // pending entry.
+  _refreshListBanners('AniList');
   startTower(championIdx);
 }
 
@@ -19322,6 +19413,11 @@ function _ncRenderList() {
   }
 }
 
+// v1.0.231 — Timer that re-renders the notif list while the modal is open,
+// so "just now" turns into "1m ago" etc without needing to reopen. Cleared
+// on close.
+let _ncTimeRefreshTimer = null;
+
 function openNotifCentre() {
   _notifCentre.forEach(n => { n.read = true; });
   _ncSave();
@@ -19332,10 +19428,24 @@ function openNotifCentre() {
   // the current Notification.permission state every time the modal opens
   // (the user may have changed it in browser settings since last open).
   if (typeof _pushRefreshUI === 'function') _pushRefreshUI();
+  // v1.0.231 — poll the timestamp render every 30 s so "just now" ages up
+  // to "1m ago", "5m ago", etc while the user has the modal open. Cheap:
+  // we only run while the modal is visible.
+  clearInterval(_ncTimeRefreshTimer);
+  _ncTimeRefreshTimer = setInterval(() => {
+    if (byId(IDS.notifCentreModal)?.classList.contains('open')) {
+      _ncRenderList();
+    } else {
+      clearInterval(_ncTimeRefreshTimer);
+      _ncTimeRefreshTimer = null;
+    }
+  }, 30 * 1000);
 }
 
 function closeNotifCentre() {
   byId(IDS.notifCentreModal)?.classList.remove('open');
+  clearInterval(_ncTimeRefreshTimer);
+  _ncTimeRefreshTimer = null;
 }
 
 // ── Phone push notifications (Phase 0 plumbing) ─────────────────────────────
@@ -19483,6 +19593,10 @@ async function togglePushMaster(checked) {
     return;
   }
 
+  // v1.0.231 — freeze the master checkbox at the user's intended state so
+  // interstitial _pushRefreshUI calls (from category toggles, permission
+  // reads, etc.) don't flicker it while the network round-trip is in flight.
+  _pushToggleInFlight = true;
   try {
     if (checked) {
       // Request permission. This is a single-shot prompt — if the user
@@ -19546,6 +19660,8 @@ async function togglePushMaster(checked) {
     }
   } catch (e) {
     toast(e.message || 'Push setup failed.', 'err');
+  } finally {
+    _pushToggleInFlight = false;
   }
   // Refresh now AND on next frame — covers fast browsers + ones where
   // Notification.permission lags by a tick after requestPermission resolves.
@@ -19555,6 +19671,7 @@ async function togglePushMaster(checked) {
 
 async function setPushCategory(name, checked) {
   const local = _pushLoadLocal() || { enabled: false, categories: { ...PUSH_DEFAULT_CATEGORIES }, endpoint: null };
+  const previousCategories = { ...local.categories };
   local.categories = { ...local.categories, [name]: !!checked };
   _pushSaveLocal(local);
   // Push to server if currently registered. If not, the next master-toggle
@@ -19581,9 +19698,24 @@ async function setPushCategory(name, checked) {
           _pushRefreshUI();
         }
       }
-    } catch { /* best-effort; the toggle reverts on next refresh */ }
+    } catch (e) {
+      // v1.0.231 — previously the catch was a bare `{ }`, which meant a
+      // failed server registration silently left the local UI checked while
+      // the server never saw the change. Now: roll back the local pref
+      // (so the UI reflects the actual state on server), notify the user,
+      // and force a refresh so the checkbox matches.
+      local.categories = previousCategories;
+      _pushSaveLocal(local);
+      _pushRefreshUI();
+      toast(`Couldn't save preference (${e?.message || 'network error'}) — try again.`, 'err');
+    }
   }
 }
+
+// v1.0.231 — set while togglePushMaster is mid-flight so any concurrent
+// _pushRefreshUI call (e.g. from setPushCategory's error path) doesn't stomp
+// on the checkbox state before the toggle finishes.
+let _pushToggleInFlight = false;
 
 function _pushRefreshUI() {
   const section  = byId(IDS.ncPushSection);
@@ -19596,14 +19728,28 @@ function _pushRefreshUI() {
   const vapid     = _pushVapidKey();
   const perm      = supported ? Notification.permission : 'unsupported';
   const local     = _pushLoadLocal();
-  const enabled   = !!local?.enabled && perm === 'granted';
+  // v1.0.231 — Trust `local.enabled` as the source of truth. Previously we
+  // AND'd `perm === 'granted'`, but on Android Chrome / TWA the permission
+  // value can lag behind reality by several seconds after
+  // requestPermission() resolves. When the user hit Enable and immediately
+  // reopened the bell, the checkbox showed unticked because the permission
+  // read was stale even though the subscription was already registered. Now
+  // we only override to "off" when permission is DEFINITIVELY 'denied' or
+  // the API is unsupported — the ambiguous 'default' state defers to the
+  // stored preference.
+  const disabledByBrowser = !supported || !vapid || perm === 'denied';
+  const enabled = !disabledByBrowser && !!local?.enabled;
 
   // Section availability state
-  section.classList.toggle('is-unavailable', !supported || !vapid || perm === 'denied');
+  section.classList.toggle('is-unavailable', disabledByBrowser);
 
-  // Master toggle
-  masterEl.checked  = enabled;
-  masterEl.disabled = !supported || !vapid || perm === 'denied';
+  // Master toggle. Skip while a toggle op is mid-flight so the visual
+  // state matches what the user just clicked, not what an intermediate
+  // _pushRefreshUI() call thinks.
+  if (!_pushToggleInFlight) {
+    masterEl.checked = enabled;
+  }
+  masterEl.disabled = disabledByBrowser;
 
   // Categories visible only when master is on
   cats.classList.toggle('show', enabled);
@@ -19622,6 +19768,9 @@ function _pushRefreshUI() {
 }
 
 function ncDismiss(id) {
+  // v1.0.231 — record a tombstone so the Firebase cross-device sync merge
+  // doesn't re-insert this id from a stale remote snapshot.
+  _ncAddTombstone(id);
   _notifCentre = _notifCentre.filter(n => n.id !== id);
   _ncSave();
   _ncUpdateBell();
@@ -20333,9 +20482,16 @@ window.addEventListener('load', () => {
 // as soon as either the cached session restores or the AniList fetch
 // resolves. If the mediaId isn't found there yet, the handler stashes it
 // and the checkForNewAnime retry closes the race a few seconds later.
+// v1.0.230 — expanded from _towerCheckDeepLinkAfterBoot to be the general
+// "boot finished, run the stuff that used to hang off showResults()"
+// helper. Two responsibilities now:
+//   1. Process a Tower-retry deep link if the URL carries one.
+//   2. Kick off new-anime polling. Same class of bug as v1.0.228:
+//      _startNewAnimePolling was previously only scheduled from
+//      showResults(), so users who launch the app onto the battle screen
+//      (cached-session flow — everyone with a saved session) never had
+//      new-anime detection running until they manually visited Rankings.
 async function _towerCheckDeepLinkAfterBoot() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('tower') !== '1') return;
   // Poll for up to 30 seconds waiting for state to load. Kessen boots
   // quickly for logged-in users (cached session), so this usually settles
   // within 1-2 seconds.
@@ -20343,19 +20499,14 @@ async function _towerCheckDeepLinkAfterBoot() {
     if (animeList.length > 0) break;
     await new Promise(r => setTimeout(r, 500));
   }
+  // Tower deep link (no-op if URL doesn't carry one)
   _towerCheckDeepLink();
-  // v1.0.229 — If the handler had to stash the mediaId (anime not yet in
-  // animeList or _pendingNewAnime), kick off checkForNewAnime NOW to
-  // populate _pendingNewAnime. Without this, checkForNewAnime doesn't
-  // run until the user manually visits Rankings (it's scheduled from
-  // showResults), and the retry hook that closes the race never fires.
-  // Same underlying issue as the v1.0.228 fix — polling was tied to
-  // showResults rather than being part of the boot flow.
-  if (_pendingDeepLinkTowerMediaId != null) {
-    const isAniList = !!(authToken && authUser);
-    const isMAL     = !!(malAuthToken && malAuthUser);
-    if (isAniList)      checkForNewAnime();
-    else if (isMAL)     checkForNewAnimeMAL();
+  // Start new-anime polling for logged-in users. Safe to call at any point
+  // — it clears any existing timer before setting a new one. If a Tower
+  // deep link is waiting for the anime, checkForNewAnime's retry hook
+  // will handle it once _pendingNewAnime is populated (see v1.0.226).
+  if ((authToken && authUser) || (malAuthToken && malAuthUser)) {
+    _startNewAnimePolling();
   }
 }
 
