@@ -433,6 +433,12 @@ let hiddenFormatsRanking  = new Set(); // formats hidden from the Rankings list 
 let hiddenEpRangesBattle  = new Set(); // episode-length buckets hidden from battles
 let hiddenEpRangesRanking = new Set(); // episode-length buckets hidden from Rankings
 let _pendingNewAnime    = [];    // anime on AniList not yet in rankings (new anime detection)
+// v1.0.226 — If a Tower-retry push arrives for an anime that hasn't yet been
+// pulled into _pendingNewAnime (the AniList polling call is async and can
+// finish after showResults kicks off the deep-link handler), we stash the
+// mediaId here. `checkForNewAnime` retries the deep link after populating
+// _pendingNewAnime, which closes the race.
+let _pendingDeepLinkTowerMediaId = null;
 let _pendingRemovedAnime = [];   // anime in rankings but no longer on the external list (§5.2.7)
 let _finishPromptQueue  = [];   // queue of {id, title, cover, detectedAt} for post-finish Tower prompts
 let _notifCentre        = [];   // persisted notification centre entries
@@ -7952,6 +7958,7 @@ function _towerCheckDeepLink(urlOverride) {
     // Tower run with it as the climber.
     const idx = animeList.findIndex(a => a.id === mediaId);
     if (idx >= 0) {
+      _pendingDeepLinkTowerMediaId = null;
       try { startTower(idx); return; }
       catch { /* fall through */ }
     }
@@ -7977,17 +7984,24 @@ function _towerCheckDeepLink(urlOverride) {
         if (!_pendingNewAnime.length) {
           byId(IDS.newAnimeBanner)?.classList.remove('active');
         }
+        _pendingDeepLinkTowerMediaId = null;
         startTower(animeList.length - 1);
         return;
       } catch { /* fall through */ }
     }
-    // 3. Neither ranked nor pending — probably the AniList sync hasn't
-    // pulled the entry through yet. Nothing to auto-start; show a toast so
-    // the user knows what happened and fall through to the picker.
-    showToast('That anime isn\'t in your Kessen list yet — pull to refresh, then try again.', 4500);
+    // 3. Neither ranked nor pending. Almost always the AniList polling call
+    // (checkForNewAnime) just hasn't populated _pendingNewAnime yet — the
+    // deep-link handler runs at the end of showResults(), but the poll fires
+    // 2s after boot and is async, so on a cold-start it can lose the race.
+    // v1.0.226 — stash the mediaId and let checkForNewAnime retry the deep
+    // link once _pendingNewAnime is up to date. No picker fallback in this
+    // case — it would just confuse the user with an empty list.
+    _pendingDeepLinkTowerMediaId = mediaId;
+    showToast('Syncing your new anime — Tower will open in a moment.', 4500);
+    return;
   }
-  // Either no mediaId (batched push) or the anime isn't in animeList / pending —
-  // open the Tower picker so the user can find what they want manually.
+  // No mediaId (batched push) — open the Tower picker so the user can find
+  // one of the completed anime manually.
   try { openTowerModal(); } catch { /* defensive */ }
 }
 
@@ -18857,6 +18871,23 @@ async function checkForNewAnime() {
     if (newlyCompletedIds.length) _pushMarkSeen(newlyCompletedIds);
 
     _refreshListBanners('AniList');
+
+    // v1.0.226 — retry a stashed Tower deep link now that _pendingNewAnime
+    // is up to date. If the mediaId is in the freshly-populated queue, the
+    // handler will hit the auto-add path and start Tower. If it's still not
+    // there (e.g. AniList hasn't propagated it yet), the retry falls
+    // through and the ID stays stashed for the next poll cycle.
+    if (_pendingDeepLinkTowerMediaId != null) {
+      const waiting = _pendingDeepLinkTowerMediaId;
+      // Only retry if the anime has actually arrived — otherwise we'd toast
+      // "Syncing your new anime…" on every poll cycle, which is noisy.
+      const arrived =
+        _pendingNewAnime.some(a => a.id === waiting) ||
+        animeList.some(a => a.id === waiting);
+      if (arrived) {
+        _towerCheckDeepLink(`/?tower=1&mediaId=${waiting}`);
+      }
+    }
   } catch (e) { console.warn('[checkForNewAnime] poll failed:', e?.message); }
 }
 
