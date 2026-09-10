@@ -7977,6 +7977,9 @@ function _towerCheckDeepLink(urlOverride) {
     const idx = animeList.findIndex(a => a.id === mediaId);
     if (idx >= 0) {
       _pendingDeepLinkTowerMediaId = null;
+      // v1.0.232 — scrub the stale finish-prompt banner + nc entry now that
+      // the user has visibly acted on the push notification.
+      _dismissFinishPromptForAnime(mediaId);
       try { startTower(idx); return; }
       catch { /* fall through */ }
     }
@@ -8003,6 +8006,9 @@ function _towerCheckDeepLink(urlOverride) {
           byId(IDS.newAnimeBanner)?.classList.remove('active');
         }
         _pendingDeepLinkTowerMediaId = null;
+        // v1.0.232 — same as Path 1: the user has acted on the push, so
+        // clear the finish-prompt banner + matching nc entry for this anime.
+        _dismissFinishPromptForAnime(mediaId);
         startTower(animeList.length - 1);
         return;
       } catch { /* fall through */ }
@@ -18989,6 +18995,37 @@ function dismissFinishPrompt() {
   _showNextFinishPrompt();
 }
 
+// v1.0.232 — After the user acts on a Tower push notification (either by
+// tapping it and being deep-linked into the Tower, or by tapping the
+// "Battle in Tower" action inside the notification centre), scrub the
+// matching finish_prompt entry from BOTH the yellow banner queue and the
+// notification centre. Without this, the notification lingers even though
+// the user has visibly acted on it — reported by Lewis after v1.0.231: he
+// tapped a push, landed in the Tower for the right anime, but the yellow
+// "you just finished X" banner and the nc entry both remained visible.
+// Uses ncDismiss (which adds a tombstone) so a stale Firebase cross-device
+// sync merge can't resurrect the dismissed entry.
+function _dismissFinishPromptForAnime(animeId) {
+  if (!Number.isFinite(animeId)) return;
+  // 1. Notification-centre — dismiss any finish_prompt entries for this anime
+  try {
+    const ids = _notifCentre
+      .filter(n => n.type === 'finish_prompt' && n.data?.animeId === animeId)
+      .map(n => n.id);
+    ids.forEach(id => ncDismiss(id));
+  } catch { /* defensive */ }
+  // 2. In-app yellow finish-prompt banner queue
+  try {
+    const before = _finishPromptQueue.length;
+    _finishPromptQueue = _finishPromptQueue.filter(p => p.id !== animeId);
+    if (_finishPromptQueue.length !== before) {
+      _addPromptedId(animeId);   // suppress future re-detection of this same anime
+      _saveFinishPrompts();
+      _showNextFinishPrompt();   // hides banner if queue is now empty, else shows next
+    }
+  } catch { /* defensive */ }
+}
+
 function startFinishTower() {
   if (_finishPromptQueue.length === 0) return;
   const prompt = _finishPromptQueue[0];
@@ -19154,18 +19191,15 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.218 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.232 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    'Tower-retry push notifications, properly working end-to-end — fixed a race where the first anime you finished after enabling notifications didn\'t fire, sped polling up to every 15 minutes (was hourly), and tapping the notification now drops you straight into a Tower run with that anime as the climber instead of just opening the app.',
-    'Battle pool watch-status filter — the ≡ Filter popover can now hide currently-watching and rewatching anime so airing shows stay out of battles until they finish.',
-    'Sort order fix — tied ELO entries now appear in the correct order when sorting ascending. Previously the bottom of the list could read like #346, #344, #345, #343 instead of the expected #346, #345, #344, #343.',
-    'Mobile Rankings polish — list view shows every column (swipe sideways for the wider stats), the controls toolbar stays put when you change sort instead of jumping around, long grid titles cap at 2 lines so cards stay the same height, and the back button stays inside Kessen instead of escaping to the browser.',
-    'Franchise sort split into its own dropdown next to the main sort — clearer that it only applies when Franchise mode is on.',
+    'Tapping a Tower push notification (or the "Battle in Tower" button in the notification centre) now correctly clears the yellow "you just finished X" banner and the matching notification-centre entry once the Tower opens. Previously both would linger on screen even after you\'d already acted on the prompt — you\'d land in the right Tower run but the app still nagged you about it, which read as broken UI.',
+    'Play Store build targets Android 16 (API level 36) to satisfy Google\'s Aug 31, 2026 target-SDK requirement. No user-visible change on that front — the app behaves identically — but it means future updates can keep shipping.',
   ],
 };
 
@@ -19791,6 +19825,10 @@ function ncActionFinishTower(id) {
   if (idx === -1) { showToast('This anime is no longer in your rankings.'); ncDismiss(id); return; }
   closeNotifCentre();
   ncDismiss(id);
+  // v1.0.232 — the tapped nc entry is dismissed by id above, but the yellow
+  // finish-prompt banner queue is a separate store and would otherwise still
+  // show this anime. Clear the queue entry (and any sibling nc dupes) too.
+  _dismissFinishPromptForAnime(notif.data?.animeId);
   const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
   if (resultsVisible) resumeBattle();
   startTower(idx);
