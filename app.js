@@ -19007,6 +19007,15 @@ function dismissFinishPrompt() {
 // sync merge can't resurrect the dismissed entry.
 function _dismissFinishPromptForAnime(animeId) {
   if (!Number.isFinite(animeId)) return;
+  // Stamp _promptedIds FIRST, unconditionally. There's a race between the
+  // push deep-link tap (which fires this helper) and the periodic AniList
+  // poll (which calls _queueFinishPrompt after detecting the completion).
+  // If the tap wins the race, _notifCentre and _finishPromptQueue may both
+  // still be empty here — nothing to dismiss — and then the poll runs a few
+  // hundred ms later and creates a fresh finish_prompt entry, exactly the
+  // stale banner+nc entry we were trying to prevent. Persisting the anime
+  // ID into _promptedIds early causes _queueFinishPrompt to early-return.
+  try { _addPromptedId(animeId); } catch { /* defensive */ }
   // 1. Notification-centre — dismiss any finish_prompt entries for this anime
   try {
     const ids = _notifCentre
@@ -19019,7 +19028,6 @@ function _dismissFinishPromptForAnime(animeId) {
     const before = _finishPromptQueue.length;
     _finishPromptQueue = _finishPromptQueue.filter(p => p.id !== animeId);
     if (_finishPromptQueue.length !== before) {
-      _addPromptedId(animeId);   // suppress future re-detection of this same anime
       _saveFinishPrompts();
       _showNextFinishPrompt();   // hides banner if queue is now empty, else shows next
     }
@@ -19191,7 +19199,7 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.232 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.234 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
