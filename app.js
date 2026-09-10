@@ -19207,7 +19207,9 @@ const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
     'Tapping a Tower push notification (or the "Battle in Tower" button in the notification centre) now correctly clears the yellow "you just finished X" banner and the matching notification-centre entry once the Tower opens. Previously both would linger on screen even after you\'d already acted on the prompt — you\'d land in the right Tower run but the app still nagged you about it, which read as broken UI.',
-    'Play Store build targets Android 16 (API level 36) to satisfy Google\'s Aug 31, 2026 target-SDK requirement. No user-visible change on that front — the app behaves identically — but it means future updates can keep shipping.',
+    'Add / archive prompts are now blocked while a Tower run is active. Previously if the "new anime" or "removed anime" review modal opened mid-Tower and you went through with it, the ranked list shifted underneath the running Tower — its opponents could no longer be clicked and the run got stuck. Now the app tells you to finish or exit Tower first, and the notification stays in the bell so you can act on it right after.',
+    '"Review removed anime" notification-centre entries now dismiss themselves after you open the archive modal (matching the "Review new anime" flow), rather than lingering in the bell.',
+    'Play Store build targets Android 16 (API level 36) to satisfy Google\'s Aug 31, 2026 target-SDK requirement. No user-visible change — the app behaves identically — but it means future updates can keep shipping.',
   ],
 };
 
@@ -19842,9 +19844,27 @@ function ncActionFinishTower(id) {
   startTower(idx);
 }
 
+// v1.0.234 — True when a Tower run is currently in progress. Both the
+// add-new-anime and archive-removed-anime flows mutate animeList, which
+// shifts the indices held by towerOpponents[] and towerChampIdx and leaves
+// the running Tower pointing at wrong entries (or nothing at all). We use
+// this to refuse mid-Tower mutation and tell the user to finish the run
+// first. towerChampIdx is null when idle and -1 in a transient reset state,
+// so we require a real non-negative index for "active".
+function _isTowerActive() {
+  return Number.isFinite(towerChampIdx) && towerChampIdx >= 0;
+}
+
 function ncActionAddAnime(id) {
   const notif = _notifCentre.find(n => n.id === id);
   if (!notif?.data?.anime?.length) return;
+  // v1.0.234 — bail if a Tower run is currently active. Splicing animeList
+  // while towerOpponents[] holds indices into it corrupts the run. Keep the
+  // nc entry so the user can act on it after they finish the Tower.
+  if (_isTowerActive()) {
+    showToast('Finish or exit your Tower run first, then review new anime.');
+    return;
+  }
   // Restore pending list from the notification so the review modal has data to show
   _pendingNewAnime = notif.data.anime.filter(a => !animeList.some(e => e.id === a.id));
   if (!_pendingNewAnime.length) {
@@ -19860,6 +19880,11 @@ function ncActionAddAnime(id) {
 function ncActionReviewRemoved(id) {
   const notif = _notifCentre.find(n => n.id === id);
   if (!notif?.data?.anime?.length) return;
+  // v1.0.234 — same Tower-safety guard as ncActionAddAnime above.
+  if (_isTowerActive()) {
+    showToast('Finish or exit your Tower run first, then review removed anime.');
+    return;
+  }
   _pendingRemovedAnime = notif.data.anime.filter(a => animeList.some(e => e.id === a.id));
   if (!_pendingRemovedAnime.length) {
     showToast('These anime have already been handled.');
@@ -19867,6 +19892,10 @@ function ncActionReviewRemoved(id) {
     return;
   }
   closeNotifCentre();
+  // v1.0.234 — mirror ncActionAddAnime and dismiss the nc entry when we've
+  // committed to reviewing. Previously the entry lingered in the bell even
+  // after the user opened the archive-confirm modal.
+  ncDismiss(id);
   openArchiveConfirm();
 }
 
@@ -19998,6 +20027,12 @@ function _refreshListBanners(sourceName) {
 // §5.2.7 — Archive confirmation modal: show the list, let user choose.
 function openArchiveConfirm() {
   if (!_pendingRemovedAnime.length) return;
+  // v1.0.234 — belt & braces: refuse if a Tower run is currently active.
+  // Archiving splices animeList and breaks the running Tower's indices.
+  if (_isTowerActive()) {
+    showToast('Finish or exit your Tower run first, then archive removed anime.');
+    return;
+  }
   const list = byId(IDS.archiveConfirmList);
   if (list) {
     while (list.firstChild) list.removeChild(list.firstChild);
@@ -20165,6 +20200,12 @@ function _calcSmartElo(newAnime) {
 
 function openNewAnimeConfirm() {
   if (!_pendingNewAnime.length) return;
+  // v1.0.234 — belt & braces: refuse if a Tower run is currently active.
+  // Adding new anime shifts animeList indices and breaks tower state.
+  if (_isTowerActive()) {
+    showToast('Finish or exit your Tower run first, then add new anime.');
+    return;
+  }
   const list = byId(IDS.newAnimeConfirmList);
   if (list) {
     while (list.firstChild) list.removeChild(list.firstChild);
