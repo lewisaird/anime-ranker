@@ -19199,7 +19199,7 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.234 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.235 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
@@ -19849,10 +19849,13 @@ function ncActionFinishTower(id) {
 // shifts the indices held by towerOpponents[] and towerChampIdx and leaves
 // the running Tower pointing at wrong entries (or nothing at all). We use
 // this to refuse mid-Tower mutation and tell the user to finish the run
-// first. towerChampIdx is null when idle and -1 in a transient reset state,
-// so we require a real non-negative index for "active".
+// first. `towerMode` is the authoritative flag — startTower sets it true,
+// both finishTower and _exitTowerState set it false. `towerChampIdx` is
+// NOT the right signal here: finishTower leaves it as the last champion's
+// index, so a naive check of that value would keep the guard active long
+// after the run has finished.
 function _isTowerActive() {
-  return Number.isFinite(towerChampIdx) && towerChampIdx >= 0;
+  return !!towerMode;
 }
 
 function ncActionAddAnime(id) {
