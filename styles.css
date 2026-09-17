@@ -653,6 +653,16 @@
       object-fit: cover;
       border-radius: 8px;
       background: var(--border-subtle);
+      /* v1.0.238 — On macOS Safari, a two-finger trackpad swipe over an
+         image was being intercepted as an image-drag intent rather than
+         a page-scroll, so the user could only scroll the battle screen
+         by pointing at the empty gap between the cards. Disabling the
+         image drag makes scroll gestures pass through to the page. The
+         img[draggable="false"] attribute in index.html covers the same
+         thing at the HTML level; both are defensive so a new anime-card
+         img elsewhere in the app inherits the correct behaviour. */
+      -webkit-user-drag: none;
+      user-select: none;
     }
 
     .anime-card .title {

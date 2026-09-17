@@ -861,7 +861,7 @@
       <div class="anime-card" id="card-a" onclick="pickWinner(0)">
         <!-- v1.0.207 — Winner Stays On streak badge. Champion is always rendered as side A so the badge has a stable anchor. -->
         <div class="wso-streak-badge" id="wso-streak-badge" style="display:none" aria-live="polite" aria-atomic="true">🔥 <span id="wso-streak-count">0</span></div>
-        <img id="img-a" src="" alt="" decoding="async" fetchpriority="high" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
+        <img id="img-a" src="" alt="" decoding="async" fetchpriority="high" draggable="false" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
         <div class="anime-card-body">
           <div class="title" id="title-a"></div>
           <div class="elo-badge" id="elo-a"></div>
@@ -878,7 +878,7 @@
       </div>
       <div class="vs-divider">VS</div>
       <div class="anime-card" id="card-b" onclick="pickWinner(1)">
-        <img id="img-b" src="" alt="" decoding="async" fetchpriority="high" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
+        <img id="img-b" src="" alt="" decoding="async" fetchpriority="high" draggable="false" onerror="if(this.src&&!this.src.endsWith('/')){this.classList.add('img-broken')}" />
         <div class="anime-card-body">
           <div class="title" id="title-b"></div>
           <div class="elo-badge" id="elo-b"></div>

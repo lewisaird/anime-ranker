@@ -6834,6 +6834,12 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
     const gaps = (m.relations?.edges ?? [])
       .filter(e => e.node?.type === 'ANIME')
       .filter(e => FRANCHISE_GAP_REL_TYPES.has(e.relationType))
+      // v1.0.238 — MUSIC-format entries (music videos, OP/ED shorts) are
+      // stripped at import time everywhere else in Kessen (see the MUSIC
+      // filter in fetchAllAnime + _buildAnimeListFromMalEntries) — they're
+      // not the sort of thing users track. Filter them from gaps too so
+      // "Another Special (MUSIC · 1 ep)" doesn't appear under Another.
+      .filter(e => e.node?.format !== 'MUSIC')
       .filter(e => !excludeIds.has(e.node.id))
       .filter(e => !seenGapIds.has(e.node.id))
       .map(e => ({
@@ -7196,6 +7202,10 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
     .map(g => ({
       parent: g.parent,
       gaps: g.gaps
+        // v1.0.238 — belt-and-braces MUSIC drop for users whose cached
+        // gaps still include MUSIC entries from before the build-time
+        // filter shipped.
+        .filter(x => x.format !== 'MUSIC')
         .filter(x => !excludeIds.has(x.id))
         .filter(x => includeUpcoming || !FRANCHISE_GAP_UPCOMING_STATUSES.has(x.status))
         .filter(x => !x.format || !hiddenFormats.has(x.format)),
@@ -14179,6 +14189,13 @@ function renderManageTab() {
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
 
 function renderDiscoverTab() {
+  // v1.0.238 — Mood chip visibility toggle. setRecsTab handles this when the
+  // user clicks a sub-tab, but renderDiscoverTab is what fires when Discover
+  // is opened with a default (or previously-selected) sub-tab — without this
+  // the chips stayed display:none until the user actively clicked For You.
+  const moodChips = byId(IDS.foryouMoodChips);
+  if (moodChips) moodChips.style.display = (recsTab === 'foryou') ? 'flex' : 'none';
+
   if (recsTab === 'predict') return; // predictor is search-driven, no pre-loading needed
   if (recsTab === 'gaps') { renderFranchiseGaps(); return; } // v1.0.237
   if (_moodRecActive) return; // mood rec will populate the grid itself
@@ -17944,6 +17961,21 @@ function toggleFilterMenu(event) {
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
+    // v1.0.238 — Dynamic max-height so the popover never extends past the
+    // viewport bottom. Previously the CSS cap (max-height: min(75vh, 520px))
+    // could still leave the popover taller than the space between the filter
+    // button and the viewport bottom on shorter phones — the bottom portion
+    // ended up off-screen and mobile touch on that area couldn't reach it.
+    // Now we measure available space at open time and cap accordingly, so
+    // internal scroll always activates when content is too tall. Mirrors the
+    // Mode popover pattern (toggleModeMenu). 200px floor keeps the popover
+    // usable even on very short viewports.
+    const btnRect    = btn.getBoundingClientRect();
+    const viewportH  = window.innerHeight || document.documentElement.clientHeight;
+    const gap        = 20;
+    const spaceBelow = viewportH - btnRect.bottom - gap;
+    const cap        = Math.max(200, spaceBelow);
+    pop.style.maxHeight = `${cap}px`;
     syncFormatButtons();
     setTimeout(() => document.addEventListener('click', _filterOutsideClick), 0);
     document.addEventListener('keydown', _filterMenuEscHandler);
@@ -21569,6 +21601,12 @@ document.addEventListener('error', e => {
 }, true);
 
 window.addEventListener('load', () => {
+  // v1.0.238 — Version check fires here regardless of which screen the
+  // user lands on. Previously it was only inside _ncLoad, which runs on
+  // Rankings visit — a user who stayed on the battle screen after a
+  // version bump never saw the "What's new" notification. Idempotent
+  // (_appUpdateChecked guard), so a later _ncLoad is a no-op.
+  try { _checkAppUpdateNotif(); } catch { /* defensive */ }
   if (tryLoadSharedView()) {
     hide('username-screen');
     return;
