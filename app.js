@@ -384,6 +384,8 @@ const IDS = Object.freeze({
   gapsViewList:           'gaps-view-list',
   gapsIncludePlanning:    'gaps-include-planning',
   gapsIncludeUpcoming:    'gaps-include-upcoming',
+  gapsGroupFranchise:     'gaps-group-franchise',
+  gapsFormatChips:        'gaps-format-chips',
   gapsRefreshBtn:         'gaps-refresh-btn',
   gapsMeta:               'gaps-meta',
   gapsLoading:            'gaps-loading',
@@ -6353,6 +6355,21 @@ const FRANCHISE_GAP_UPCOMING_STATUSES = new Set(['NOT_YET_RELEASED']);
 let _franchiseGaps       = null;   // { fetchedAt, groups: [{ parent, gaps: [...] }] }
 let _franchiseGapsView   = 'grid'; // 'grid' | 'list'
 let _franchiseGapsLoading = false;
+// v1.0.237 — separate hidden-formats set for the Missing tab. Seeded from
+// hiddenFormatsRanking on first render so behaviour matches Rankings by
+// default, but the user can diverge (e.g. hide MOVIE from Missing but
+// keep it visible in Rankings) via the format chips.
+let _franchiseGapsHiddenFormats = null;
+// All formats we let the user toggle. MUSIC is dropped at import time
+// (kessen never carries music videos) so it doesn't show up here.
+const FRANCHISE_GAP_FORMATS = [
+  { key: 'TV',       label: 'TV' },
+  { key: 'MOVIE',    label: 'Movie' },
+  { key: 'OVA',      label: 'OVA' },
+  { key: 'ONA',      label: 'ONA' },
+  { key: 'SPECIAL',  label: 'Special' },
+  { key: 'TV_SHORT', label: 'Short' },
+];
 
 function _loadFranchiseGapsCache() {
   try {
@@ -6567,6 +6584,62 @@ function _escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Paint the format-filter chips. Called once per render so re-toggles
+// don't accumulate listeners.
+function _paintGapFormatChips() {
+  const wrap = byId(IDS.gapsFormatChips);
+  if (!wrap) return;
+  // Seed hidden-formats set from Rankings on first paint, so a user who
+  // has already hidden MOVIE / SPECIAL in Rankings sees the same defaults
+  // here without extra config.
+  if (_franchiseGapsHiddenFormats === null) {
+    _franchiseGapsHiddenFormats = new Set(hiddenFormatsRanking);
+  }
+  // Clear existing chips (keep the "Formats:" label span at index 0)
+  while (wrap.childElementCount > 1) wrap.removeChild(wrap.lastChild);
+  for (const f of FRANCHISE_GAP_FORMATS) {
+    const hidden = _franchiseGapsHiddenFormats.has(f.key);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = f.label;
+    chip.style.cssText =
+      `padding:3px 10px;border-radius:12px;font-size:0.72rem;line-height:1;cursor:pointer;` +
+      `border:1px solid ${hidden ? '#30363d' : '#3b82f6'};` +
+      `background:${hidden ? 'transparent' : 'rgba(59,130,246,0.12)'};` +
+      `color:${hidden ? '#6b7280' : '#3b82f6'};` +
+      (hidden ? 'text-decoration:line-through' : '');
+    chip.addEventListener('click', () => {
+      if (_franchiseGapsHiddenFormats.has(f.key)) _franchiseGapsHiddenFormats.delete(f.key);
+      else _franchiseGapsHiddenFormats.add(f.key);
+      renderFranchiseGaps({ skipFetch: true });
+    });
+    wrap.appendChild(chip);
+  }
+}
+
+// Collapse groups that share a franchise ID (via _getFranchiseIdMap) into
+// one super-group per franchise. Falls back to the raw parent grouping for
+// any parent that isn't in the franchise map (guest lists, brand-new items).
+function _mergeGapsByFranchise(groups) {
+  const map = _getFranchiseIdMap();
+  const buckets = new Map(); // fkey → merged group
+  for (const g of groups) {
+    const fkey = map.get(g.parent.id) || `id:${g.parent.id}`;
+    if (!buckets.has(fkey)) {
+      buckets.set(fkey, { parent: g.parent, parentIds: new Set([g.parent.id]), gaps: [] });
+    }
+    const bucket = buckets.get(fkey);
+    // Prefer the parent with the lowest AniList id as the display parent —
+    // usually the "original" entry in a franchise chain.
+    if (g.parent.id < bucket.parent.id) bucket.parent = g.parent;
+    bucket.parentIds.add(g.parent.id);
+    for (const x of g.gaps) {
+      if (!bucket.gaps.some(y => y.id === x.id)) bucket.gaps.push(x);
+    }
+  }
+  return [...buckets.values()].map(b => ({ parent: b.parent, gaps: b.gaps }));
+}
+
 // Main render — called by tab-switch, refresh, view toggle, filter change.
 // { force }: bust cache and re-fetch. { skipFetch }: use current _franchiseGaps
 // as-is, no network. Everything else defaults to "use fresh cache or fetch".
@@ -6577,6 +6650,8 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   const metaEl    = byId(IDS.gapsMeta);
   const includePlanning = !!byId(IDS.gapsIncludePlanning)?.checked;
   const includeUpcoming = !!byId(IDS.gapsIncludeUpcoming)?.checked;
+  const groupByFranchise = !!byId(IDS.gapsGroupFranchise)?.checked;
+  _paintGapFormatChips();  // ensure chips are painted / reflect current state
 
   if (!animeList.length) {
     if (loadingEl) loadingEl.style.display = 'none';
@@ -6607,14 +6682,20 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   if (includePlanning && Array.isArray(_pendingNewAnime)) {
     _pendingNewAnime.forEach(a => excludeIds.add(a.id));
   }
-  const visibleGroups = data.groups
+  const hiddenFormats = _franchiseGapsHiddenFormats || new Set();
+  let visibleGroups = data.groups
     .map(g => ({
       parent: g.parent,
       gaps: g.gaps
         .filter(x => !excludeIds.has(x.id))
-        .filter(x => includeUpcoming || !FRANCHISE_GAP_UPCOMING_STATUSES.has(x.status)),
+        .filter(x => includeUpcoming || !FRANCHISE_GAP_UPCOMING_STATUSES.has(x.status))
+        .filter(x => !x.format || !hiddenFormats.has(x.format)),
     }))
     .filter(g => g.gaps.length > 0);
+
+  if (groupByFranchise) {
+    visibleGroups = _mergeGapsByFranchise(visibleGroups);
+  }
 
   const totalGaps = visibleGroups.reduce((n, g) => n + g.gaps.length, 0);
 
@@ -6624,7 +6705,7 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
     const ageLabel = ageMin < 60 ? `${ageMin}m ago`
                    : ageMin < 1440 ? `${Math.round(ageMin/60)}h ago`
                    : `${Math.round(ageMin/1440)}d ago`;
-    metaEl.textContent = `${totalGaps} missing across ${visibleGroups.length} series · scan from ${ageLabel}`;
+    metaEl.textContent = `${totalGaps} missing across ${visibleGroups.length} ${groupByFranchise ? (visibleGroups.length === 1 ? 'franchise' : 'franchises') : (visibleGroups.length === 1 ? 'series' : 'series')} · scan from ${ageLabel}`;
   }
 
   if (!totalGaps) {
@@ -6637,6 +6718,7 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   if (!resultsEl) return;
 
   const isGrid = _franchiseGapsView === 'grid';
+  const scopeWord = groupByFranchise ? 'franchise' : 'series';
   const groupBlocks = visibleGroups.map(g => {
     const cards = g.gaps.map(x => isGrid ? _renderGapCardGrid(x) : _renderGapCardList(x)).join('');
     const inner = isGrid
@@ -6644,7 +6726,7 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
       : `<div>${cards}</div>`;
     return `
       <div class="gap-group" style="margin-bottom:24px">
-        <div style="font-size:0.85rem;color:#8b949e;margin-bottom:8px">Because you have <strong style="color:var(--text-bright)">${_escapeHtml(g.parent.title)}</strong> in your list</div>
+        <div style="font-size:0.85rem;color:#8b949e;margin-bottom:8px">Because you have the <strong style="color:var(--text-bright)">${_escapeHtml(g.parent.title)}</strong> ${scopeWord} in your list</div>
         ${inner}
       </div>`;
   }).join('');
@@ -19557,7 +19639,7 @@ const APP_VERSION = (() => {
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grouped by parent ("Because you have X in your list…"), with both grid and list views. Toggles let you include announced/upcoming shows, or include items already in your planning list. Weekly cache — hit ↻ Rescan any time to refresh.',
+    '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grid or list view, group results by franchise (using the same franchise mapping as Rankings) or by individual series, format chips that inherit your Rankings hidden-formats set (hide MOVIE / SPECIAL / TV_SHORT etc. with one tap), plus toggles for including announced/upcoming shows and items in your planning list. Weekly cache — hit ↻ Rescan any time to refresh.',
   ],
 };
 

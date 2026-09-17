@@ -1236,14 +1236,18 @@
         <!-- ── Missing (franchise gaps) sub-tab — v1.0.237 ── -->
         <div id="gaps-section" style="display:none">
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Sequels, prequels, spin-offs and side stories from series you've completed but haven't watched yet — so a stealth spin-off like "Narumi's Week at Work" doesn't slip past.</p>
-          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px;font-size:0.82rem;color:#8b949e">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px;font-size:0.82rem;color:#8b949e">
             <div style="display:flex;gap:4px">
               <button class="source-tab active" id="gaps-view-grid" onclick="setGapsView('grid')" style="padding:4px 10px;font-size:0.8rem">▤ Grid</button>
               <button class="source-tab"        id="gaps-view-list" onclick="setGapsView('list')" style="padding:4px 10px;font-size:0.8rem">≡ List</button>
             </div>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="gaps-group-franchise" checked onchange="onGapsFilterChange()" />
+              Group by franchise
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="gaps-include-planning" onchange="onGapsFilterChange()" />
-              Also include items in my planning list
+              Include items in my planning list
             </label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="gaps-include-upcoming" checked onchange="onGapsFilterChange()" />
@@ -1253,6 +1257,11 @@
               style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.8rem;line-height:1;margin-left:auto">
               ↻ Rescan
             </button>
+          </div>
+          <!-- Format filter chips — respect your Rankings hidden formats by default. -->
+          <div id="gaps-format-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;font-size:0.75rem;align-items:center">
+            <span style="color:#6b7280;margin-right:2px">Formats:</span>
+            <!-- populated by _paintGapFormatChips() -->
           </div>
           <div id="gaps-meta" style="font-size:0.75rem;color:#6b7280;margin-bottom:8px;display:none"></div>
           <div id="gaps-loading" style="display:none;text-align:center;padding:32px 0;color:#8b949e">
