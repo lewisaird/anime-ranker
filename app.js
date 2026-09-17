@@ -377,6 +377,19 @@ const IDS = Object.freeze({
   moodsSection:           'moods-section',
   newBadgeTaste:          'new-badge-taste',
   recsTabMoods:           'recs-tab-moods',
+  // v1.0.237 — Missing / franchise-gaps sub-tab
+  recsTabGaps:            'recs-tab-gaps',
+  gapsSection:            'gaps-section',
+  gapsViewGrid:           'gaps-view-grid',
+  gapsViewList:           'gaps-view-list',
+  gapsIncludePlanning:    'gaps-include-planning',
+  gapsIncludeUpcoming:    'gaps-include-upcoming',
+  gapsRefreshBtn:         'gaps-refresh-btn',
+  gapsMeta:               'gaps-meta',
+  gapsLoading:            'gaps-loading',
+  gapsProgress:           'gaps-progress',
+  gapsEmpty:              'gaps-empty',
+  gapsResults:            'gaps-results',
   socialChallengeInput:   'social-challenge-input',
   socialCompareInput:     'social-compare-input',
   tasteDrift:             'taste-drift',
@@ -712,6 +725,11 @@ const KESSEN_KEYS = {
     // cross-device sync merge to filter out items we just dismissed so
     // stale Firebase snapshots can't resurrect them.
     notifTombstones: (key) => `kessen.data.notifTombstones.${key || 'guest'}`,
+    // v1.0.237 — Franchise gaps cache: sequels/prequels/spin-offs of anime
+    // in the user's list that they haven't watched yet. Cached per user
+    // with a weekly TTL — relations rarely change but new sequels get
+    // announced. Shape: { fetchedAt, groups: [{ parent, gaps: [...] }] }.
+    franchiseGaps: (key) => `kessen.data.franchiseGaps.${key || 'guest'}`,
     // v1.0.154 — Live Challenge battle-history records (was a module-level
     // _LC_HISTORY_KEY const). Used to recap recent matches in the LC modal.
     // Literal preserved as 'kessen_lc_history' so existing user history
@@ -6251,20 +6269,30 @@ function setRecsTab(tab, fromMood = false) {
   byId(IDS.recsTabSeasonal).classList.toggle('active', tab === 'seasonal');
   byId(IDS.recsTabPredict).classList.toggle('active', tab === 'predict');
   byId(IDS.recsTabMoods)?.classList.toggle('active', tab === 'moods');
+  byId(IDS.recsTabGaps)?.classList.toggle('active', tab === 'gaps');
 
   const isPredict = tab === 'predict';
   const isMoods   = tab === 'moods';
+  const isGaps    = tab === 'gaps';
   const sub        = byId(IDS.recsSubText);
   const grid       = byId(IDS.recsGrid);
   const predictSec = byId(IDS.predictorSection);
   const moodsSec   = byId(IDS.moodsSection);
+  const gapsSec    = byId(IDS.gapsSection);
   const refreshBtn = byId(IDS.discoverRefreshBtn);
 
-  if (sub)        sub.style.display        = (isPredict || isMoods) ? 'none' : '';
-  if (grid)       grid.style.display       = (isPredict || isMoods) ? 'none' : (grid.style.display || '');
+  const specialTab = isPredict || isMoods || isGaps;
+  if (sub)        sub.style.display        = specialTab ? 'none' : '';
+  if (grid)       grid.style.display       = specialTab ? 'none' : (grid.style.display || '');
   if (predictSec) predictSec.style.display = isPredict ? '' : 'none';
   if (moodsSec)   moodsSec.style.display   = isMoods   ? '' : 'none';
-  if (refreshBtn) refreshBtn.style.display = (isPredict || isMoods) ? 'none' : '';
+  if (gapsSec)    gapsSec.style.display    = isGaps    ? '' : 'none';
+  if (refreshBtn) refreshBtn.style.display = specialTab ? 'none' : '';
+
+  if (isGaps) {
+    renderFranchiseGaps();  // v1.0.237
+    return;
+  }
 
   if (isMoods) {
     // Populate the discover mood grid
@@ -6299,6 +6327,328 @@ function setRecsTab(tab, fromMood = false) {
       });
     }
   }
+}
+
+// ─── FRANCHISE GAPS — v1.0.237 ─────────────────────────────────────────────
+// "You've watched Kaiju No.8 but did you know Narumi's Week at Work is a
+// spin-off?" — surface sequels, prequels, spin-offs, side stories and
+// alternate versions of anime already in the user's list that they haven't
+// watched. Groups by parent so the user can see "because you completed X:
+// these bits are missing" at a glance.
+const FRANCHISE_GAPS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+// Relation types that constitute a franchise extension worth surfacing.
+// We EXCLUDE:
+//   ADAPTATION / SOURCE — cross-media (manga, LN, VN); not the same watch
+//   CHARACTER          — just shares a character (Fate\Stay Night etc.)
+//   SUMMARY            — recap movies are usually the same content
+//   OTHER              — anything AniList didn't classify
+const FRANCHISE_GAP_REL_TYPES = new Set([
+  'SEQUEL', 'PREQUEL', 'SIDE_STORY', 'SPIN_OFF', 'PARENT', 'ALTERNATIVE',
+]);
+// Status values counted as "announced/upcoming" (not aired yet, or the
+// broadcast date is unknown). Filtered out unless the include-upcoming
+// toggle is checked. AniList uses NOT_YET_RELEASED for both.
+const FRANCHISE_GAP_UPCOMING_STATUSES = new Set(['NOT_YET_RELEASED']);
+
+let _franchiseGaps       = null;   // { fetchedAt, groups: [{ parent, gaps: [...] }] }
+let _franchiseGapsView   = 'grid'; // 'grid' | 'list'
+let _franchiseGapsLoading = false;
+
+function _loadFranchiseGapsCache() {
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.data.franchiseGaps(saveKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.fetchedAt || !Array.isArray(parsed?.groups)) return null;
+    return parsed;
+  } catch { return null; }
+}
+function _saveFranchiseGapsCache(data) {
+  try {
+    localStorage.setItem(KESSEN_KEYS.data.franchiseGaps(saveKey), JSON.stringify(data));
+  } catch { /* storage disabled — accept the loss */ }
+}
+function _isFranchiseGapsCacheFresh(cache) {
+  if (!cache?.fetchedAt) return false;
+  return (Date.now() - cache.fetchedAt) < FRANCHISE_GAPS_TTL_MS;
+}
+
+// Batched fetch of relations for each anime in `sourceList`. Splits into
+// groups of 50 (AniList's per-page cap) and awaits sequentially with a
+// small pacing delay to avoid the 90-req/min rate limit on large lists.
+async function _fetchFranchiseRelations(sourceList, onProgress) {
+  const BATCH = 50;
+  const ids = sourceList.map(a => a.id).filter(id => Number.isFinite(id));
+  const results = [];
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH);
+    const query = `
+      query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(id_in: $ids, type: ANIME) {
+            id
+            title { romaji english native }
+            coverImage { large medium }
+            relations {
+              edges {
+                relationType(version: 2)
+                node {
+                  id type
+                  title { romaji english native }
+                  coverImage { large medium }
+                  format status episodes seasonYear
+                }
+              }
+            }
+          }
+        }
+      }`;
+    try {
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
+      const j   = await res.json();
+      const media = j?.data?.Page?.media ?? [];
+      results.push(...media);
+    } catch (e) {
+      console.warn('[_fetchFranchiseRelations] batch failed:', e?.message);
+    }
+    if (onProgress) onProgress(Math.min(ids.length, i + BATCH), ids.length);
+    // small gap between batches — well under the rate limit
+    if (i + BATCH < ids.length) await new Promise(r => setTimeout(r, 400));
+  }
+  return results;
+}
+
+// Turn raw AniList media[] into grouped gaps: for each source anime, its
+// relation nodes that are anime, of a franchise type, and NOT in the
+// user's own list. `excludeIds` is the set of ids the user already has
+// (in animeList + optionally in _pendingNewAnime if include-planning is on).
+function _buildFranchiseGapGroups(mediaList, excludeIds) {
+  const groups = [];
+  const seenGapIds = new Set();  // dedupe across parents
+  for (const m of mediaList) {
+    const gaps = (m.relations?.edges ?? [])
+      .filter(e => e.node?.type === 'ANIME')
+      .filter(e => FRANCHISE_GAP_REL_TYPES.has(e.relationType))
+      .filter(e => !excludeIds.has(e.node.id))
+      .filter(e => !seenGapIds.has(e.node.id))
+      .map(e => ({
+        id:           e.node.id,
+        title:        e.node.title?.english || e.node.title?.romaji || e.node.title?.native || '(untitled)',
+        cover:        e.node.coverImage?.large || e.node.coverImage?.medium || '',
+        format:       e.node.format || null,
+        status:       e.node.status || null,
+        episodes:     e.node.episodes || null,
+        seasonYear:   e.node.seasonYear || null,
+        relationType: e.relationType,
+      }));
+    if (gaps.length === 0) continue;
+    gaps.forEach(g => seenGapIds.add(g.id));
+    groups.push({
+      parent: {
+        id:    m.id,
+        title: m.title?.english || m.title?.romaji || m.title?.native || '(untitled)',
+        cover: m.coverImage?.large || m.coverImage?.medium || '',
+      },
+      gaps,
+    });
+  }
+  return groups;
+}
+
+async function fetchFranchiseGaps({ force = false, includePlanning = false } = {}) {
+  if (_franchiseGapsLoading) return null;
+  if (!animeList.length) return { fetchedAt: Date.now(), groups: [] };
+
+  // Try cache first unless force=true
+  if (!force) {
+    const cached = _loadFranchiseGapsCache();
+    if (_isFranchiseGapsCacheFresh(cached)) return cached;
+  }
+
+  _franchiseGapsLoading = true;
+  const progressEl = byId(IDS.gapsProgress);
+  try {
+    // Source list: completed anime always; planning-list entries only if
+    // the toggle is on (kept separate because planning-list items don't
+    // have proper AniList entries in animeList).
+    const source = animeList; // future: filter by status === 'COMPLETED' for stricter scan
+    // Exclusion set — never surface what the user already has anywhere.
+    const excludeIds = new Set(animeList.map(a => a.id));
+    if (includePlanning && Array.isArray(_pendingNewAnime)) {
+      _pendingNewAnime.forEach(a => excludeIds.add(a.id));
+    }
+    const media = await _fetchFranchiseRelations(source, (done, total) => {
+      if (progressEl) progressEl.textContent = `${done} / ${total} anime scanned`;
+    });
+    const groups = _buildFranchiseGapGroups(media, excludeIds);
+    const data = { fetchedAt: Date.now(), groups };
+    _saveFranchiseGapsCache(data);
+    _franchiseGaps = data;
+    return data;
+  } finally {
+    _franchiseGapsLoading = false;
+    if (progressEl) progressEl.textContent = '';
+  }
+}
+
+// UI: view toggle (grid ↔ list)
+function setGapsView(view) {
+  _franchiseGapsView = (view === 'list') ? 'list' : 'grid';
+  byId(IDS.gapsViewGrid)?.classList.toggle('active', _franchiseGapsView === 'grid');
+  byId(IDS.gapsViewList)?.classList.toggle('active', _franchiseGapsView === 'list');
+  renderFranchiseGaps({ skipFetch: true });
+}
+
+// Called when either filter toggle changes. Re-derive the visible set from
+// the raw cache (no re-fetch needed unless include-planning changes the
+// exclusion set — for simplicity we do re-derive rather than re-fetch, and
+// let the user hit Rescan if they want fresh data).
+function onGapsFilterChange() {
+  renderFranchiseGaps({ skipFetch: true });
+}
+
+function refreshFranchiseGaps() {
+  const btn = byId(IDS.gapsRefreshBtn);
+  if (btn) { btn.textContent = '↻ Scanning…'; btn.disabled = true; }
+  renderFranchiseGaps({ force: true }).finally(() => {
+    if (btn) { btn.textContent = '↻ Rescan'; btn.disabled = false; }
+  });
+}
+
+// Format a compact meta-string ("TV · 24ep · 2024 · Sequel") for a gap card.
+function _gapMetaString(gap) {
+  const bits = [];
+  if (gap.format) bits.push(gap.format.replace(/_/g, ' '));
+  if (gap.episodes) bits.push(`${gap.episodes} ep`);
+  if (gap.seasonYear) bits.push(gap.seasonYear);
+  const relLabel = gap.relationType?.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  if (relLabel) bits.push(relLabel);
+  if (gap.status === 'NOT_YET_RELEASED') bits.push('Upcoming');
+  else if (gap.status === 'RELEASING')   bits.push('Airing');
+  return bits.join(' · ');
+}
+
+function _renderGapCardGrid(gap) {
+  const anilistUrl = `https://anilist.co/anime/${gap.id}`;
+  const cover = gap.cover
+    ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
+    : `<div style="width:100%;aspect-ratio:2/3;background:#161b22;border-radius:6px 6px 0 0"></div>`;
+  return `
+    <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-grid"
+       style="background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column">
+      ${cover}
+      <div style="padding:8px 10px;display:flex;flex-direction:column;gap:4px;flex:1">
+        <div style="font-size:0.82rem;font-weight:600;line-height:1.2;color:var(--text-bright);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${_escapeHtml(gap.title)}</div>
+        <div style="font-size:0.7rem;color:#8b949e;line-height:1.3">${_escapeHtml(_gapMetaString(gap))}</div>
+      </div>
+    </a>`;
+}
+
+function _renderGapCardList(gap) {
+  const anilistUrl = `https://anilist.co/anime/${gap.id}`;
+  const cover = gap.cover
+    ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:44px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
+    : `<div style="width:44px;aspect-ratio:2/3;background:#161b22;border-radius:4px;flex-shrink:0"></div>`;
+  return `
+    <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-list"
+       style="display:flex;gap:10px;align-items:center;padding:8px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;text-decoration:none;color:inherit;margin-bottom:6px">
+      ${cover}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:0.9rem;font-weight:600;line-height:1.3;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escapeHtml(gap.title)}</div>
+        <div style="font-size:0.75rem;color:#8b949e;line-height:1.3">${_escapeHtml(_gapMetaString(gap))}</div>
+      </div>
+    </a>`;
+}
+
+// Minimal HTML escaping — the titles come from AniList so treat as untrusted.
+function _escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Main render — called by tab-switch, refresh, view toggle, filter change.
+// { force }: bust cache and re-fetch. { skipFetch }: use current _franchiseGaps
+// as-is, no network. Everything else defaults to "use fresh cache or fetch".
+async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
+  const loadingEl = byId(IDS.gapsLoading);
+  const emptyEl   = byId(IDS.gapsEmpty);
+  const resultsEl = byId(IDS.gapsResults);
+  const metaEl    = byId(IDS.gapsMeta);
+  const includePlanning = !!byId(IDS.gapsIncludePlanning)?.checked;
+  const includeUpcoming = !!byId(IDS.gapsIncludeUpcoming)?.checked;
+
+  if (!animeList.length) {
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (emptyEl)   { emptyEl.style.display = ''; emptyEl.textContent = 'Add anime to your Kessen list first, then come back.'; }
+    if (resultsEl) resultsEl.innerHTML = '';
+    if (metaEl)    metaEl.style.display = 'none';
+    return;
+  }
+
+  // Fetch if we don't have data yet, or if force requested
+  if (!skipFetch && (!_franchiseGaps || force)) {
+    if (loadingEl) loadingEl.style.display = '';
+    if (emptyEl)   emptyEl.style.display   = 'none';
+    if (resultsEl) resultsEl.innerHTML     = '';
+    if (metaEl)    metaEl.style.display    = 'none';
+    _franchiseGaps = await fetchFranchiseGaps({ force, includePlanning });
+    if (loadingEl) loadingEl.style.display = 'none';
+  }
+
+  const data = _franchiseGaps || _loadFranchiseGapsCache();
+  if (!data) {
+    if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'Scan hasn\'t run yet — tap Rescan.'; }
+    return;
+  }
+
+  // Apply live filters against the cached raw groups
+  const excludeIds = new Set(animeList.map(a => a.id));
+  if (includePlanning && Array.isArray(_pendingNewAnime)) {
+    _pendingNewAnime.forEach(a => excludeIds.add(a.id));
+  }
+  const visibleGroups = data.groups
+    .map(g => ({
+      parent: g.parent,
+      gaps: g.gaps
+        .filter(x => !excludeIds.has(x.id))
+        .filter(x => includeUpcoming || !FRANCHISE_GAP_UPCOMING_STATUSES.has(x.status)),
+    }))
+    .filter(g => g.gaps.length > 0);
+
+  const totalGaps = visibleGroups.reduce((n, g) => n + g.gaps.length, 0);
+
+  if (metaEl) {
+    metaEl.style.display = '';
+    const ageMin = Math.round((Date.now() - data.fetchedAt) / 60000);
+    const ageLabel = ageMin < 60 ? `${ageMin}m ago`
+                   : ageMin < 1440 ? `${Math.round(ageMin/60)}h ago`
+                   : `${Math.round(ageMin/1440)}d ago`;
+    metaEl.textContent = `${totalGaps} missing across ${visibleGroups.length} series · scan from ${ageLabel}`;
+  }
+
+  if (!totalGaps) {
+    if (emptyEl)   { emptyEl.style.display = ''; emptyEl.textContent = 'You\'re all caught up — no franchise gaps found in your list.'; }
+    if (resultsEl) resultsEl.innerHTML = '';
+    return;
+  }
+
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (!resultsEl) return;
+
+  const isGrid = _franchiseGapsView === 'grid';
+  const groupBlocks = visibleGroups.map(g => {
+    const cards = g.gaps.map(x => isGrid ? _renderGapCardGrid(x) : _renderGapCardList(x)).join('');
+    const inner = isGrid
+      ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">${cards}</div>`
+      : `<div>${cards}</div>`;
+    return `
+      <div class="gap-group" style="margin-bottom:24px">
+        <div style="font-size:0.85rem;color:#8b949e;margin-bottom:8px">Because you have <strong style="color:var(--text-bright)">${_escapeHtml(g.parent.title)}</strong> in your list</div>
+        ${inner}
+      </div>`;
+  }).join('');
+  resultsEl.innerHTML = groupBlocks;
 }
 
 function getCurrentSeason() {
@@ -13175,6 +13525,7 @@ let _moodRecActive = false; // suppresses normal discover load when mood rec is 
 
 function renderDiscoverTab() {
   if (recsTab === 'predict') return; // predictor is search-driven, no pre-loading needed
+  if (recsTab === 'gaps') { renderFranchiseGaps(); return; } // v1.0.237
   if (_moodRecActive) return; // mood rec will populate the grid itself
 
   const grid = byId(IDS.recsGrid);
@@ -19199,17 +19550,14 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.235 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.237 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    'Tapping a Tower push notification (or the "Battle in Tower" button in the notification centre) now correctly clears the yellow "you just finished X" banner and the matching notification-centre entry once the Tower opens. Previously both would linger on screen even after you\'d already acted on the prompt — you\'d land in the right Tower run but the app still nagged you about it, which read as broken UI.',
-    'Add / archive prompts are now blocked while a Tower run is active. Previously if the "new anime" or "removed anime" review modal opened mid-Tower and you went through with it, the ranked list shifted underneath the running Tower — its opponents could no longer be clicked and the run got stuck. Now the app tells you to finish or exit Tower first, and the notification stays in the bell so you can act on it right after.',
-    '"Review removed anime" notification-centre entries now dismiss themselves after you open the archive modal (matching the "Review new anime" flow), rather than lingering in the bell.',
-    'Play Store build targets Android 16 (API level 36) to satisfy Google\'s Aug 31, 2026 target-SDK requirement. No user-visible change — the app behaves identically — but it means future updates can keep shipping.',
+    '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grouped by parent ("Because you have X in your list…"), with both grid and list views. Toggles let you include announced/upcoming shows, or include items already in your planning list. Weekly cache — hit ↻ Rescan any time to refresh.',
   ],
 };
 

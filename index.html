@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.235" />
+  <meta name="version" content="1.0.237" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -102,7 +102,6 @@
       <line x1="256" y1="256" x2="233" y2="279" stroke="#f0c040" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
     </svg>
     <h1>Kessen</h1>
-    <button type="button" class="beta-chip" onclick="sendBetaFeedback()" title="You're on a beta build — tap to send feedback or report a bug" aria-label="Send beta feedback">Beta</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
@@ -1206,6 +1205,7 @@
           <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')">📅 This Season</button>
           <button class="source-tab"        id="recs-tab-moods"    onclick="setRecsTab('moods')">☕ Moods</button>
           <button class="source-tab"        id="recs-tab-predict"  onclick="setRecsTab('predict')">🔮 Predict</button>
+          <button class="source-tab"        id="recs-tab-gaps"     onclick="setRecsTab('gaps')">🧩 Missing</button>
         </div>
         <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
 
@@ -1231,6 +1231,40 @@
             <div id="predictor-dropdown" class="predictor-dropdown" style="display:none"></div>
           </div>
           <div id="predictor-results"></div>
+        </div>
+
+        <!-- ── Missing (franchise gaps) sub-tab — v1.0.237 ── -->
+        <div id="gaps-section" style="display:none">
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Sequels, prequels, spin-offs and side stories from series you've completed but haven't watched yet — so a stealth spin-off like "Narumi's Week at Work" doesn't slip past.</p>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px;font-size:0.82rem;color:#8b949e">
+            <div style="display:flex;gap:4px">
+              <button class="source-tab active" id="gaps-view-grid" onclick="setGapsView('grid')" style="padding:4px 10px;font-size:0.8rem">▤ Grid</button>
+              <button class="source-tab"        id="gaps-view-list" onclick="setGapsView('list')" style="padding:4px 10px;font-size:0.8rem">≡ List</button>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="gaps-include-planning" onchange="onGapsFilterChange()" />
+              Also include items in my planning list
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="gaps-include-upcoming" checked onchange="onGapsFilterChange()" />
+              Include announced/upcoming
+            </label>
+            <button onclick="refreshFranchiseGaps()" id="gaps-refresh-btn" title="Rescan your list for missing pieces"
+              style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.8rem;line-height:1;margin-left:auto">
+              ↻ Rescan
+            </button>
+          </div>
+          <div id="gaps-meta" style="font-size:0.75rem;color:#6b7280;margin-bottom:8px;display:none"></div>
+          <div id="gaps-loading" style="display:none;text-align:center;padding:32px 0;color:#8b949e">
+            <div style="font-size:2rem;margin-bottom:12px">🔍</div>
+            <div>Scanning your list for missing pieces…</div>
+            <div id="gaps-progress" style="font-size:0.75rem;margin-top:8px"></div>
+          </div>
+          <div id="gaps-empty" style="display:none;text-align:center;padding:32px 0;color:#8b949e">
+            <div style="font-size:2rem;margin-bottom:12px">✅</div>
+            <div>You're all caught up — no franchise gaps found in your list.</div>
+          </div>
+          <div id="gaps-results"></div>
         </div>
       </div>
     </div>

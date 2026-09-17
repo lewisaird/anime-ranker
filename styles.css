@@ -147,6 +147,13 @@
       display: flex;
       flex-direction: column;
       align-items: center;
+      /* v1.0.236 — Catch-all so a header row that grows past 100vw
+         (progress-info + cloud-sync-indicator + bell + avatar together on
+         a narrow screen) can't turn the whole page into a horizontally
+         scrollable box. #main already had overflow-x: hidden but the
+         header is a sibling of #main, so overflow there was leaking
+         out to <body>. Belt & braces for future header additions. */
+      overflow-x: hidden;
     }
 
     header {
