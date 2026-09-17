@@ -152,8 +152,15 @@
          a narrow screen) can't turn the whole page into a horizontally
          scrollable box. #main already had overflow-x: hidden but the
          header is a sibling of #main, so overflow there was leaking
-         out to <body>. Belt & braces for future header additions. */
-      overflow-x: hidden;
+         out to <body>.
+         v1.0.238 — Switched from `hidden` to `clip`. `hidden` implicitly
+         establishes a scroll container in both axes, which on macOS could
+         subtly interfere with page-level vertical scrolling from the
+         battle screen (touch events near the edges got captured by
+         body's scrollport instead of chaining to <html>). `clip`
+         achieves the same horizontal-cut but does NOT create a scroll
+         container, so vertical scroll chains cleanly to the document. */
+      overflow-x: clip;
     }
 
     header {
@@ -492,7 +499,12 @@
     #mode-popover {
       display: none;
       position: absolute;
-      bottom: calc(100% + 6px);
+      /* v1.0.238 — Drop down instead of up. Previously dropped up so it
+         didn't overlap the Filter popover; now the two menus close each
+         other on open (see toggleModeMenu / toggleFilterMenu) so overlap
+         isn't a risk any more, and matching the Filter direction reads
+         more naturally. Dynamic max-height set at open time. */
+      top: calc(100% + 6px);
       right: 0;
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
@@ -503,6 +515,7 @@
       max-height: 80vh;
       overflow-y: auto;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      touch-action: pan-y;
     }
     #mode-popover.open { display: block; }
     #mode-popover button[role="menuitemradio"] {
@@ -653,16 +666,12 @@
       object-fit: cover;
       border-radius: 8px;
       background: var(--border-subtle);
-      /* v1.0.238 — On macOS Safari, a two-finger trackpad swipe over an
-         image was being intercepted as an image-drag intent rather than
-         a page-scroll, so the user could only scroll the battle screen
-         by pointing at the empty gap between the cards. Disabling the
-         image drag makes scroll gestures pass through to the page. The
-         img[draggable="false"] attribute in index.html covers the same
-         thing at the HTML level; both are defensive so a new anime-card
-         img elsewhere in the app inherits the correct behaviour. */
+      /* v1.0.238 — Only disable the native image-drag; keep user-select
+         and other pointer behaviours intact so desktop scroll isn't
+         subtly interrupted. The draggable="false" on the two battle
+         imgs in index.html is the primary defence; this is a fallback
+         for other .anime-card contexts. */
       -webkit-user-drag: none;
-      user-select: none;
     }
 
     .anime-card .title {

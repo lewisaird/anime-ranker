@@ -1221,15 +1221,14 @@
         </div>
         <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
 
-        <!-- v1.0.238 — Mood quick-chip strip inside For You. The old
-             Moods sub-tab has been removed and these chips are now the
-             single entry point for a mood-filtered recs view. Each chip
-             calls applyMoodRec(), which switches the recs-grid to the
-             mood-affinity-scored batch while keeping For You visually
-             active (the chip stays highlighted so the user sees which
-             filter is on). Tabbing to This Season / Predict / Missing
-             clears the mood filter. -->
-        <div id="foryou-mood-chips" style="display:none;flex-wrap:wrap;gap:6px;justify-content:center;margin:0 0 14px;font-size:0.78rem">
+        <!-- v1.0.238 — Mood quick-chip strip inside For You. Presented as
+             an OPTIONAL filter row (label + "Clear" chip) so users can see
+             at a glance that the recs grid below is the main content and
+             the chips are just an optional narrowing. Tabbing to This
+             Season / Predict / Missing clears the mood filter. Clear
+             chip is only visible when a mood is active. -->
+        <div id="foryou-mood-chips" style="display:none;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:0 0 14px;font-size:0.78rem">
+          <span style="color:#6b7280;margin-right:4px">Filter by mood (optional):</span>
           <button type="button" class="mood-chip" onclick="applyMoodRec('comforting')"
             style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">☕ Comforting</button>
           <button type="button" class="mood-chip" onclick="applyMoodRec('devastating')"
@@ -1240,6 +1239,13 @@
             style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">🧠 Thought-provoking</button>
           <button type="button" class="mood-chip" onclick="applyMoodRec('beautiful')"
             style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">✨ Beautiful</button>
+          <button type="button" id="foryou-mood-clear" onclick="clearMoodRec()" style="display:none;background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 10px;cursor:pointer;font-size:0.78rem">✕ Clear</button>
+        </div>
+        <!-- Section heading above the recs grid to make the "there IS a
+             recs section below the chips" hierarchy obvious. Hidden on
+             tabs that don't use the grid. -->
+        <div id="foryou-recs-heading" style="display:none;font-size:0.85rem;color:#8b949e;margin:0 0 8px;text-align:center">
+          <span id="foryou-recs-heading-text">Recommended for you</span>
         </div>
 
         <!-- v1.0.238 — Moods tab merged into For You. The old Moods tile

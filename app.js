@@ -389,6 +389,9 @@ const IDS = Object.freeze({
   dailyStreakBadge:       'daily-streak-badge',
   weeklySummaryCard:      'weekly-summary-card',
   foryouMoodChips:        'foryou-mood-chips',
+  foryouMoodClear:        'foryou-mood-clear',
+  foryouRecsHeading:      'foryou-recs-heading',
+  foryouRecsHeadingText:  'foryou-recs-heading-text',
   gapsSearchInput:        'gaps-search-input',
   gapsSortMenuBtn:        'gaps-sort-menu-btn',
   gapsSortMenuPopover:    'gaps-sort-menu-popover',
@@ -6588,6 +6591,8 @@ function setRecsTab(tab, fromMood = false) {
   // v1.0.238 — mood quick-chips are For You only
   const moodChips = byId(IDS.foryouMoodChips);
   if (moodChips) moodChips.style.display = (tab === 'foryou') ? 'flex' : 'none';
+  const recsHeading = byId(IDS.foryouRecsHeading);
+  if (recsHeading) recsHeading.style.display = (tab === 'foryou') ? '' : 'none';
 
   // v1.0.238 — leaving For You clears any active mood filter, so the user
   // isn't surprised by mood-filtered recs when they come back to For You.
@@ -6599,6 +6604,10 @@ function setRecsTab(tab, fromMood = false) {
       el.style.color       = '#8b949e';
       el.style.background  = 'rgba(88,166,255,0.06)';
     });
+    const clearBtn = byId(IDS.foryouMoodClear);
+    if (clearBtn) clearBtn.style.display = 'none';
+    const headingText = byId(IDS.foryouRecsHeadingText);
+    if (headingText) headingText.textContent = 'Recommended for you';
     delete _recsCache['foryou'];  // force fresh normal recs on return
   }
 
@@ -9071,34 +9080,41 @@ function _installNotificationClickListener() {
 }
 _installNotificationClickListener();
 
-// v1.0.223 — DIAGNOSTIC: ping the active SW for its version on boot. If the
-// running SW is the v1.0.223 build (or newer), it replies with its APP_VERSION
-// and we toast it. If the SW is OLDER than v1.0.223, it doesn't know about
-// this message type and won't reply; we time out after 2 seconds and toast
-// that fact. This definitively answers whether the SW running on the device
-// is current or stale, which would explain why notification postMessages
-// aren't firing in v1.0.222.
+// v1.0.223 — SW health check. Originally a very visible on-screen toast
+// to diagnose the v1.0.222 push notification pipeline. v1.0.238 — Now that
+// push works reliably, most users don't need to be told about SW state on
+// every boot; the "no SW controller" toast in particular was a false-
+// positive on first-ever loads (the SW installs but only controls the
+// next navigation). Downgraded to console-only. Users can still opt in
+// to the visible toasts by appending ?swdebug=1 to the URL.
 function _checkSwVersionDiagnostic() {
   if (!('serviceWorker' in navigator)) return;
+  const debug = new URLSearchParams(window.location.search).get('swdebug') === '1';
+  const say = (icon, msg, dur) => {
+    if (debug) showToast(`${icon} ${msg}`, dur);
+    else console.log(`[SW-diagnostic] ${msg}`);
+  };
   setTimeout(() => {
     try {
       const ctrl = navigator.serviceWorker.controller;
       if (!ctrl) {
-        showToast('⚠️ no SW controller — push & deep links will not work', 4500);
+        // Expected on first-ever page load (SW installs but doesn't control
+        // this page until the next navigation). Not actionable for users.
+        say('⚠️', 'no SW controller yet — will control the next page load', 4500);
         return;
       }
       let replied = false;
       const handler = (event) => {
         if (event.data?.type !== 'kessen-version-reply') return;
         replied = true;
-        showToast(`✅ SW v${event.data.version || '?'} active`, 4000);
+        say('✅', `SW v${event.data.version || '?'} active`, 4000);
         navigator.serviceWorker.removeEventListener('message', handler);
       };
       navigator.serviceWorker.addEventListener('message', handler);
       ctrl.postMessage({ type: 'kessen-version-check' });
       setTimeout(() => {
         if (!replied) {
-          showToast('⚠️ SW didn\'t reply — running an old version (please force-close and reopen Kessen)', 5500);
+          say('⚠️', 'SW didn\'t reply — running an old version (force-close and reopen)', 5500);
           navigator.serviceWorker.removeEventListener('message', handler);
         }
       }, 2000);
@@ -14195,6 +14211,8 @@ function renderDiscoverTab() {
   // the chips stayed display:none until the user actively clicked For You.
   const moodChips = byId(IDS.foryouMoodChips);
   if (moodChips) moodChips.style.display = (recsTab === 'foryou') ? 'flex' : 'none';
+  const recsHeading = byId(IDS.foryouRecsHeading);
+  if (recsHeading) recsHeading.style.display = (recsTab === 'foryou') ? '' : 'none';
 
   if (recsTab === 'predict') return; // predictor is search-driven, no pre-loading needed
   if (recsTab === 'gaps') { renderFranchiseGaps(); return; } // v1.0.237
@@ -16058,6 +16076,27 @@ function _paintTasteMoods(el) {
   el.innerHTML = moodHtml || '<p style="color:#8b949e;font-size:0.85rem">Battle more anime to unlock mood clusters.</p>';
 }
 
+// v1.0.238 — Clear the active mood filter on Discover ▸ For You. Called
+// from the ✕ Clear chip that appears after picking a mood. Reverts to the
+// regular For You recs by clearing _moodRecActive, dropping the cached
+// mood-filtered grid, and re-invoking setRecsTab('foryou') so the normal
+// recs pipeline runs.
+function clearMoodRec() {
+  _moodRecActive = false;
+  document.querySelectorAll('#foryou-mood-chips .mood-chip').forEach(el => {
+    el.classList.remove('active');
+    el.style.borderColor = '#30363d';
+    el.style.color       = '#8b949e';
+    el.style.background  = 'rgba(88,166,255,0.06)';
+  });
+  const clearBtn = byId(IDS.foryouMoodClear);
+  if (clearBtn) clearBtn.style.display = 'none';
+  const headingText = byId(IDS.foryouRecsHeadingText);
+  if (headingText) headingText.textContent = 'Recommended for you';
+  delete _recsCache['foryou'];
+  setRecsTab('foryou');
+}
+
 async function applyMoodRec(moodKey) {
   const mood = _MOOD_DEFS.find(m => m.key === moodKey);
   if (!mood) return;
@@ -16100,6 +16139,13 @@ async function applyMoodRec(moodKey) {
     el.style.color       = active ? 'var(--accent-blue)' : '#8b949e';
     el.style.background  = active ? 'rgba(88,166,255,0.15)' : 'rgba(88,166,255,0.06)';
   });
+  // v1.0.238 — show the "Clear" chip and swap the recs heading so the
+  // filtered state reads clearly. Without this, users tapping a mood
+  // couldn't tell how to get back to "all For You recs".
+  const clearBtn = byId(IDS.foryouMoodClear);
+  if (clearBtn) clearBtn.style.display = '';
+  const headingText = byId(IDS.foryouRecsHeadingText);
+  if (headingText) headingText.textContent = `${mood.emoji} ${mood.label} · mood-filtered recommendations`;
 
   const grid = byId(IDS.recsGrid);
   if (!grid) return;
@@ -17912,29 +17958,20 @@ function toggleModeMenu(event) {
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
-    // v1.0.209 — pick the direction (open up vs open down) with more space,
-    // then cap max-height to whatever's available in that direction. The
-    // popover normally drops upward (`bottom: calc(100% + 6px)` in CSS),
-    // but on short viewports there's not enough room above and the top
-    // items overflow off-screen. By switching to downward (`top: calc(...)`
-    // via inline style) when below has more room, both ends of the menu
-    // become reachable on short viewports. 120px floor keeps a couple of
-    // options visible at minimum; overflow-y: auto handles internal scroll.
-    const btnRect      = btn.getBoundingClientRect();
-    const viewportH    = window.innerHeight || document.documentElement.clientHeight;
-    const gap          = 22; // 16px breathing room + 6px popover offset
-    const spaceAbove   = btnRect.top - gap;
-    const spaceBelow   = viewportH - btnRect.bottom - gap;
-    const openDown     = spaceBelow > spaceAbove;
-    const cap          = Math.max(120, openDown ? spaceBelow : spaceAbove);
+    // v1.0.238 — Always drop down (matches Filter direction now that the
+    // two popovers close each other on open). Cap max-height to available
+    // space below the button so short viewports still fit; internal
+    // scroll handles overflow. 200px floor keeps a couple of options
+    // visible even on very short phones.
+    const btnRect    = btn.getBoundingClientRect();
+    const viewportH  = window.innerHeight || document.documentElement.clientHeight;
+    const gap        = 20;
+    const spaceBelow = viewportH - btnRect.bottom - gap;
+    const cap        = Math.max(200, spaceBelow);
     pop.style.maxHeight = `${cap}px`;
-    if (openDown) {
-      pop.style.bottom = 'auto';
-      pop.style.top    = 'calc(100% + 6px)';
-    } else {
-      pop.style.top    = 'auto';
-      pop.style.bottom = 'calc(100% + 6px)';
-    }
+    // Clear any legacy inline top/bottom overrides from the old flip logic
+    pop.style.top    = '';
+    pop.style.bottom = '';
     setTimeout(() => document.addEventListener('click', _closeModeMenu, { once: true }), 0);
     document.addEventListener('keydown', _modeMenuEscHandler);
   }
