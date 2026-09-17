@@ -1294,15 +1294,15 @@
               <button type="button" class="sort-menu-btn" id="gaps-sort-menu-btn"
                       onclick="toggleGapsSortMenu(event)" aria-haspopup="menu" aria-expanded="false">
                 <span class="sort-menu-label-prefix">Sort:</span>
-                <span class="sort-menu-label" id="gaps-sort-menu-current">Relation type</span>
+                <span class="sort-menu-label" id="gaps-sort-menu-current">Catch-up order</span>
                 <span class="sort-menu-chevron" aria-hidden="true">▾</span>
               </button>
               <div id="gaps-sort-menu-popover" class="sort-menu-popover" hidden role="menu">
-                <button type="button" role="menuitemradio" class="sort-menu-item active" data-sort="rel"       data-label="Relation type" onclick="setGapsSortFromMenu('rel')">Relation type</button>
-                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="titleAsc"  data-label="Title A → Z"  onclick="setGapsSortFromMenu('titleAsc')">Title A → Z</button>
-                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="titleDesc" data-label="Title Z → A"  onclick="setGapsSortFromMenu('titleDesc')">Title Z → A</button>
-                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="yearDesc"  data-label="Newest first"  onclick="setGapsSortFromMenu('yearDesc')">Newest first</button>
-                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="yearAsc"   data-label="Oldest first"  onclick="setGapsSortFromMenu('yearAsc')">Oldest first</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item active" data-sort="rel"       data-label="Catch-up order"    onclick="setGapsSortFromMenu('rel')"       title="Sequels first, then prequels, parents, side stories, spin-offs, alternatives — the natural order for catching up on a franchise">Catch-up order (sequels first)</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="titleAsc"  data-label="Title A → Z"       onclick="setGapsSortFromMenu('titleAsc')">Title A → Z</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="titleDesc" data-label="Title Z → A"       onclick="setGapsSortFromMenu('titleDesc')">Title Z → A</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="yearDesc"  data-label="Release year (new)" onclick="setGapsSortFromMenu('yearDesc')" title="Sorted by the missing anime's own release year — recently-released gaps first, regardless of when the original series aired">Release year — newest gaps first</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="yearAsc"   data-label="Release year (old)" onclick="setGapsSortFromMenu('yearAsc')"  title="Sorted by the missing anime's own release year — oldest gaps first, regardless of when the original series aired">Release year — oldest gaps first</button>
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">

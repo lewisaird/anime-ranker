@@ -6606,8 +6606,8 @@ function setRecsTab(tab, fromMood = false) {
     });
     const clearBtn = byId(IDS.foryouMoodClear);
     if (clearBtn) clearBtn.style.display = 'none';
-    const headingText = byId(IDS.foryouRecsHeadingText);
-    if (headingText) headingText.textContent = 'Recommended for you';
+    const recsHeading2 = byId(IDS.foryouRecsHeading);
+    if (recsHeading2) recsHeading2.style.display = '';   // restore heading for normal recs
     delete _recsCache['foryou'];  // force fresh normal recs on return
   }
 
@@ -16100,8 +16100,8 @@ function clearMoodRec() {
   });
   const clearBtn = byId(IDS.foryouMoodClear);
   if (clearBtn) clearBtn.style.display = 'none';
-  const headingText = byId(IDS.foryouRecsHeadingText);
-  if (headingText) headingText.textContent = 'Recommended for you';
+  const recsHeading = byId(IDS.foryouRecsHeading);
+  if (recsHeading) recsHeading.style.display = '';   // restore neutral "Recommended for you"
   delete _recsCache['foryou'];
   setRecsTab('foryou');
 }
@@ -16148,13 +16148,16 @@ async function applyMoodRec(moodKey) {
     el.style.color       = active ? 'var(--accent-blue)' : '#8b949e';
     el.style.background  = active ? 'rgba(88,166,255,0.15)' : 'rgba(88,166,255,0.06)';
   });
-  // v1.0.238 — show the "Clear" chip and swap the recs heading so the
-  // filtered state reads clearly. Without this, users tapping a mood
-  // couldn't tell how to get back to "all For You recs".
+  // v1.0.238 — show the "Clear" chip so users can back out of the mood
+  // filter. Hide the "Recommended for you" heading entirely — the mood-
+  // rec code renders its own bigger "{mood} picks" heading below, and
+  // saying "Devastating · mood-filtered recommendations" plus
+  // "Devastating picks" plus "Based on your top-ranked devastating anime"
+  // was three "Devastating"s in a row.
   const clearBtn = byId(IDS.foryouMoodClear);
   if (clearBtn) clearBtn.style.display = '';
-  const headingText = byId(IDS.foryouRecsHeadingText);
-  if (headingText) headingText.textContent = `${mood.emoji} ${mood.label} · mood-filtered recommendations`;
+  const recsHeading = byId(IDS.foryouRecsHeading);
+  if (recsHeading) recsHeading.style.display = 'none';
 
   const grid = byId(IDS.recsGrid);
   if (!grid) return;
