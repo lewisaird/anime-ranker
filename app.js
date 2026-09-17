@@ -14228,11 +14228,20 @@ function renderDiscoverTab() {
     return;
   }
 
-  // Nothing loaded yet — hide grid and sub-text; the tab buttons above are the prompt
-  grid.style.display = 'none';
-  grid.innerHTML = '';
+  // v1.0.238 — Auto-load recs on Discover open. Previously the grid was
+  // hidden until the user actively clicked a sub-tab, which read as "there
+  // are no recs" — especially confusing on For You where the mood chips
+  // were visible but the recs below were absent. Now Discover-tab-open
+  // behaves the same as sub-tab-click: fetch, populate, cache.
   const sub = byId(IDS.recsSubText);
-  if (sub) sub.style.display = 'none';
+  if (sub) sub.style.display = '';
+  grid.style.display = 'grid';
+  grid.innerHTML = '';
+  const tabAtLoad = recsTab;
+  _loadRecsGrid().then(() => {
+    _recsCache[tabAtLoad] = { html: grid.innerHTML, gridDisplay: grid.style.display };
+    _recsLoadedTab = tabAtLoad;
+  });
 }
 
 function renderHistoryTab() {
