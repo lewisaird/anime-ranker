@@ -6575,26 +6575,35 @@ function setRecsTab(tab, fromMood = false) {
   const gapsSec    = byId(IDS.gapsSection);
   const refreshBtn = byId(IDS.discoverRefreshBtn);
 
-  const specialTab = isPredict || isMoods || isGaps;
+  // v1.0.238 — `isMoods` is retained as dead code for future tab restore,
+  // but no longer selectable as a tab (button removed from HTML). All
+  // mood entry now goes through the chip strip on For You.
+  const specialTab = isPredict || isGaps;
   if (sub)        sub.style.display        = specialTab ? 'none' : '';
   if (grid)       grid.style.display       = specialTab ? 'none' : (grid.style.display || '');
   if (predictSec) predictSec.style.display = isPredict ? '' : 'none';
-  if (moodsSec)   moodsSec.style.display   = isMoods   ? '' : 'none';
+  if (moodsSec)   moodsSec.style.display   = 'none';   // hidden container — cache seed only
   if (gapsSec)    gapsSec.style.display    = isGaps    ? '' : 'none';
   if (refreshBtn) refreshBtn.style.display = specialTab ? 'none' : '';
-  // v1.0.238 — mood quick-chips are For You only (a shortcut to Moods)
+  // v1.0.238 — mood quick-chips are For You only
   const moodChips = byId(IDS.foryouMoodChips);
   if (moodChips) moodChips.style.display = (tab === 'foryou') ? 'flex' : 'none';
 
-  if (isGaps) {
-    renderFranchiseGaps();  // v1.0.237
-    return;
+  // v1.0.238 — leaving For You clears any active mood filter, so the user
+  // isn't surprised by mood-filtered recs when they come back to For You.
+  if (tab !== 'foryou' && _moodRecActive) {
+    _moodRecActive = false;
+    document.querySelectorAll('#foryou-mood-chips .mood-chip').forEach(el => {
+      el.classList.remove('active');
+      el.style.borderColor = '#30363d';
+      el.style.color       = '#8b949e';
+      el.style.background  = 'rgba(88,166,255,0.06)';
+    });
+    delete _recsCache['foryou'];  // force fresh normal recs on return
   }
 
-  if (isMoods) {
-    // Populate the discover mood grid
-    const discoverMoodGrid = byId(IDS.discoverMoodGrid);
-    if (discoverMoodGrid) _paintTasteMoods(discoverMoodGrid);
+  if (isGaps) {
+    renderFranchiseGaps();  // v1.0.237
     return;
   }
 
@@ -6689,6 +6698,84 @@ function _saveFranchiseGapsCache(data) {
 function _isFranchiseGapsCacheFresh(cache) {
   if (!cache?.fetchedAt) return false;
   return (Date.now() - cache.fetchedAt) < FRANCHISE_GAPS_TTL_MS;
+}
+
+// v1.0.238 — Session cache of the user's planning-list anime IDs (as
+// AniList IDs). Kessen normally only fetches WATCHED_STATUSES (COMPLETED
+// / CURRENT / REPEATING), so `_pendingNewAnime` never contains planning
+// items — the "Hide items on my planning list" toggle in the Missing tab
+// needs this separate fetch to do anything. Supports both AniList and MAL
+// sessions; MAL IDs are converted via AniList's `idMal_in` query so the
+// resulting set can be compared directly with the gap IDs (which are also
+// AniList).
+let _planningIdsCache = null;
+async function _fetchPlanningIds() {
+  if (_planningIdsCache instanceof Set) return _planningIdsCache;
+  // Prefer AniList when both are available — one query, native IDs.
+  if (authToken && authUser?.name) {
+    try {
+      const query = `
+        query ($username: String) {
+          MediaListCollection(userName: $username, type: ANIME, status_in: [PLANNING]) {
+            lists { entries { media { id } } }
+          }
+        }`;
+      const res = await _anilistFetch({ query, variables: { username: authUser.name } });
+      const data = await res.json();
+      const ids = new Set();
+      (data?.data?.MediaListCollection?.lists ?? []).forEach(l => {
+        (l.entries ?? []).forEach(e => { if (e.media?.id) ids.add(e.media.id); });
+      });
+      _planningIdsCache = ids;
+      return ids;
+    } catch (e) {
+      console.warn('[_fetchPlanningIds] AniList query failed:', e?.message);
+      _planningIdsCache = new Set();
+      return _planningIdsCache;
+    }
+  }
+  // MAL session — fetch the plan_to_watch list from MAL, then map MAL IDs
+  // → AniList IDs in batches of 50 (same pattern as
+  // _lcFetchUserWatchedIds).
+  if (malAuthToken) {
+    try {
+      const malIds = new Set();
+      let path = '/users/@me/animelist?status=plan_to_watch&fields=list_status,my_list_status&limit=1000&nsfw=true';
+      // MAL /animelist returns { data: [{ node: { id } }], paging: { next } }
+      while (path) {
+        const r = await fetch('/.netlify/functions/mal-api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, token: malAuthToken }),
+        });
+        if (!r.ok) throw new Error(`MAL API HTTP ${r.status}`);
+        const j = await r.json();
+        (j.data || []).forEach(e => { if (e.node?.id) malIds.add(e.node.id); });
+        path = j.paging?.next ? j.paging.next.replace(/^.*api\.myanimelist\.net\/v2/, '') : null;
+      }
+      if (malIds.size === 0) { _planningIdsCache = new Set(); return _planningIdsCache; }
+      // Convert MAL IDs → AniList IDs in batches
+      const anilistIds = new Set();
+      const arr = [...malIds];
+      for (let i = 0; i < arr.length; i += 50) {
+        const chunk = arr.slice(i, i + 50);
+        const q = `query ($ids: [Int]) { Page(perPage: 50) { media(idMal_in: $ids, type: ANIME) { id } } }`;
+        const rr = await _anilistFetch({ query: q, variables: { ids: chunk } });
+        const jj = await rr.json();
+        (jj?.data?.Page?.media ?? []).forEach(m => { if (m?.id) anilistIds.add(m.id); });
+        if (i + 50 < arr.length) await new Promise(res => setTimeout(res, 350));
+      }
+      _planningIdsCache = anilistIds;
+      return anilistIds;
+    } catch (e) {
+      console.warn('[_fetchPlanningIds] MAL path failed:', e?.message);
+      _planningIdsCache = new Set();
+      return _planningIdsCache;
+    }
+  }
+  // Guest session — no planning list to fetch.
+  _planningIdsCache = new Set();
+  return _planningIdsCache;
 }
 
 // Batched fetch of relations for each anime in `sourceList`. Splits into
@@ -6792,8 +6879,11 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
     const source = animeList; // future: filter by status === 'COMPLETED' for stricter scan
     // Exclusion set — never surface what the user already has anywhere.
     const excludeIds = new Set(animeList.map(a => a.id));
-    if (includePlanning && Array.isArray(_pendingNewAnime)) {
-      _pendingNewAnime.forEach(a => excludeIds.add(a.id));
+    // v1.0.238 — pull real planning IDs when the toggle is on (fix for
+    // the _pendingNewAnime no-op)
+    if (includePlanning) {
+      const planningIds = await _fetchPlanningIds();
+      planningIds.forEach(id => excludeIds.add(id));
     }
     const media = await _fetchFranchiseRelations(source, (done, total) => {
       if (progressEl) progressEl.textContent = `${done} / ${total} anime scanned`;
@@ -7053,7 +7143,13 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   const emptyEl   = byId(IDS.gapsEmpty);
   const resultsEl = byId(IDS.gapsResults);
   const metaEl    = byId(IDS.gapsMeta);
-  const includePlanning = !!byId(IDS.gapsIncludePlanning)?.checked;
+  // v1.0.238 — Hide the planning-list toggle for guest sessions (no auth,
+  // no list to query). Both AniList and MAL sessions can populate it.
+  const planningToggleEl = byId(IDS.gapsIncludePlanning);
+  const planningLabelEl  = planningToggleEl?.closest('label');
+  const hasPlanningSource = !!(authToken || (typeof malAuthToken !== 'undefined' && malAuthToken));
+  if (planningLabelEl) planningLabelEl.style.display = hasPlanningSource ? '' : 'none';
+  const includePlanning = hasPlanningSource && !!planningToggleEl?.checked;
   const includeUpcoming = !!byId(IDS.gapsIncludeUpcoming)?.checked;
   const groupByFranchise = _franchiseGapsGroupBy;
   const searchQuery = (byId(IDS.gapsSearchInput)?.value || '').trim().toLowerCase();
@@ -7086,8 +7182,14 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
 
   // Apply live filters against the cached raw groups
   const excludeIds = new Set(animeList.map(a => a.id));
-  if (includePlanning && Array.isArray(_pendingNewAnime)) {
-    _pendingNewAnime.forEach(a => excludeIds.add(a.id));
+  // v1.0.238 — Planning-list filter fix. Previously we tried to exclude
+  // via _pendingNewAnime, which is populated from WATCHED_STATUSES
+  // (COMPLETED / CURRENT / REPEATING) and therefore NEVER contains
+  // planning items, so the toggle was a no-op. Now we fetch the user's
+  // real AniList Planning list on demand (session-cached).
+  if (includePlanning) {
+    const planningIds = await _fetchPlanningIds();
+    planningIds.forEach(id => excludeIds.add(id));
   }
   const hiddenFormats = _franchiseGapsHiddenFormats || new Set();
   let visibleGroups = data.groups
@@ -7127,6 +7229,41 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   // order.
   const sortFn = _gapSortComparator(sortMode);
   visibleGroups.forEach(g => g.gaps.sort(sortFn));
+
+  // v1.0.238 — Sort the groups themselves too. Previously the group order
+  // was insertion order (animeList order, so Cowboy Bebop appeared first
+  // regardless of the sort dropdown), which read as "sort is broken". Now
+  // sorting by title also orders the parent titles alphabetically; sorting
+  // by year orders groups by their newest/oldest gap. `rel` leaves the
+  // group order alone because it's a per-gap concept — but we do fall back
+  // to alphabetical parent order for a stable, predictable result.
+  const groupSort = (a, b) => {
+    switch (sortMode) {
+      case 'titleAsc':
+        return (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
+      case 'titleDesc':
+        return (b.parent.title || '').localeCompare(a.parent.title || '', undefined, { sensitivity: 'base' });
+      case 'yearDesc': {
+        const yA = Math.max(0, ...a.gaps.map(x => x.seasonYear || 0));
+        const yB = Math.max(0, ...b.gaps.map(x => x.seasonYear || 0));
+        return yB - yA
+          || (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
+      }
+      case 'yearAsc': {
+        const yA = Math.min(9999, ...a.gaps.map(x => x.seasonYear || 9999));
+        const yB = Math.min(9999, ...b.gaps.map(x => x.seasonYear || 9999));
+        return yA - yB
+          || (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
+      }
+      case 'rel':
+      default:
+        // Group order is meaningless when sort is by gap relation type;
+        // fall back to parent alphabetical so the result is stable rather
+        // than dependent on insertion order.
+        return (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
+    }
+  };
+  visibleGroups.sort(groupSort);
 
   const totalGaps = visibleGroups.reduce((n, g) => n + g.gaps.length, 0);
 
@@ -15914,24 +16051,37 @@ async function applyMoodRec(moodKey) {
 
   showResults();
   switchResultsTab('discover');
-  // Highlight the Moods tab but keep recs-grid visible (not the mood tile section)
-  recsTab = 'moods';
-  byId(IDS.recsTabForyou).classList.remove('active');
-  byId(IDS.recsTabSeasonal).classList.remove('active');
-  byId(IDS.recsTabPredict).classList.remove('active');
-  byId(IDS.recsTabMoods)?.classList.add('active');
+  // v1.0.238 — Moods is no longer a tab; the mood chips at the top of
+  // For You are the entry point. Keep For You visually active and the
+  // chip strip visible so the user sees which mood they've chosen.
+  recsTab = 'foryou';
+  byId(IDS.recsTabForyou)?.classList.add('active');
+  byId(IDS.recsTabSeasonal)?.classList.remove('active');
+  byId(IDS.recsTabPredict)?.classList.remove('active');
+  byId(IDS.recsTabGaps)?.classList.remove('active');
   byId(IDS.predictorSection).style.display = 'none';
-  byId(IDS.moodsSection).style.display = '';
+  const moodsSecEl = byId(IDS.moodsSection);
+  if (moodsSecEl) moodsSecEl.style.display = 'none';   // hidden container — kept for _moodCoverCache seeding only
+  const gapsSecEl = byId(IDS.gapsSection);
+  if (gapsSecEl) gapsSecEl.style.display = 'none';
+  const chipsWrap = byId(IDS.foryouMoodChips);
+  if (chipsWrap) chipsWrap.style.display = 'flex';
   byId(IDS.recsSubText).style.display = 'none';
-  byId(IDS.discoverRefreshBtn).style.display = 'none';
+  byId(IDS.discoverRefreshBtn).style.display = '';    // let the user Refresh out of the mood filter
 
-  // Ensure the discover mood grid is populated (may be empty if arriving from taste tab)
+  // Ensure the discover mood grid is populated for cache seeding (may be
+  // empty if arriving from taste tab). Rendered into the hidden container.
   const discoverMoodGrid = byId(IDS.discoverMoodGrid);
   if (discoverMoodGrid && !discoverMoodGrid.hasChildNodes()) _paintTasteMoods(discoverMoodGrid);
 
-  // Highlight the active mood tile
-  document.querySelectorAll('.taste-mood-tile').forEach(el => {
-    el.classList.toggle('active', el.getAttribute('onclick') === `applyMoodRec('${moodKey}')`);
+  // Highlight the active mood chip in the strip
+  document.querySelectorAll('#foryou-mood-chips .mood-chip').forEach(el => {
+    const active = el.getAttribute('onclick') === `applyMoodRec('${moodKey}')`;
+    el.classList.toggle('active', active);
+    // Inline styling since chips use inline styles; can't rely on external CSS for active state alone.
+    el.style.borderColor = active ? 'var(--accent-blue)' : '#30363d';
+    el.style.color       = active ? 'var(--accent-blue)' : '#8b949e';
+    el.style.background  = active ? 'rgba(88,166,255,0.15)' : 'rgba(88,166,255,0.06)';
   });
 
   const grid = byId(IDS.recsGrid);
@@ -17738,6 +17888,10 @@ function toggleModeMenu(event) {
   const btn = byId(IDS.modeBtn);
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
+  // v1.0.238 — close the sibling Filter popover on open. Previously both
+  // could be open at once and would overlap visually when the viewport was
+  // short and both dropped downward.
+  if (willOpen) _closeFilterMenu();
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
@@ -17785,6 +17939,8 @@ function toggleFilterMenu(event) {
   const btn = byId(IDS.filterBtn);
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
+  // v1.0.238 — close the sibling Mode popover on open (see toggleModeMenu).
+  if (willOpen) _closeModeMenu();
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
@@ -20077,7 +20233,7 @@ const WHATS_NEW = {
   bullets: [
     '🔥 Daily battle streak. Rank at least one battle a day and a little "🔥 Nd" badge in the header tracks how many days in a row you\'ve kept the loop going. Miss a day and it resets (honest — no grace day). Small celebration at 3, 7, 14, 30, 60 and 100 days. Syncs across devices so you can battle on your phone in the morning and desktop at night and still count as one day.',
     '📅 Weekly recap card. When a new week begins (Monday, local time), a small purple card at the top of Rankings shows how last week went — battles decided, streak status, and a one-word vibe ("monster week", "solid week", "quiet week"). Dismissable X. Appears once per completed week and only for weeks that ended in the last 14 days, so a returning-after-a-month user doesn\'t see stale numbers.',
-    '☕ Mood quick-chips on Discover ▸ For You. A row of five chips — Comforting, Devastating, Intense, Thought-provoking, Beautiful — that jump you straight to a mood-filtered recs view without having to tab into Moods and click a tile first. The full Moods tab is still there for the "browse your top-60 clustered by vibe" experience; this is just fast access.',
+    '☕ Discover tab tidied — Moods folded into For You. The separate Moods sub-tab is gone; instead you get a row of mood chips (Comforting, Devastating, Intense, Thought-provoking, Beautiful) at the top of For You that jump you straight to a mood-filtered recs view in one tap. Same recommendations under the hood — fewer tabs to remember, no more "wait, was this in For You or Moods?".',
     '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grid or list view, group results by franchise (using the same franchise mapping as Rankings) or by individual series, format chips that inherit your Rankings hidden-formats set (hide MOVIE / SPECIAL / TV_SHORT etc. with one tap), search by title (parent-title matches surface the whole franchise), sort by relation type / title / year, plus toggles for including announced/upcoming shows and items in your planning list. Weekly cache — hit ↻ Rescan any time to refresh. The sort dropdown, grid/list toggle and ⛓ Franchise button all use the exact same components as Rankings so switching between tabs feels like the same app instead of learning a new dialect on each screen.',
     'Battle popover format headings tightened to "Formats to keep in pool" / "Watch statuses to keep in pool" — same behaviour as before, but the "active chip means it stays in the pool" model is now obvious rather than implied.',
     'Winner Stays On — skipping a battle now resets the champion\'s streak. Previously the reigning champion could dodge a hard call by skipping and still keep parading their streak badge, even though they hadn\'t actually beaten the challenger in front of them. The champion still stays on (this is Winner Stays On, after all) but the streak counter resets — you have to earn each new run. Also fixed: the streak badge no longer disappears on page refresh — it was hidden by an initial-CSS state that the refresh-render path forgot to update, so the streak looked reset even though it was silently continuing under the hood.',

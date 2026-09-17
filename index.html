@@ -1216,18 +1216,19 @@
         <div class="source-tabs" style="max-width:450px;width:100%;margin:0 auto 16px">
           <button class="source-tab active" id="recs-tab-foryou"   onclick="setRecsTab('foryou')">✨ For You</button>
           <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')">📅 This Season</button>
-          <button class="source-tab"        id="recs-tab-moods"    onclick="setRecsTab('moods')">☕ Moods</button>
           <button class="source-tab"        id="recs-tab-predict"  onclick="setRecsTab('predict')">🔮 Predict</button>
           <button class="source-tab"        id="recs-tab-gaps"     onclick="setRecsTab('gaps')">🧩 Missing</button>
         </div>
         <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
 
-        <!-- v1.0.238 — Mood quick-chip strip. Only rendered when the For You
-             sub-tab is active. Each chip is a shortcut to applyMoodRec(),
-             which drops the user into a mood-filtered recs view without
-             them having to visit the Moods tab first, click a tile, etc.
-             The full Moods tab is still there for the "browse your top-60
-             clustered by vibe" experience — this is just faster access. -->
+        <!-- v1.0.238 — Mood quick-chip strip inside For You. The old
+             Moods sub-tab has been removed and these chips are now the
+             single entry point for a mood-filtered recs view. Each chip
+             calls applyMoodRec(), which switches the recs-grid to the
+             mood-affinity-scored batch while keeping For You visually
+             active (the chip stays highlighted so the user sees which
+             filter is on). Tabbing to This Season / Predict / Missing
+             clears the mood filter. -->
         <div id="foryou-mood-chips" style="display:none;flex-wrap:wrap;gap:6px;justify-content:center;margin:0 0 14px;font-size:0.78rem">
           <button type="button" class="mood-chip" onclick="applyMoodRec('comforting')"
             style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">☕ Comforting</button>
@@ -1241,9 +1242,13 @@
             style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">✨ Beautiful</button>
         </div>
 
-        <!-- ── Moods sub-tab ── -->
-        <div id="moods-section" style="display:none">
-          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Pick a mood and Kessen will find recommendations based on the anime in your rankings that match it.</p>
+        <!-- v1.0.238 — Moods tab merged into For You. The old Moods tile
+             view is retained as a hidden fallback container that
+             applyMoodRec still populates for its cover-based seeding
+             logic; if a future release wants a "see the tiles" surface
+             again, unhiding this div plus adding an on-page link is
+             enough. -->
+        <div id="moods-section" style="display:none" aria-hidden="true">
           <div id="discover-mood-grid" class="taste-mood-grid"></div>
         </div>
         <div id="recs-grid" class="recs-grid"></div>
@@ -1305,9 +1310,9 @@
             <input type="text" id="gaps-search-input" placeholder="🔍 Search missing titles…"
               oninput="onGapsFilterChange()"
               style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-primary);color:var(--text-bright);font-size:0.82rem" />
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Hide anime already on your AniList Planning list from the gap results">
               <input type="checkbox" id="gaps-include-planning" onchange="onGapsFilterChange()" />
-              Include planning list
+              Hide items on my planning list
             </label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="gaps-include-upcoming" checked onchange="onGapsFilterChange()" />
@@ -1740,7 +1745,7 @@
           <h4>📊 Tabs</h4>
           <p><strong>Battles</strong> — stats, biggest upsets, rivalries, and full battle history. Total Battles + Fuzzy Flagged tiles are clickable shortcuts.<br>
           <strong>Profile</strong> — two sub-tabs: <em>Taste</em> (your archetype, genre &amp; era breakdowns, studio affinity, taste vs the community, score distribution) and <em>Achievements</em> (milestones and badges earned through ranking).<br>
-          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime), <em>This Season</em> (airing now + next), <em>Moods</em> (taste-grouped collections), and <em>Predict</em> (tier guess for any anime you haven't ranked). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
+          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime, with mood chips at the top for one-tap Comforting / Devastating / Intense / Thought-provoking / Beautiful filters), <em>This Season</em> (airing now + next), <em>Predict</em> (tier guess for any anime you haven't ranked), and <em>Missing</em> (sequels, prequels, spin-offs and side stories you have in your list but haven't watched yet). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
           <strong>Social</strong> — multiplayer modes and taste comparison (see below).<br>
           <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, and reset.</p>
         </div>
