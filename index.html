@@ -983,6 +983,11 @@
         </div>
       </div>
     </div>
+    <!-- v1.0.238 — Filter popover mobile backdrop. On screens ≤600px the
+         filter popover becomes a bottom sheet (see media query in
+         styles.css); this backdrop dims the page behind and captures
+         tap-outside to close. Hidden on desktop via CSS. -->
+    <div id="filter-popover-backdrop" onclick="_closeFilterMenu()" aria-hidden="true"></div>
     <div class="kb-hints">
       <kbd>←</kbd> left &nbsp;·&nbsp; <kbd>→</kbd> right &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>U</kbd> undo
     </div>

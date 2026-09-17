@@ -425,6 +425,9 @@
     #mode-btn.active-wso    { background: var(--hover-orange-bg); border-color: #e85a20; color: #ffb38a; }
     #filter-btn.has-filter  { border-color: #d29922; color: #e3b341; }
 
+    /* Desktop: anchored popover under the button, sized to content.
+       Mobile (≤600px): full-width bottom sheet with backdrop — see media
+       query below. */
     #filter-popover {
       display: none; position: absolute; top: calc(100% + 6px); right: 0;
       background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px;
@@ -466,6 +469,74 @@
       touch-action: pan-y;
     }
     #filter-popover.open { display: block; }
+
+    /* v1.0.238 — Mobile bottom-sheet backdrop. Hidden by default on desktop
+       (never visible). On ≤600px screens the media query below anchors the
+       filter popover to the bottom of the viewport as a sheet, and this
+       backdrop dims the page and captures tap-outside-to-close. */
+    #filter-popover-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 190;
+      animation: filter-backdrop-in 0.18s ease-out;
+    }
+    @keyframes filter-backdrop-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    /* v1.0.238 — Mobile bottom sheet. On narrow viewports, the filter
+       popover stops being an anchored dropdown and becomes a full-width
+       sheet at the bottom of the screen. Removes the scroll-within-scroll
+       problem, matches native mobile filter patterns (Airbnb/Amazon/etc).
+       Handle indicator at the top hints at the drag/dismiss affordance
+       even though we haven't wired swipe-to-dismiss yet — tap-outside
+       (backdrop) closes it. */
+    @media (max-width: 600px) {
+      #filter-popover {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        max-width: none;
+        min-width: 0;
+        width: 100%;
+        border-radius: 16px 16px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+        max-height: 80vh;
+        box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+        z-index: 200;
+      }
+      #filter-popover.open {
+        animation: filter-sheet-in 0.22s cubic-bezier(0.2, 0.9, 0.35, 1);
+      }
+      /* Small drag-handle indicator at the top of the sheet — pure
+         affordance, not functional (yet). */
+      #filter-popover::before {
+        content: '';
+        display: block;
+        width: 40px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-default);
+        margin: -8px auto 12px;
+      }
+      @keyframes filter-sheet-in {
+        from { transform: translateY(100%); }
+        to   { transform: translateY(0); }
+      }
+      /* Backdrop only shows on mobile when the popover is open. Toggling
+         happens in JS (toggleFilterMenu / _closeFilterMenu) — CSS just
+         makes the display slot exist. */
+      #filter-popover-backdrop.open { display: block; }
+    }
+
     .filter-popover-title { font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;
       text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
     .filter-format-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
@@ -497,11 +568,10 @@
     #mode-popover {
       display: none;
       position: absolute;
-      /* v1.0.238 — Drop down instead of up. Previously dropped up so it
-         didn't overlap the Filter popover; now the two menus close each
-         other on open (see toggleModeMenu / toggleFilterMenu) so overlap
-         isn't a risk any more, and matching the Filter direction reads
-         more naturally. Dynamic max-height set at open time. */
+      /* v1.0.238 — Drop down. Sizes to content — no max-height, no internal
+         scroll. The 6 mode items total ~300px which fits on every device;
+         if the popover extends past viewport bottom on very short screens
+         the page scrolls to show it. Single scroll surface is the goal. */
       top: calc(100% + 6px);
       right: 0;
       background: var(--bg-secondary);
@@ -510,10 +580,7 @@
       padding: 4px;
       z-index: 100;
       min-width: 240px;
-      max-height: 80vh;
-      overflow-y: auto;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-      touch-action: pan-y;
     }
     #mode-popover.open { display: block; }
     #mode-popover button[role="menuitemradio"] {

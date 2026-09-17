@@ -17967,20 +17967,14 @@ function toggleModeMenu(event) {
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
-    // v1.0.238 — Always drop down (matches Filter direction now that the
-    // two popovers close each other on open). Cap max-height to available
-    // space below the button so short viewports still fit; internal
-    // scroll handles overflow. 200px floor keeps a couple of options
-    // visible even on very short phones.
-    const btnRect    = btn.getBoundingClientRect();
-    const viewportH  = window.innerHeight || document.documentElement.clientHeight;
-    const gap        = 20;
-    const spaceBelow = viewportH - btnRect.bottom - gap;
-    const cap        = Math.max(200, spaceBelow);
-    pop.style.maxHeight = `${cap}px`;
-    // Clear any legacy inline top/bottom overrides from the old flip logic
-    pop.style.top    = '';
-    pop.style.bottom = '';
+    // v1.0.238 — Let the popover size to its content instead of capping to
+    // available viewport space. Body now scrolls the full document, so if
+    // the popover extends past the viewport bottom the page scrolls to
+    // show it — no need for a secondary scrollbar inside the popover.
+    // The 6 mode items total ~300px which fits comfortably on any device.
+    pop.style.maxHeight = '';
+    pop.style.top       = '';
+    pop.style.bottom    = '';
     setTimeout(() => document.addEventListener('click', _closeModeMenu, { once: true }), 0);
     document.addEventListener('keydown', _modeMenuEscHandler);
   }
@@ -18000,6 +17994,7 @@ function toggleFilterMenu(event) {
   if (event) event.stopPropagation();
   const pop = byId(IDS.filterPopover);
   const btn = byId(IDS.filterBtn);
+  const backdrop = document.getElementById('filter-popover-backdrop');
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
   // v1.0.238 — close the sibling Mode popover on open (see toggleModeMenu).
@@ -18007,24 +18002,30 @@ function toggleFilterMenu(event) {
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
-    // v1.0.238 — Dynamic max-height so the popover never extends past the
-    // viewport bottom. Previously the CSS cap (max-height: min(75vh, 520px))
-    // could still leave the popover taller than the space between the filter
-    // button and the viewport bottom on shorter phones — the bottom portion
-    // ended up off-screen and mobile touch on that area couldn't reach it.
-    // Now we measure available space at open time and cap accordingly, so
-    // internal scroll always activates when content is too tall. Mirrors the
-    // Mode popover pattern (toggleModeMenu). 200px floor keeps the popover
-    // usable even on very short viewports.
-    const btnRect    = btn.getBoundingClientRect();
-    const viewportH  = window.innerHeight || document.documentElement.clientHeight;
-    const gap        = 20;
-    const spaceBelow = viewportH - btnRect.bottom - gap;
-    const cap        = Math.max(200, spaceBelow);
-    pop.style.maxHeight = `${cap}px`;
+    // v1.0.238 — Two modes:
+    //   Desktop (≥601px): anchored popover under the button. Dynamic
+    //     max-height so it never extends past viewport bottom.
+    //   Mobile  (≤600px): full-width bottom sheet. CSS media query does
+    //     the layout; no dynamic max-height needed here (CSS handles it).
+    // The isMobile check is only for the max-height branch — the CSS
+    // media query does the layout swap independently.
+    const isMobile = window.matchMedia('(max-width: 600px)').matches;
+    if (isMobile) {
+      pop.style.maxHeight = '';  // let CSS media query control it
+      if (backdrop) backdrop.classList.add('open');
+    } else {
+      const btnRect    = btn.getBoundingClientRect();
+      const viewportH  = window.innerHeight || document.documentElement.clientHeight;
+      const gap        = 20;
+      const spaceBelow = viewportH - btnRect.bottom - gap;
+      const cap        = Math.max(200, spaceBelow);
+      pop.style.maxHeight = `${cap}px`;
+    }
     syncFormatButtons();
     setTimeout(() => document.addEventListener('click', _filterOutsideClick), 0);
     document.addEventListener('keydown', _filterMenuEscHandler);
+  } else {
+    if (backdrop) backdrop.classList.remove('open');
   }
 }
 function _filterOutsideClick(e) {
@@ -18038,8 +18039,10 @@ function _filterOutsideClick(e) {
 function _closeFilterMenu() {
   const pop = byId(IDS.filterPopover);
   const btn = byId(IDS.filterBtn);
+  const backdrop = document.getElementById('filter-popover-backdrop');
   if (pop) pop.classList.remove('open');
   if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (backdrop) backdrop.classList.remove('open');  // v1.0.238 — hide mobile bottom-sheet backdrop
   document.removeEventListener('click', _filterOutsideClick);
   document.removeEventListener('keydown', _filterMenuEscHandler);
 }
