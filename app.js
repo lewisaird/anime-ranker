@@ -18014,18 +18014,14 @@ function toggleFilterMenu(event) {
     //     the layout; no dynamic max-height needed here (CSS handles it).
     // The isMobile check is only for the max-height branch — the CSS
     // media query does the layout swap independently.
+    // v1.0.238 — Desktop and mobile both size to content. Mobile CSS media
+    // query anchors the popover to the bottom as a sheet; on desktop it
+    // just flows naturally from the button and the page scrolls if it
+    // overhangs viewport bottom. Clear any legacy inline maxHeight from
+    // earlier toggles.
+    pop.style.maxHeight = '';
     const isMobile = window.matchMedia('(max-width: 600px)').matches;
-    if (isMobile) {
-      pop.style.maxHeight = '';  // let CSS media query control it
-      if (backdrop) backdrop.classList.add('open');
-    } else {
-      const btnRect    = btn.getBoundingClientRect();
-      const viewportH  = window.innerHeight || document.documentElement.clientHeight;
-      const gap        = 20;
-      const spaceBelow = viewportH - btnRect.bottom - gap;
-      const cap        = Math.max(200, spaceBelow);
-      pop.style.maxHeight = `${cap}px`;
-    }
+    if (isMobile && backdrop) backdrop.classList.add('open');
     syncFormatButtons();
     setTimeout(() => document.addEventListener('click', _filterOutsideClick), 0);
     document.addEventListener('keydown', _filterMenuEscHandler);

@@ -425,13 +425,14 @@
     #mode-btn.active-wso    { background: var(--hover-orange-bg); border-color: #e85a20; color: #ffb38a; }
     #filter-btn.has-filter  { border-color: #d29922; color: #e3b341; }
 
-    /* Desktop: anchored popover under the button, sized to content.
-       Mobile (≤600px): full-width bottom sheet with backdrop — see media
-       query below. */
+    /* Desktop: anchored popover under the button, sized to content. Matches
+       the Mode popover in padding, radius, shadow, min-width, and z-index
+       so the two feel like one design system. Mobile (≤600px): full-width
+       bottom sheet with backdrop — see media query below. */
     #filter-popover {
       display: none; position: absolute; top: calc(100% + 6px); right: 0;
       background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px;
-      padding: 12px; z-index: 100; min-width: 200px;
+      padding: 12px; z-index: 100; min-width: 240px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
       /* v1.0.237 — Bound the popover height and make its content scroll
          internally. On iOS Safari, an absolute-positioned element that
@@ -455,18 +456,9 @@
               looked for a scroll container up from the button and gave
               up when contain blocked chaining. Dropped for now; scroll
               wheel over buttons now scrolls the popover normally. */
-      max-height: min(75vh, 520px);
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
-    }
-    /* Interactive children explicitly opt-in to letting vertical pan gestures
-       fall through to the popover's own scroll. Without this, on Android
-       Chrome the format chips could still eat swipe gestures. */
-    #filter-popover .filter-fmt-btn,
-    #filter-popover .filter-toggle-row,
-    #filter-popover input[type="checkbox"] {
-      touch-action: pan-y;
+      /* v1.0.238 — no max-height / overflow-y on desktop. Sizes to content,
+         matches the Mode popover. If it extends past viewport bottom the
+         page scrolls to reveal it (body scrolls the whole document now). */
     }
     #filter-popover.open { display: block; }
 
