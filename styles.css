@@ -571,7 +571,9 @@
       /* v1.0.238 — Drop down. Sizes to content — no max-height, no internal
          scroll. The 6 mode items total ~300px which fits on every device;
          if the popover extends past viewport bottom on very short screens
-         the page scrolls to show it. Single scroll surface is the goal. */
+         the page scrolls to show it. Single scroll surface is the goal.
+         Mobile (≤600px) converts this to a full-width bottom sheet — see
+         media query below and the matching Filter popover pattern. */
       top: calc(100% + 6px);
       right: 0;
       background: var(--bg-secondary);
@@ -581,6 +583,49 @@
       z-index: 100;
       min-width: 240px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    /* Mode-popover mobile backdrop — mirrors filter-popover-backdrop. */
+    #mode-popover-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 190;
+      animation: filter-backdrop-in 0.18s ease-out;
+    }
+    @media (max-width: 600px) {
+      #mode-popover {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        max-width: none;
+        min-width: 0;
+        width: 100%;
+        border-radius: 16px 16px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        padding: 20px 12px calc(24px + env(safe-area-inset-bottom));
+        max-height: 80vh;
+        box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+        z-index: 200;
+      }
+      #mode-popover.open {
+        animation: filter-sheet-in 0.22s cubic-bezier(0.2, 0.9, 0.35, 1);
+      }
+      /* Drag-handle affordance, matches Filter sheet. */
+      #mode-popover::before {
+        content: '';
+        display: block;
+        width: 40px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-default);
+        margin: -8px auto 12px;
+      }
+      #mode-popover-backdrop.open { display: block; }
     }
     #mode-popover.open { display: block; }
     #mode-popover button[role="menuitemradio"] {

@@ -17958,32 +17958,37 @@ function toggleModeMenu(event) {
   if (event) event.stopPropagation();
   const pop = byId(IDS.modePopover);
   const btn = byId(IDS.modeBtn);
+  const backdrop = document.getElementById('mode-popover-backdrop');
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
-  // v1.0.238 — close the sibling Filter popover on open. Previously both
-  // could be open at once and would overlap visually when the viewport was
-  // short and both dropped downward.
+  // v1.0.238 — close the sibling Filter popover on open.
   if (willOpen) _closeFilterMenu();
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
-    // v1.0.238 — Let the popover size to its content instead of capping to
-    // available viewport space. Body now scrolls the full document, so if
-    // the popover extends past the viewport bottom the page scrolls to
-    // show it — no need for a secondary scrollbar inside the popover.
-    // The 6 mode items total ~300px which fits comfortably on any device.
+    // v1.0.238 — Desktop: sizes to content, no cap. Mobile (≤600px): CSS
+    // media query converts to a full-width bottom sheet — see mode-popover
+    // rules in styles.css. Show the backdrop on mobile so tap-outside
+    // works and the page dims behind the sheet.
     pop.style.maxHeight = '';
     pop.style.top       = '';
     pop.style.bottom    = '';
+    if (window.matchMedia('(max-width: 600px)').matches && backdrop) {
+      backdrop.classList.add('open');
+    }
     setTimeout(() => document.addEventListener('click', _closeModeMenu, { once: true }), 0);
     document.addEventListener('keydown', _modeMenuEscHandler);
+  } else {
+    if (backdrop) backdrop.classList.remove('open');
   }
 }
 function _closeModeMenu() {
   const pop = byId(IDS.modePopover);
   const btn = byId(IDS.modeBtn);
+  const backdrop = document.getElementById('mode-popover-backdrop');
   if (pop) pop.classList.remove('open');
   if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (backdrop) backdrop.classList.remove('open');  // v1.0.238 — hide mobile bottom-sheet backdrop
   document.removeEventListener('keydown', _modeMenuEscHandler);
 }
 function _modeMenuEscHandler(e) {
