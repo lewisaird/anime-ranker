@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.237" />
+  <meta name="version" content="1.0.238" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -105,6 +105,10 @@
   </div>
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
+    <!-- v1.0.238 — Daily battle streak badge. Hidden by default; _renderDailyStreakBadge
+         reveals it once the user has current > 0. Sits next to progress-info so the two
+         session-context bits read together. -->
+    <span id="daily-streak-badge" style="display:none;font-size:0.75rem;color:#e3b341;background:rgba(227,179,65,0.12);border:1px solid rgba(227,179,65,0.35);border-radius:12px;padding:2px 8px;line-height:1;font-weight:600" title=""></span>
     <span id="cloud-sync-indicator" style="display:none;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
     <button id="notif-bell" onclick="openNotifCentre()" title="Notification Centre" aria-label="Notification Centre" style="display:none">
       🔔
@@ -819,7 +823,7 @@
     </div>
 
     <div id="blind-banner">
-      <span>🙈 Blind mode — ELO ratings hidden, pick on instinct</span>
+      <span>🙈 Blind mode — ELO hidden, pick on instinct</span>
       <button onclick="setMode('normal')" style="background:none;border:1px solid #6e40c9;color:#a371f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
     </div>
 
@@ -928,7 +932,12 @@
       <div class="mode-control">
         <button class="btn-secondary" id="filter-btn" onclick="toggleFilterMenu(event)" aria-haspopup="menu" aria-expanded="false" title="Filter formats from battle pool">≡ Filter ▾</button>
         <div id="filter-popover" role="menu" aria-labelledby="filter-btn">
-          <div class="filter-popover-title">Battle pool formats</div>
+          <!-- v1.0.237 — Explicit "keep in pool" phrasing so users don't have
+               to infer the subtractive model (active chip = format included,
+               inactive = format hidden from battles). Rankings uses additive
+               `+ Format` picker chips; this label makes the different mental
+               model here obvious rather than confusing. -->
+          <div class="filter-popover-title">Formats to keep in pool</div>
           <div class="filter-format-grid">
             <button type="button" class="filter-fmt-btn active" data-format="TV"       onclick="toggleFormat('TV', 'battle')">TV</button>
             <button type="button" class="filter-fmt-btn active" data-format="MOVIE"    onclick="toggleFormat('MOVIE', 'battle')">Movie</button>
@@ -943,7 +952,7 @@
                of the pool until they're done. Two checkboxes since Completed
                is implicit (excluding it would empty the pool). -->
           <div class="filter-divider"></div>
-          <div class="filter-popover-title" style="margin-top: 4px">Battle pool status</div>
+          <div class="filter-popover-title" style="margin-top: 4px">Watch statuses to keep in pool</div>
           <label class="filter-toggle-row" for="hide-current-chk">
             <input type="checkbox" id="hide-current-chk" onchange="toggleHideStatus('CURRENT')" />
             <span class="filter-toggle-text">
@@ -1004,6 +1013,10 @@
 
     <!-- ── RANKINGS panel ──────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-rankings">
+      <!-- v1.0.238 — Weekly summary card. Populated by _renderWeeklySummaryCard
+           on boot after a new Monday; hidden otherwise. Sits at the very top
+           of Rankings so it's the first thing a returning user sees. -->
+      <div id="weekly-summary-card" style="display:none"></div>
       <textarea id="export-area" rows="10" readonly></textarea>
       <div id="search-wrap">
         <input type="text" id="search-input" placeholder="🔍  Search by title…" oninput="filterRankings()" />
@@ -1209,6 +1222,25 @@
         </div>
         <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
 
+        <!-- v1.0.238 — Mood quick-chip strip. Only rendered when the For You
+             sub-tab is active. Each chip is a shortcut to applyMoodRec(),
+             which drops the user into a mood-filtered recs view without
+             them having to visit the Moods tab first, click a tile, etc.
+             The full Moods tab is still there for the "browse your top-60
+             clustered by vibe" experience — this is just faster access. -->
+        <div id="foryou-mood-chips" style="display:none;flex-wrap:wrap;gap:6px;justify-content:center;margin:0 0 14px;font-size:0.78rem">
+          <button type="button" class="mood-chip" onclick="applyMoodRec('comforting')"
+            style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">☕ Comforting</button>
+          <button type="button" class="mood-chip" onclick="applyMoodRec('devastating')"
+            style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">💔 Devastating</button>
+          <button type="button" class="mood-chip" onclick="applyMoodRec('intense')"
+            style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">⚡ Intense</button>
+          <button type="button" class="mood-chip" onclick="applyMoodRec('thoughtProvoking')"
+            style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">🧠 Thought-provoking</button>
+          <button type="button" class="mood-chip" onclick="applyMoodRec('beautiful')"
+            style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">✨ Beautiful</button>
+        </div>
+
         <!-- ── Moods sub-tab ── -->
         <div id="moods-section" style="display:none">
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:16px">Pick a mood and Kessen will find recommendations based on the anime in your rankings that match it.</p>
@@ -1236,31 +1268,55 @@
         <!-- ── Missing (franchise gaps) sub-tab — v1.0.237 ── -->
         <div id="gaps-section" style="display:none">
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Sequels, prequels, spin-offs and side stories from series you've completed but haven't watched yet — so a stealth spin-off like "Narumi's Week at Work" doesn't slip past.</p>
-          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px;font-size:0.82rem;color:#8b949e">
-            <div style="display:flex;gap:4px">
-              <button class="source-tab active" id="gaps-view-grid" onclick="setGapsView('grid')" style="padding:4px 10px;font-size:0.8rem">▤ Grid</button>
-              <button class="source-tab"        id="gaps-view-list" onclick="setGapsView('list')" style="padding:4px 10px;font-size:0.8rem">≡ List</button>
+          <!-- v1.0.237 — Row 1: Sort + view controls, mirrors Rankings'
+               list-controls so Missing feels like the same app. Sort menu on
+               the left uses the same sort-menu-btn / sort-menu-popover
+               components; the right cluster has franchise + grid/list toggle
+               using .view-btn (same icons as Rankings — ⊞ / ☰). -->
+          <div class="list-controls">
+            <div class="sort-menu-wrap">
+              <button type="button" class="sort-menu-btn" id="gaps-sort-menu-btn"
+                      onclick="toggleGapsSortMenu(event)" aria-haspopup="menu" aria-expanded="false">
+                <span class="sort-menu-label-prefix">Sort:</span>
+                <span class="sort-menu-label" id="gaps-sort-menu-current">Relation type</span>
+                <span class="sort-menu-chevron" aria-hidden="true">▾</span>
+              </button>
+              <div id="gaps-sort-menu-popover" class="sort-menu-popover" hidden role="menu">
+                <button type="button" role="menuitemradio" class="sort-menu-item active" data-sort="rel"       data-label="Relation type" onclick="setGapsSortFromMenu('rel')">Relation type</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="titleAsc"  data-label="Title A → Z"  onclick="setGapsSortFromMenu('titleAsc')">Title A → Z</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="titleDesc" data-label="Title Z → A"  onclick="setGapsSortFromMenu('titleDesc')">Title Z → A</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="yearDesc"  data-label="Newest first"  onclick="setGapsSortFromMenu('yearDesc')">Newest first</button>
+                <button type="button" role="menuitemradio" class="sort-menu-item"        data-sort="yearAsc"   data-label="Oldest first"  onclick="setGapsSortFromMenu('yearAsc')">Oldest first</button>
+              </div>
             </div>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" id="gaps-group-franchise" checked onchange="onGapsFilterChange()" />
-              Group by franchise
-            </label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="view-btn active" id="gaps-franchise-btn" onclick="toggleGapsFranchiseGroup()" title="Group sequels and seasons together" aria-pressed="true">⛓ Franchise</button>
+              <div style="display:flex;gap:4px">
+                <button class="view-btn active" id="gaps-view-grid" onclick="setGapsView('grid')" title="Grid view" aria-label="Grid view" aria-pressed="true">⊞</button>
+                <button class="view-btn"        id="gaps-view-list" onclick="setGapsView('list')" title="List view" aria-label="List view" aria-pressed="false">☰</button>
+              </div>
+              <button onclick="refreshFranchiseGaps()" id="gaps-refresh-btn" class="view-btn" title="Rescan your list for missing pieces">↻ Rescan</button>
+            </div>
+          </div>
+          <!-- Row 2: content-scope toggles (what we're scanning) + search box.
+               Kept as checkboxes since they change WHICH data we consider —
+               different concept from view/sort. -->
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0;font-size:0.82rem;color:#8b949e">
+            <input type="text" id="gaps-search-input" placeholder="🔍 Search missing titles…"
+              oninput="onGapsFilterChange()"
+              style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-primary);color:var(--text-bright);font-size:0.82rem" />
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="gaps-include-planning" onchange="onGapsFilterChange()" />
-              Include items in my planning list
+              Include planning list
             </label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="gaps-include-upcoming" checked onchange="onGapsFilterChange()" />
               Include announced/upcoming
             </label>
-            <button onclick="refreshFranchiseGaps()" id="gaps-refresh-btn" title="Rescan your list for missing pieces"
-              style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.8rem;line-height:1;margin-left:auto">
-              ↻ Rescan
-            </button>
           </div>
           <!-- Format filter chips — respect your Rankings hidden formats by default. -->
           <div id="gaps-format-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;font-size:0.75rem;align-items:center">
-            <span style="color:#6b7280;margin-right:2px">Formats:</span>
+            <span style="color:#6b7280;margin-right:2px">Formats shown:</span>
             <!-- populated by _paintGapFormatChips() -->
           </div>
           <div id="gaps-meta" style="font-size:0.75rem;color:#6b7280;margin-bottom:8px;display:none"></div>

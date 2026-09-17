@@ -384,8 +384,16 @@ const IDS = Object.freeze({
   gapsViewList:           'gaps-view-list',
   gapsIncludePlanning:    'gaps-include-planning',
   gapsIncludeUpcoming:    'gaps-include-upcoming',
-  gapsGroupFranchise:     'gaps-group-franchise',
   gapsFormatChips:        'gaps-format-chips',
+  // v1.0.238 — daily streak badge + weekly summary card + For You mood chips
+  dailyStreakBadge:       'daily-streak-badge',
+  weeklySummaryCard:      'weekly-summary-card',
+  foryouMoodChips:        'foryou-mood-chips',
+  gapsSearchInput:        'gaps-search-input',
+  gapsSortMenuBtn:        'gaps-sort-menu-btn',
+  gapsSortMenuPopover:    'gaps-sort-menu-popover',
+  gapsSortMenuCurrent:    'gaps-sort-menu-current',
+  gapsFranchiseBtn:       'gaps-franchise-btn',
   gapsRefreshBtn:         'gaps-refresh-btn',
   gapsMeta:               'gaps-meta',
   gapsLoading:            'gaps-loading',
@@ -500,6 +508,38 @@ let nextTrioOverride = null;     // [[idxA,idxB,idxC], ...] — replayed after u
 // Rivalries are derived from this rather than from battleHistory.
 // Streaks are stored per-anime on the anime object itself (anime.streak).
 let matchupStats = {};
+
+// v1.0.238 — DAILY BATTLE STREAK
+// User-level "you've ranked at least one battle for N days in a row" counter,
+// modelled on Duolingo's streak. The single strongest retention lever
+// available for a habit-loop app: seeing a growing number attached to your
+// name makes people come back for one small session per day.
+//   current:        consecutive days ending today (0 when broken)
+//   longest:        best all-time streak this account has hit
+//   lastActiveDate: YYYY-MM-DD (local) of the last day with a decided battle
+// Skipped: pure skips (skipBattle) do NOT count toward a streak day; only
+// pickWinner does. Skipping while dodging every battle would be a hollow
+// streak.
+let _dailyStreak = { current: 0, longest: 0, lastActiveDate: null };
+
+// v1.0.238 — WEEKLY SUMMARY
+// Rolls over each Monday (local time). On the first app open after a
+// Monday roll, we surface a small "last week" recap card at the top of
+// Rankings — battles done, streak status — so the loop feels observable
+// rather than opaque. Non-intrusive: dismissable X, only shows once per
+// completed week, only within 14 days of that week ending.
+//   currentWeekStart:  Monday key of the current week (YYYY-MM-DD)
+//   battlesThisWeek:   incrementing count, decided battles only
+//   lastCompletedWeek: snapshot of the previous week when we roll over
+//                      → { weekStart, battles, streakEnd }
+//   summaryShownFor:   weekStart of the last summary we surfaced. Prevents
+//                      the same recap card popping again on subsequent boots.
+let _weeklyStats = {
+  currentWeekStart:  null,
+  battlesThisWeek:   0,
+  lastCompletedWeek: null,
+  summaryShownFor:   null,
+};
 
 // ─── TOWER OF POWER ──────────────────────────────────────────────────────────
 let towerMode       = false;
@@ -859,6 +899,8 @@ function _clearRankingState() {
   _cloudSyncEnabled = false;
   nextPairOverride  = null;
   matchupStats      = {};
+  _dailyStreak      = { current: 0, longest: 0, lastActiveDate: null };  // v1.0.238
+  _weeklyStats      = { currentWeekStart: null, battlesThisWeek: 0, lastCompletedWeek: null, summaryShownFor: null };  // v1.0.238
   // v1.0.211 — Clear mode flags + per-mode session state. Without this, a
   // user mid-WSO / Tower / Trio / Battle-Within who Resets and re-fetches
   // ends up in the new session with a stale champion index, trio array, or
@@ -1993,6 +2035,13 @@ function _saveStateNow() {
       achievements,
       comparedFriends: [...comparedFriends],
       matchupStats,
+      // v1.0.238 — persist daily battle streak so it survives page reload
+      // and syncs across devices. Shallow-clone so a later mutation of the
+      // live object doesn't leak into the saved snapshot.
+      dailyStreak: { ..._dailyStreak },
+      // v1.0.238 — weekly rollover state (drives Rankings' recap card).
+      weeklyStats: { ..._weeklyStats,
+        lastCompletedWeek: _weeklyStats.lastCompletedWeek ? { ..._weeklyStats.lastCompletedWeek } : null },
       // v1.0.207 — persist Winner Stays On so streaks survive page reloads
       // and cross-device sync. Only saved when the mode is currently active;
       // older saves load with wsoMode=false and a clean state.
@@ -2286,6 +2335,9 @@ async function _doCloudSave() {
       achievements,
       comparedFriends: [...comparedFriends],
       matchupStats,
+      dailyStreak: { ..._dailyStreak },  // v1.0.238 — cross-device streak sync
+      weeklyStats: { ..._weeklyStats,     // v1.0.238 — cross-device weekly stats
+        lastCompletedWeek: _weeklyStats.lastCompletedWeek ? { ..._weeklyStats.lastCompletedWeek } : null },
       savedAt: new Date().toISOString(),
     };
     const body = _isMalCloudSession()
@@ -2385,6 +2437,46 @@ function _applyCloudSaveToMemory(cloud) {
   achievements    = cloud.achievements   ?? {};
   comparedFriends = new Set(cloud.comparedFriends ?? []);
   matchupStats    = cloud.matchupStats   ?? {};
+  // v1.0.238 — restore daily streak from cloud. Prefer whichever record has
+  // the most recent lastActiveDate — a device that battled today should
+  // beat a stale cloud snapshot from three days ago.
+  if (cloud.dailyStreak && typeof cloud.dailyStreak === 'object') {
+    const cloudLast = cloud.dailyStreak.lastActiveDate || '';
+    const localLast = _dailyStreak.lastActiveDate || '';
+    if (cloudLast > localLast) {
+      _dailyStreak = {
+        current:        cloud.dailyStreak.current || 0,
+        longest:        Math.max(_dailyStreak.longest || 0, cloud.dailyStreak.longest || 0),
+        lastActiveDate: cloud.dailyStreak.lastActiveDate || null,
+      };
+    } else {
+      // Local is newer or equal — keep local current + lastActiveDate but
+      // take the max longest across both. A user shouldn't lose their PB
+      // record just because they battled on a different device.
+      _dailyStreak.longest = Math.max(_dailyStreak.longest || 0, cloud.dailyStreak.longest || 0);
+    }
+    _resolveDailyStreakOnLoad();
+  }
+  // v1.0.238 — merge cloud weekly stats. Same newest-first logic as the
+  // daily streak; if cloud is behind we keep local's higher battle count.
+  if (cloud.weeklyStats && typeof cloud.weeklyStats === 'object') {
+    const cloudWeek = cloud.weeklyStats.currentWeekStart || '';
+    const localWeek = _weeklyStats.currentWeekStart      || '';
+    if (cloudWeek > localWeek) {
+      _weeklyStats = {
+        currentWeekStart:  cloud.weeklyStats.currentWeekStart  || null,
+        battlesThisWeek:   cloud.weeklyStats.battlesThisWeek   || 0,
+        lastCompletedWeek: cloud.weeklyStats.lastCompletedWeek || _weeklyStats.lastCompletedWeek,
+        summaryShownFor:   cloud.weeklyStats.summaryShownFor   || _weeklyStats.summaryShownFor,
+      };
+    } else if (cloudWeek === localWeek) {
+      // Same week — take the max battle count across devices
+      _weeklyStats.battlesThisWeek = Math.max(_weeklyStats.battlesThisWeek || 0, cloud.weeklyStats.battlesThisWeek || 0);
+      if (!_weeklyStats.lastCompletedWeek && cloud.weeklyStats.lastCompletedWeek) {
+        _weeklyStats.lastCompletedWeek = cloud.weeklyStats.lastCompletedWeek;
+      }
+    }
+  }
   // v1.0.209 — merge cloud's seen taste-story milestones into this device's
   // localStorage list. Without this, a device cloud-syncing into the middle
   // of a battle history (e.g. phone first sign-in at battle 1306) had an
@@ -2631,6 +2723,22 @@ function loadState(username, source = 'anilist') {
     achievements    = s.achievements    ?? {};
     comparedFriends = new Set(s.comparedFriends ?? []);
     matchupStats    = s.matchupStats    ?? {};
+    // v1.0.238 — restore daily streak. Older saves predate this, so the
+    // default is a clean {current:0,longest:0,lastActiveDate:null}. On
+    // resolve, we check if a day was missed and zero out `current` — the
+    // user is honestly informed rather than shown a stale count.
+    _dailyStreak = (s.dailyStreak && typeof s.dailyStreak === 'object')
+      ? { current: s.dailyStreak.current || 0, longest: s.dailyStreak.longest || 0, lastActiveDate: s.dailyStreak.lastActiveDate || null }
+      : { current: 0, longest: 0, lastActiveDate: null };
+    _resolveDailyStreakOnLoad();
+    _weeklyStats = (s.weeklyStats && typeof s.weeklyStats === 'object')
+      ? {
+          currentWeekStart:  s.weeklyStats.currentWeekStart  || null,
+          battlesThisWeek:   s.weeklyStats.battlesThisWeek   || 0,
+          lastCompletedWeek: s.weeklyStats.lastCompletedWeek || null,
+          summaryShownFor:   s.weeklyStats.summaryShownFor   || null,
+        }
+      : { currentWeekStart: null, battlesThisWeek: 0, lastCompletedWeek: null, summaryShownFor: null };
     // v1.0.207 — restore Winner Stays On state. Older saves predate these
     // fields and load with defaults (mode off, no champion).
     wsoMode         = !!s.wsoMode;
@@ -2747,6 +2855,159 @@ window.addEventListener('unhandledrejection', e => {
   _sendIssueReport({ message: msg, error: stack || null, source: 'unhandledrejection' });
 });
 
+// ─── DAILY STREAK helpers — v1.0.238 ──────────────────────────────────────
+// YYYY-MM-DD in the user's local time. Local is deliberate — a "day"
+// should feel like the user's day, not UTC's day; a viewer battling at
+// 11pm and again at 1am the next morning should count as two days.
+function _todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// Integer day-gap between two YYYY-MM-DD strings. +Infinity if either is
+// missing (first-ever call). Positive when `b` is after `a`.
+function _daysBetween(a, b) {
+  if (!a || !b) return Infinity;
+  const da = new Date(a + 'T00:00:00');
+  const db = new Date(b + 'T00:00:00');
+  if (isNaN(da) || isNaN(db)) return Infinity;
+  return Math.round((db - da) / 86400000);
+}
+// Called from pickWinner (post-decision). Increments the streak on a fresh
+// day, or resets it to 1 when a day was missed. No-op on the same day.
+const _DAILY_STREAK_MILESTONES = {
+  3:   '🔥 3-day streak!',
+  7:   '🔥 A week in a row!',
+  14:  '🔥 Two-week streak!',
+  30:  '🔥 30 days — a habit!',
+  60:  '🔥 60 days!',
+  100: '🔥 100 days — legendary.',
+};
+function _updateDailyStreak() {
+  const today = _todayKey();
+  const last  = _dailyStreak.lastActiveDate;
+  if (last === today) return;                      // already counted today
+  const gap  = _daysBetween(last, today);
+  const prev = _dailyStreak.current || 0;
+  _dailyStreak.current = (gap === 1) ? (prev + 1) : 1;
+  _dailyStreak.lastActiveDate = today;
+  if (_dailyStreak.current > (_dailyStreak.longest || 0)) {
+    _dailyStreak.longest = _dailyStreak.current;
+  }
+  _renderDailyStreakBadge();
+  const milestone = _DAILY_STREAK_MILESTONES[_dailyStreak.current];
+  if (milestone) showToast(milestone, 4500);
+}
+// On boot, if the last active day was >1 day ago, the streak is broken —
+// display 0 rather than a stale count. `longest` is untouched.
+function _resolveDailyStreakOnLoad() {
+  const today = _todayKey();
+  const gap = _daysBetween(_dailyStreak.lastActiveDate, today);
+  if (gap > 1) _dailyStreak.current = 0;
+}
+// v1.0.238 — Weekly stats helpers. Week starts Monday (local). Called from
+// pickWinner via _updateDailyStreak's neighbour; when the week rolls we
+// snapshot the previous week's totals into lastCompletedWeek so the boot-
+// time card has something to display.
+function _mondayKeyFor(dateStr) {
+  const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+  const day = d.getDay();                    // 0=Sun … 6=Sat
+  const diff = (day === 0) ? -6 : (1 - day); // shift back to Monday
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+}
+function _tickWeeklyStats() {
+  const thisMonday = _mondayKeyFor();
+  if (_weeklyStats.currentWeekStart !== thisMonday) {
+    // Week rollover — freeze the previous week's numbers for the summary
+    // card. Skip the "no previous week" case (first-ever battle).
+    if (_weeklyStats.currentWeekStart && (_weeklyStats.battlesThisWeek || 0) > 0) {
+      _weeklyStats.lastCompletedWeek = {
+        weekStart: _weeklyStats.currentWeekStart,
+        battles:   _weeklyStats.battlesThisWeek || 0,
+        streakEnd: _dailyStreak.current || 0,
+      };
+    }
+    _weeklyStats.currentWeekStart = thisMonday;
+    _weeklyStats.battlesThisWeek  = 0;
+  }
+  _weeklyStats.battlesThisWeek = (_weeklyStats.battlesThisWeek || 0) + 1;
+}
+// Called on boot after loadState. If there's a completed week we haven't
+// shown a card for, and it's recent enough to still feel relevant, show
+// the summary card. Cap at 14 days so a returning-after-a-month user
+// doesn't get a stale recap.
+function _maybeShowWeeklySummary() {
+  // Roll over the week on boot too — otherwise a user who battled last
+  // Sunday and opens the app next Wednesday would never trigger the
+  // freeze in _tickWeeklyStats (no battles yet this week).
+  const thisMonday = _mondayKeyFor();
+  if (_weeklyStats.currentWeekStart && _weeklyStats.currentWeekStart !== thisMonday
+      && (_weeklyStats.battlesThisWeek || 0) > 0
+      && (!_weeklyStats.lastCompletedWeek || _weeklyStats.lastCompletedWeek.weekStart !== _weeklyStats.currentWeekStart)) {
+    _weeklyStats.lastCompletedWeek = {
+      weekStart: _weeklyStats.currentWeekStart,
+      battles:   _weeklyStats.battlesThisWeek || 0,
+      streakEnd: _dailyStreak.current || 0,
+    };
+    _weeklyStats.currentWeekStart = thisMonday;
+    _weeklyStats.battlesThisWeek  = 0;
+  }
+  const last = _weeklyStats.lastCompletedWeek;
+  if (!last) return;
+  if (_weeklyStats.summaryShownFor === last.weekStart) return;
+  const gap = _daysBetween(last.weekStart, _todayKey());
+  if (gap < 0 || gap > 14) return;
+  _renderWeeklySummaryCard(last);
+  _weeklyStats.summaryShownFor = last.weekStart;
+  saveState();
+}
+// Card lives at the top of Rankings — non-intrusive, dismissable. If the
+// element isn't there (e.g. user is on Battle screen at boot) we skip
+// silently; showResults triggers a re-attempt.
+function _renderWeeklySummaryCard(last) {
+  const host = byId(IDS.weeklySummaryCard);
+  if (!host) return;
+  const b = last.battles;
+  const s = last.streakEnd;
+  const vibe =
+      b >= 100 ? '🚀 a monster week'
+    : b >= 30  ? '💪 strong week'
+    : b >= 10  ? '👍 solid week'
+    : b >= 1   ? '🌱 a quiet week'
+    :            '';
+  host.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:linear-gradient(90deg,#1a1230,#160f2a);border:1px solid #6e40c9;border-radius:10px;margin-bottom:14px;font-size:0.85rem">
+      <div style="font-size:1.4rem">📅</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;color:var(--text-bright);margin-bottom:2px">Last week's recap ${vibe ? '· ' + vibe : ''}</div>
+        <div style="color:#a371f7">${b} battle${b === 1 ? '' : 's'} · streak ended at ${s} day${s === 1 ? '' : 's'}</div>
+      </div>
+      <button onclick="dismissWeeklySummary()" title="Dismiss" aria-label="Dismiss weekly recap"
+        style="background:none;border:1px solid #6e40c9;color:#a371f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">✕</button>
+    </div>`;
+  host.style.display = '';
+}
+function dismissWeeklySummary() {
+  const host = byId(IDS.weeklySummaryCard);
+  if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+}
+
+// Header badge — hidden when streak is 0, so a brand-new user isn't
+// nagged with a "0 day streak" that reads as a debt.
+function _renderDailyStreakBadge() {
+  const el = byId(IDS.dailyStreakBadge);
+  if (!el) return;
+  if ((_dailyStreak.current || 0) > 0) {
+    el.textContent = `🔥 ${_dailyStreak.current}d`;
+    const longest = _dailyStreak.longest || _dailyStreak.current;
+    el.title = `Daily battle streak — ${_dailyStreak.current} day${_dailyStreak.current === 1 ? '' : 's'} in a row. Best: ${longest} day${longest === 1 ? '' : 's'}.`;
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 function updateProgress() {
   // Confidence = weighted average of per-anime settlement.
   // Each anime contributes linearly from 0 → 1 as its battle count grows toward
@@ -2765,6 +3026,8 @@ function updateProgress() {
   byId(IDS.progressBar).style.width = pct + '%';
   byId(IDS.progressInfo).textContent =
     `${battleCount} battles · ${n} anime`;
+  // v1.0.238 — keep the streak badge in sync with the header progress row
+  _renderDailyStreakBadge();
 }
 
 // ─── ELO ────────────────────────────────────────────────────────────────────
@@ -3048,6 +3311,12 @@ function renderPair(ia, ib) {
 
 function renderCurrentPair() {
   renderPair(currentA, currentB);
+  // v1.0.237 — refresh the WSO streak badge too. renderPair only touches the
+  // per-card fields (title, cover, ELO) and not the streak badge sitting
+  // inside card-a, so without this call the badge remains display:none from
+  // its initial CSS after a page refresh — even though wsoStreak has been
+  // restored from state and continues to accumulate on the next pick.
+  _renderWsoBadge(false);
 }
 
 function renderBattle() {
@@ -3421,6 +3690,8 @@ function pickWinner(side) {
   _checkAchievements();
   _maybeSaveTasteSnapshot();
   _syncTasteNewBadge();
+  _updateDailyStreak();  // v1.0.238 — daily streak counter, mid-session no-op after first decision of the day
+  _tickWeeklyStats();    // v1.0.238 — weekly rollover + battle tally
   // v1.0.211 — Battle Within Franchise auto-completion. No-op when the mode
   // isn't active. Reuses _mKey which is already in scope above.
   _recordBattleWithinPair(wId, lId);
@@ -3593,10 +3864,30 @@ function skipBattle() {
     battleCount,
     pairA: currentA,
     pairB: currentB,
+    // v1.0.237 — capture WSO state so Undo restores the reigning champion's
+    // streak (below we reset streak on skip, so undo needs to put it back).
+    wsoState: wsoMode ? {
+      winnerIdx:  wsoWinnerIdx,
+      streak:     wsoStreak,
+      facedOrder: wsoFacedOrder.slice(),
+    } : null,
   };
 
   animeList[currentA].comparisons++;
   animeList[currentB].comparisons++;
+
+  // v1.0.237 — Reset the champion's win streak on a skip. Previously a
+  // skip left wsoStreak untouched, so a champion with 5 wins could dodge
+  // a hard call and keep parading a "5-streak" badge without having
+  // actually beaten the current challenger. A streak represents
+  // consecutive decided wins; a skip breaks the chain. The champion
+  // still stays on (wsoWinnerIdx is untouched) so the mode behaves as
+  // "reigning but no streak"; wsoFacedOrder is left alone because it's
+  // an opponent-rotation memory, not part of the streak semantics.
+  if (wsoMode && wsoStreak > 0) {
+    wsoStreak = 0;
+    _renderWsoBadge();  // hides the badge (renders as none when streak < 1)
+  }
 
   renderBattle(); // sets currentA/currentB to next pair
 
@@ -5250,6 +5541,7 @@ function showResults() {
   hide('battle-screen');
   hide('username-screen');
   hide('tower-summary-screen');
+  _maybeShowWeeklySummary();  // v1.0.238 — pops the recap card once per completed week
 
   // Reset search and fuzzy filter — preserve sort, view, and format filters
   byId(IDS.searchInput).value = '';
@@ -6290,6 +6582,9 @@ function setRecsTab(tab, fromMood = false) {
   if (moodsSec)   moodsSec.style.display   = isMoods   ? '' : 'none';
   if (gapsSec)    gapsSec.style.display    = isGaps    ? '' : 'none';
   if (refreshBtn) refreshBtn.style.display = specialTab ? 'none' : '';
+  // v1.0.238 — mood quick-chips are For You only (a shortcut to Moods)
+  const moodChips = byId(IDS.foryouMoodChips);
+  if (moodChips) moodChips.style.display = (tab === 'foryou') ? 'flex' : 'none';
 
   if (isGaps) {
     renderFranchiseGaps();  // v1.0.237
@@ -6355,6 +6650,12 @@ const FRANCHISE_GAP_UPCOMING_STATUSES = new Set(['NOT_YET_RELEASED']);
 let _franchiseGaps       = null;   // { fetchedAt, groups: [{ parent, gaps: [...] }] }
 let _franchiseGapsView   = 'grid'; // 'grid' | 'list'
 let _franchiseGapsLoading = false;
+// v1.0.237 — Sort mode + franchise-group toggle promoted from DOM state
+// (previously a <select> and a checkbox) to module-level vars so the UI can
+// use the same custom sort-menu-btn / view-btn pattern as Rankings without
+// keeping a hidden form control alongside for state persistence.
+let _franchiseGapsSortMode = 'rel';   // 'rel' | 'titleAsc' | 'titleDesc' | 'yearDesc' | 'yearAsc'
+let _franchiseGapsGroupBy  = true;    // franchise (true) vs individual series (false)
 // v1.0.237 — separate hidden-formats set for the Missing tab. Seeded from
 // hiddenFormatsRanking on first render so behaviour matches Rankings by
 // default, but the user can diverge (e.g. hide MOVIE from Missing but
@@ -6508,11 +6809,79 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
   }
 }
 
-// UI: view toggle (grid ↔ list)
+// UI: view toggle (grid ↔ list). Mirrors Rankings' view-btn active toggling.
 function setGapsView(view) {
   _franchiseGapsView = (view === 'list') ? 'list' : 'grid';
-  byId(IDS.gapsViewGrid)?.classList.toggle('active', _franchiseGapsView === 'grid');
-  byId(IDS.gapsViewList)?.classList.toggle('active', _franchiseGapsView === 'list');
+  const grid = byId(IDS.gapsViewGrid);
+  const list = byId(IDS.gapsViewList);
+  grid?.classList.toggle('active', _franchiseGapsView === 'grid');
+  list?.classList.toggle('active', _franchiseGapsView === 'list');
+  grid?.setAttribute('aria-pressed', _franchiseGapsView === 'grid' ? 'true' : 'false');
+  list?.setAttribute('aria-pressed', _franchiseGapsView === 'list' ? 'true' : 'false');
+  renderFranchiseGaps({ skipFetch: true });
+}
+
+// v1.0.237 — Franchise-group toggle. Same visual pattern as Rankings'
+// `⛓ Franchise` button (view-btn.active when engaged).
+function toggleGapsFranchiseGroup() {
+  _franchiseGapsGroupBy = !_franchiseGapsGroupBy;
+  const btn = byId(IDS.gapsFranchiseBtn);
+  btn?.classList.toggle('active', _franchiseGapsGroupBy);
+  btn?.setAttribute('aria-pressed', _franchiseGapsGroupBy ? 'true' : 'false');
+  renderFranchiseGaps({ skipFetch: true });
+}
+
+// v1.0.237 — Sort menu open/close/select. Mirrors Rankings' toggleSortMenu
+// pattern so keyboard/escape/outside-click behaviour is identical.
+function toggleGapsSortMenu(event) {
+  event?.stopPropagation();
+  const pop = byId(IDS.gapsSortMenuPopover);
+  const btn = byId(IDS.gapsSortMenuBtn);
+  if (!pop || !btn) return;
+  const open = pop.hasAttribute('hidden');
+  if (open) {
+    pop.removeAttribute('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+    const closer = (e) => {
+      if (pop.contains(e.target) || btn.contains(e.target)) return;
+      _closeGapsSortMenu();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    const escCloser = (e) => {
+      if (e.key !== 'Escape') return;
+      _closeGapsSortMenu();
+      document.removeEventListener('click', closer, true);
+      document.removeEventListener('keydown', escCloser);
+    };
+    setTimeout(() => {
+      document.addEventListener('click', closer, true);
+      document.addEventListener('keydown', escCloser);
+    }, 0);
+  } else {
+    _closeGapsSortMenu();
+  }
+}
+function _closeGapsSortMenu() {
+  const pop = byId(IDS.gapsSortMenuPopover);
+  const btn = byId(IDS.gapsSortMenuBtn);
+  if (pop) pop.setAttribute('hidden', '');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function setGapsSortFromMenu(mode) {
+  _closeGapsSortMenu();
+  _franchiseGapsSortMode = mode;
+  // Update the active-state on menu items + the current-label
+  const pop = byId(IDS.gapsSortMenuPopover);
+  const items = pop ? pop.querySelectorAll('.sort-menu-item') : [];
+  let label = '';
+  items.forEach(it => {
+    const isActive = it.dataset.sort === mode;
+    it.classList.toggle('active', isActive);
+    if (isActive) label = it.dataset.label || it.textContent || '';
+  });
+  const currentEl = byId(IDS.gapsSortMenuCurrent);
+  if (currentEl && label) currentEl.textContent = label;
   renderFranchiseGaps({ skipFetch: true });
 }
 
@@ -6617,6 +6986,42 @@ function _paintGapFormatChips() {
   }
 }
 
+// v1.0.237 — Relation-type sort weight. Ordered so a sequel appears above a
+// prequel above a side story above a spin-off, which matches how a franchise
+// binge-catch-up flow feels: "what's the direct continuation first, then
+// the branches". Lower = higher priority.
+const FRANCHISE_GAP_REL_ORDER = {
+  SEQUEL:      0,
+  PREQUEL:     1,
+  PARENT:      2,
+  SIDE_STORY:  3,
+  SPIN_OFF:    4,
+  ALTERNATIVE: 5,
+};
+function _gapSortComparator(mode) {
+  switch (mode) {
+    case 'titleAsc':
+      return (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+    case 'titleDesc':
+      return (a, b) => (b.title || '').localeCompare(a.title || '', undefined, { sensitivity: 'base' });
+    case 'yearDesc':
+      return (a, b) => (b.seasonYear || 0) - (a.seasonYear || 0)
+        || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+    case 'yearAsc':
+      return (a, b) => (a.seasonYear || 9999) - (b.seasonYear || 9999)
+        || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+    case 'rel':
+    default:
+      return (a, b) => {
+        const ra = FRANCHISE_GAP_REL_ORDER[a.relationType] ?? 99;
+        const rb = FRANCHISE_GAP_REL_ORDER[b.relationType] ?? 99;
+        return ra - rb
+          || (b.seasonYear || 0) - (a.seasonYear || 0)
+          || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+      };
+  }
+}
+
 // Collapse groups that share a franchise ID (via _getFranchiseIdMap) into
 // one super-group per franchise. Falls back to the raw parent grouping for
 // any parent that isn't in the franchise map (guest lists, brand-new items).
@@ -6650,7 +7055,9 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   const metaEl    = byId(IDS.gapsMeta);
   const includePlanning = !!byId(IDS.gapsIncludePlanning)?.checked;
   const includeUpcoming = !!byId(IDS.gapsIncludeUpcoming)?.checked;
-  const groupByFranchise = !!byId(IDS.gapsGroupFranchise)?.checked;
+  const groupByFranchise = _franchiseGapsGroupBy;
+  const searchQuery = (byId(IDS.gapsSearchInput)?.value || '').trim().toLowerCase();
+  const sortMode    = _franchiseGapsSortMode;
   _paintGapFormatChips();  // ensure chips are painted / reflect current state
 
   if (!animeList.length) {
@@ -6697,6 +7104,30 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
     visibleGroups = _mergeGapsByFranchise(visibleGroups);
   }
 
+  // v1.0.237 — Search: keep gaps whose title matches the query, OR keep
+  // the entire group when the parent title matches (so "attack on titan"
+  // surfaces the whole franchise even when the missing entry's own title
+  // is "Junior High"). Empty query is a no-op.
+  if (searchQuery) {
+    visibleGroups = visibleGroups
+      .map(g => {
+        const parentMatches = (g.parent.title || '').toLowerCase().includes(searchQuery);
+        return {
+          parent: g.parent,
+          gaps: parentMatches
+            ? g.gaps
+            : g.gaps.filter(x => (x.title || '').toLowerCase().includes(searchQuery)),
+        };
+      })
+      .filter(g => g.gaps.length > 0);
+  }
+
+  // v1.0.237 — Sort each group's gaps. Default (rel) puts sequels before
+  // prequels before side-stories etc. — the natural franchise-catch-up
+  // order.
+  const sortFn = _gapSortComparator(sortMode);
+  visibleGroups.forEach(g => g.gaps.sort(sortFn));
+
   const totalGaps = visibleGroups.reduce((n, g) => n + g.gaps.length, 0);
 
   if (metaEl) {
@@ -6709,7 +7140,12 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   }
 
   if (!totalGaps) {
-    if (emptyEl)   { emptyEl.style.display = ''; emptyEl.textContent = 'You\'re all caught up — no franchise gaps found in your list.'; }
+    if (emptyEl) {
+      emptyEl.style.display = '';
+      emptyEl.textContent = searchQuery
+        ? `No missing titles match "${searchQuery}". Try a different search or clear it to see everything.`
+        : 'You\'re all caught up — no franchise gaps found in your list.';
+    }
     if (resultsEl) resultsEl.innerHTML = '';
     return;
   }
@@ -19632,14 +20068,19 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.237 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.238 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grid or list view, group results by franchise (using the same franchise mapping as Rankings) or by individual series, format chips that inherit your Rankings hidden-formats set (hide MOVIE / SPECIAL / TV_SHORT etc. with one tap), plus toggles for including announced/upcoming shows and items in your planning list. Weekly cache — hit ↻ Rescan any time to refresh.',
+    '🔥 Daily battle streak. Rank at least one battle a day and a little "🔥 Nd" badge in the header tracks how many days in a row you\'ve kept the loop going. Miss a day and it resets (honest — no grace day). Small celebration at 3, 7, 14, 30, 60 and 100 days. Syncs across devices so you can battle on your phone in the morning and desktop at night and still count as one day.',
+    '📅 Weekly recap card. When a new week begins (Monday, local time), a small purple card at the top of Rankings shows how last week went — battles decided, streak status, and a one-word vibe ("monster week", "solid week", "quiet week"). Dismissable X. Appears once per completed week and only for weeks that ended in the last 14 days, so a returning-after-a-month user doesn\'t see stale numbers.',
+    '☕ Mood quick-chips on Discover ▸ For You. A row of five chips — Comforting, Devastating, Intense, Thought-provoking, Beautiful — that jump you straight to a mood-filtered recs view without having to tab into Moods and click a tile first. The full Moods tab is still there for the "browse your top-60 clustered by vibe" experience; this is just fast access.',
+    '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grid or list view, group results by franchise (using the same franchise mapping as Rankings) or by individual series, format chips that inherit your Rankings hidden-formats set (hide MOVIE / SPECIAL / TV_SHORT etc. with one tap), search by title (parent-title matches surface the whole franchise), sort by relation type / title / year, plus toggles for including announced/upcoming shows and items in your planning list. Weekly cache — hit ↻ Rescan any time to refresh. The sort dropdown, grid/list toggle and ⛓ Franchise button all use the exact same components as Rankings so switching between tabs feels like the same app instead of learning a new dialect on each screen.',
+    'Battle popover format headings tightened to "Formats to keep in pool" / "Watch statuses to keep in pool" — same behaviour as before, but the "active chip means it stays in the pool" model is now obvious rather than implied.',
+    'Winner Stays On — skipping a battle now resets the champion\'s streak. Previously the reigning champion could dodge a hard call by skipping and still keep parading their streak badge, even though they hadn\'t actually beaten the challenger in front of them. The champion still stays on (this is Winner Stays On, after all) but the streak counter resets — you have to earn each new run. Also fixed: the streak badge no longer disappears on page refresh — it was hidden by an initial-CSS state that the refresh-render path forgot to update, so the streak looked reset even though it was silently continuing under the hood.',
   ],
 };
 

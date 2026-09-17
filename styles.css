@@ -425,6 +425,20 @@
       background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px;
       padding: 12px; z-index: 100; min-width: 200px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      /* v1.0.237 — Bound the popover height and make its content scroll
+         internally. On iOS Safari, an absolute-positioned element that
+         extends past the viewport doesn't chain touch-scroll to <body>,
+         so a user whose finger lands inside the popover can't scroll the
+         page — they'd have to touch outside the popover first, which
+         reads as "the app stops me scrolling to Avoid Same Franchise".
+         With max-height + overflow-y:auto the popover is itself
+         scrollable, so a finger-flick inside it reveals the bottom
+         controls immediately. overscroll-behavior:contain stops the
+         inner scroll from leaking out to <body> at the boundaries. */
+      max-height: min(70vh, 480px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
     #filter-popover.open { display: block; }
     .filter-popover-title { font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;
@@ -2819,6 +2833,19 @@
       padding-top: 12px;
       border-top: 1px solid var(--border-subtle);
       margin-top: 4px;
+    }
+
+    /* v1.0.238 — Mood quick-chips on For You. Match the visual language of
+       the chip-based filter pickers used elsewhere (Rankings search,
+       Missing formats). Hover = subtle blue glow to signal interactivity. */
+    .mood-chip:hover {
+      border-color: var(--accent-blue) !important;
+      color: var(--accent-blue) !important;
+      background: rgba(88,166,255,0.12) !important;
+    }
+    .mood-chip:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 2px;
     }
 
     /* v1.0.211 — Sort dropdown that replaced the row of 7 sort buttons.
