@@ -395,7 +395,6 @@ const IDS = Object.freeze({
   filterPopoverBackdrop:  'filter-popover-backdrop',
   modePopoverBackdrop:    'mode-popover-backdrop',
   // v1.0.239 — usage stats panel in Manage + PWA install banner
-  manageStatsBody:        'manage-stats-body',
   installBanner:          'install-banner',
   installBannerText:      'install-banner-text',
   installBannerBtn:       'install-banner-btn',
@@ -3365,9 +3364,72 @@ function _animeExternalLabel(anime) {
   return (_isMalCloudSession() && anime.idMal) ? 'MAL' : 'AniList';
 }
 
+// ─── BATTLE RESULT BEAT ──────────────────────────────────────────────────────
+// v1.0.242 — A short, visible outcome after every pick. Before this the next
+// pair replaced the current one in the same frame, so a decision produced no
+// feedback at all — every click felt identical. The state machine is
+// untouched: pickWinner still updates ELO, picks the next pair, saves and
+// pushes its undo snapshot synchronously. Only the DOM paint of the next pair
+// is held back for RESULT_BEAT_MS while the winner glows and both cards show
+// their ELO change; the arena and action bar are input-locked (CSS
+// pointer-events + the _inResultBeat() guards) for the same window so a tap
+// or key can't act on the not-yet-painted pair. Blind mode gets the glow but
+// no numbers. Trio keeps its own medal-badge beat; the Tower's final round
+// goes straight to the summary screen, which is its feedback.
+const RESULT_BEAT_MS = 420;
+let _resultBeatTimer = null;
+let _deferredPaint   = null;  // [ia, ib] waiting for the beat to end
+let _deferredWsoPulse = false; // WSO badge pulse requested during the beat
+
+function _inResultBeat() { return _resultBeatTimer !== null; }
+
+function _startResultBeat(winnerSide, deltaA, deltaB) {
+  const cards = [byId(IDS.cardA), byId(IDS.cardB)];
+  cards.forEach((card, side) => {
+    if (!card) return;
+    card.classList.remove('result-win', 'result-lose');
+    card.querySelectorAll('.elo-delta').forEach(el => el.remove()); // a previous beat's floater still fading
+    void card.offsetWidth; // restart the CSS animation if it's still running
+    card.classList.add(side === winnerSide ? 'result-win' : 'result-lose');
+    const d = side === 0 ? deltaA : deltaB;
+    if (!blindMode && Number.isFinite(d)) {
+      const fl = document.createElement('span');
+      fl.className = 'elo-delta ' + (d >= 0 ? 'up' : 'down');
+      fl.textContent = (d > 0 ? '+' : '') + d;
+      card.appendChild(fl);
+      setTimeout(() => fl.remove(), 900);
+      // The ELO badge on the (still painted) card shows the new value, so
+      // "+24" lands on "ELO 1224" rather than the pre-battle number. currentA/B
+      // still point at this pair here — the next pair is picked afterwards.
+      const idx = side === 0 ? currentA : currentB;
+      const badge = byId(side === 0 ? IDS.eloA : IDS.eloB);
+      if (badge && animeList[idx]) badge.textContent = `ELO ${animeList[idx].elo}`;
+    }
+  });
+  byId(IDS.battleScreen)?.classList.add('result-beat');
+  clearTimeout(_resultBeatTimer);
+  _resultBeatTimer = setTimeout(_endResultBeat, RESULT_BEAT_MS);
+}
+
+function _endResultBeat() {
+  _resultBeatTimer = null;
+  byId(IDS.battleScreen)?.classList.remove('result-beat');
+  [byId(IDS.cardA), byId(IDS.cardB)].forEach(c => c && c.classList.remove('result-win', 'result-lose'));
+  if (_deferredPaint) {
+    const [ia, ib] = _deferredPaint;
+    _deferredPaint = null;
+    renderPair(ia, ib);
+  }
+  _renderWsoBadge(_deferredWsoPulse);
+  _deferredWsoPulse = false;
+}
+
 function renderPair(ia, ib) {
   currentA = ia;
   currentB = ib;
+  // v1.0.242 — mid-beat: state is set (above), the paint waits for
+  // _endResultBeat. The header count still ticks immediately.
+  if (_inResultBeat()) { _deferredPaint = [ia, ib]; updateProgress(); return; }
   const a = animeList[ia];
   const b = animeList[ib];
   const imgA = byId(IDS.imgA);
@@ -3735,6 +3797,7 @@ function _bootPrefetchCovers() {
 }
 
 function pickWinner(side) {
+  if (_inResultBeat()) return; // v1.0.242 — ignore input while the last result is on screen
   if (towerMode) { pickWinnerTower(side); return; }
   const winnerIdx = side === 0 ? currentA : currentB;
   const loserIdx  = side === 0 ? currentB : currentA;
@@ -3850,9 +3913,16 @@ function pickWinner(side) {
 
   saveState();
 
+  // v1.0.242 — show the outcome on the current cards; renderBattle below
+  // picks the next pair and sets currentA/B now, but its paint waits for
+  // the beat to end (see renderPair).
+  const wDelta = animeList[winnerIdx].elo - eloBefore;
+  const lDelta = animeList[loserIdx].elo  - loserEloBefore;
+  _startResultBeat(side, side === 0 ? wDelta : lDelta, side === 0 ? lDelta : wDelta);
+
   // Pick and show the next pair FIRST — then push a snapshot onto the undo stack
   renderBattle();
-  if (_shouldPulseWso) _renderWsoBadge(true);
+  if (_shouldPulseWso) _deferredWsoPulse = true; // pulses when the beat ends and the new pair is painted
   _pushUndoSnapshot({ ...snap, nextA: currentA, nextB: currentB });
 }
 
@@ -3870,6 +3940,7 @@ function _updateUndoBtn() {
 }
 
 function undoLast() {
+  if (_inResultBeat()) return; // v1.0.242 — the snapshot for the pick on screen is already pushed; wait for the paint
   _metric('undo');  // v1.0.239 — usage metrics
   if (undoStack.length === 0) return;
   const snap = undoStack.pop();
@@ -3976,6 +4047,7 @@ function undoLast() {
 }
 
 function skipBattle() {
+  if (_inResultBeat()) return; // v1.0.242 — input locked during the result beat
   _metric('skip');  // v1.0.239 — usage metrics
   if (trioMode) { renderTrio(); return; }
   const snap = {
@@ -4051,17 +4123,9 @@ function getSortedList() {
     case 'title':
       sorted = [...animeList].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b))); // ASC (canonical)
       break;
-    case 'tier': {
-      const tierOrder = { S: 0, A: 1, B: 2, C: 3, D: 4 };
-      const { rankMap, total } = _rankedEloOrder(); // v1.0.241 — unranked anime have no tier; they sort last
-      sorted = [...animeList].sort((a, b) => {
-        const ra = rankMap.get(a.id), rb = rankMap.get(b.id);
-        const ta = ra === undefined ? 5 : tierOrder[getTier(ra, total)];
-        const tb = rb === undefined ? 5 : tierOrder[getTier(rb, total)];
-        return ta !== tb ? (ta - tb) : (b.elo - a.elo); // within tier, ELO desc
-      });
-      break;
-    }
+    // v1.0.242 — 'tier' removed: tiers are percentile bands of the ELO order,
+    // so sorting by tier was the ELO sort under another name. Saved 'tier'
+    // states fall through to the default (ELO) branch below.
     case 'confidence': {
       const confOrder = { confident: 0, settling: 1, uncertain: 2 };
       sorted = [...animeList].sort((a, b) => {
@@ -5175,13 +5239,10 @@ function _buildFranchiseGroups(sorted) {
     case 'members':
       result.sort((a, b) => (a.members.length - b.members.length) * dir);
       break;
-    case 'tier':
-      result.sort((a, b) => (a.eloRank - b.eloRank) * dir);
-      break;
     case 'confidence':
       result.sort((a, b) => (a.totalBattles - b.totalBattles) * dir);
       break;
-    default: // elo
+    default: // elo (v1.0.242 — 'tier' removed; it was this order)
       result.sort((a, b) => (a.bestElo - b.bestElo) * dir);
   }
   return result;
@@ -5692,7 +5753,10 @@ function showResults() {
   // Reset search and fuzzy filter — preserve sort, view, and format filters
   byId(IDS.searchInput).value = '';
   showFuzzyOnly = false;
-  if (!currentSort) currentSort = 'elo';
+  // v1.0.242 — the Tier sort was removed (it produced exactly the ELO order,
+  // since tiers are derived from ELO rank). Saved states that still carry it
+  // fall back to ELO here, which covers both local and cloud loads.
+  if (!currentSort || currentSort === 'tier') { currentSort = 'elo'; sortAsc = false; }
   const ffBtn = byId(IDS.fuzzyFilterBtn);
   if (ffBtn) ffBtn.classList.remove('active');
   // Sync sort buttons and table headers to restored sort state
@@ -6212,6 +6276,10 @@ function downloadBackup() {
     achievements,
     comparedFriends: [...comparedFriends],
     matchupStats,
+    // v1.0.242 — the anonymous feature-usage tallies, included for
+    // transparency now that the Manage-tab panel is gone (the privacy policy
+    // points here). importBackup ignores this field.
+    usageCounts: { ..._metrics.counts, sessions: _metrics.sessions || 0 },
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -7471,11 +7539,14 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
 
   if (metaEl) {
     metaEl.style.display = '';
+    // v1.0.242 — "scanned just now / 5 min ago / 2 h ago / 3 days ago"
+    // (was "scan from 0m ago").
     const ageMin = Math.round((Date.now() - data.fetchedAt) / 60000);
-    const ageLabel = ageMin < 60 ? `${ageMin}m ago`
-                   : ageMin < 1440 ? `${Math.round(ageMin/60)}h ago`
-                   : `${Math.round(ageMin/1440)}d ago`;
-    metaEl.textContent = `${totalGaps} missing across ${visibleGroups.length} ${groupByFranchise ? (visibleGroups.length === 1 ? 'franchise' : 'franchises') : (visibleGroups.length === 1 ? 'series' : 'series')} · scan from ${ageLabel}`;
+    const ageLabel = ageMin < 1    ? 'just now'
+                   : ageMin < 60   ? `${ageMin} min ago`
+                   : ageMin < 1440 ? `${Math.round(ageMin / 60)} h ago`
+                   : `${Math.round(ageMin / 1440)} day${Math.round(ageMin / 1440) === 1 ? '' : 's'} ago`;
+    metaEl.textContent = `${totalGaps} missing across ${visibleGroups.length} ${groupByFranchise ? (visibleGroups.length === 1 ? 'franchise' : 'franchises') : 'series'} · scanned ${ageLabel}`;
   }
 
   if (!totalGaps) {
@@ -8112,10 +8183,18 @@ async function _fetchFriendList(username) {
         await new Promise(r => setTimeout(r, retryDelays[attempt]));
         continue;
       }
+      // v1.0.242 — AniList answers an unknown username with 404. That's an
+      // answer, not a fault: say so in words and don't retry three times.
+      if (res.status === 404) {
+        const e = new Error(`No AniList user called "${username}" — check the spelling.`);
+        e.userNotFound = true;
+        throw e;
+      }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       data = await res.json();
       break;
     } catch (err) {
+      if (err.userNotFound) throw err;
       if (attempt === 2) throw new Error(_anilistErrMsg(err));
       await new Promise(r => setTimeout(r, retryDelays[attempt]));
     }
@@ -8173,7 +8252,7 @@ async function runCompatibility() {
     if (overlap.length < 5) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
         Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
-      return;
+      return true; // user exists — recs pass still worth running
     }
 
     // Spearman's rank correlation on the overlapping set
@@ -8307,9 +8386,13 @@ async function runCompatibility() {
     }
 
     _renderSavedComparisons();
+    return true;
 
   } catch (err) {
     renderErrorInto(resultsEl, _anilistErrMsg(err), 'padding:16px 0');
+    // v1.0.242 — tell the caller whether the user exists so it can skip the
+    // recommendations pass (which would render the same error a second time).
+    return !err.userNotFound;
   }
 }
 
@@ -8331,7 +8414,7 @@ async function _runCompatibilityMal(username2) {
     if (overlap.length < 5) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
         Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
-      return;
+      return true; // user exists — recs pass still worth running
     }
 
     // My rank map (full list, for display)
@@ -8456,9 +8539,11 @@ async function _runCompatibilityMal(username2) {
     }
 
     _renderSavedComparisons();
+    return true;
 
   } catch (err) {
     renderErrorInto(resultsEl, err.message, 'padding:16px 0');
+    return !err.userNotFound; // v1.0.242 — see runCompatibility
   }
 }
 
@@ -12089,7 +12174,10 @@ async function runSocialCompare() {
   byId(IDS.friendRecsInput).value      = username;
   // Both functions share _fetchFriendList's 30-second cache, so only one
   // AniList request is made regardless of how many render passes run.
-  await runCompatibility();
+  // v1.0.242 — if the username doesn't exist, say it once: skip the recs
+  // pass (it would fetch again and print the same error twice).
+  const userExists = await runCompatibility();
+  if (userExists === false) { const r = byId(IDS.friendRecsResults); if (r) r.innerHTML = ''; return; }
   await runFriendRecs();
 }
 
@@ -12120,7 +12208,8 @@ async function _rerunComparison(username, platform) {
   byId(IDS.compatUsernameInput).value = cleanName;
   byId(IDS.friendRecsInput).value     = cleanName;
   // Run sequentially to avoid hitting AniList rate limits with simultaneous requests
-  await runCompatibility();
+  const userExists = await runCompatibility();
+  if (userExists === false) { const r = byId(IDS.friendRecsResults); if (r) r.innerHTML = ''; return; }
   await runFriendRecs();
 }
 
@@ -12185,8 +12274,8 @@ async function _fetchMalUserList(username, setProgress) {
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ path, token: malAuthToken }),
         });
-        if (res.status === 404) throw new Error(`MAL user "${username}" not found.`);
-        if (res.status === 403) throw new Error(`${username}'s MAL list is set to private.`);
+        if (res.status === 404) { const e = new Error(`No MAL user called "${username}" — check the spelling.`); e.userNotFound = true; throw e; }
+        if (res.status === 403) { const e = new Error(`${username}'s MAL list is set to private.`); e.userNotFound = true; throw e; }
         if (!res.ok) break;
         const data = await res.json();
         (data.data || []).forEach(item => {
@@ -14557,55 +14646,11 @@ function renderManageTab() {
   // so the relative time is accurate even if the user just came back to it
   // after an hour. Background ticking handles the per-minute updates.
   _updateCloudSyncTimestamp();
-  _renderManageStats();  // v1.0.239
-}
-
-// v1.0.239 — "Your Kessen stats" panel. Groups the flat counter map into
-// readable sections. Keys not matching any known prefix land in "Other" so
-// a future metric never silently disappears from view.
-function _renderManageStats() {
-  const host = byId(IDS.manageStatsBody);
-  if (!host) return;
-  const c = _metrics.counts || {};
-  const fmtDate = (ms) => ms ? new Date(ms).toLocaleDateString() : '—';
-  const label = (k) => k.split('.').slice(1).join(' · ').replace(/_/g, ' ') || k;
-  const groups = [
-    { title: 'Battles',         keys: ['battle', 'skip', 'undo', 'tower.start'] },
-    { title: 'Modes used',      prefix: 'mode.' },
-    { title: 'Tabs opened',     prefix: 'tab.' },
-    { title: 'Discover',        prefix: 'discover.' },
-    { title: 'Moods picked',    prefix: 'mood.' },
-    { title: 'Social',          prefix: 'social.' },
-    { title: 'Other',           prefix: '' },
-  ];
-  const seen = new Set();
-  const sections = [];
-  for (const g of groups) {
-    let entries;
-    if (g.keys) {
-      entries = g.keys.filter(k => c[k]).map(k => [k, c[k]]);
-    } else if (g.prefix) {
-      entries = Object.entries(c).filter(([k]) => k.startsWith(g.prefix) && !seen.has(k));
-    } else {
-      entries = Object.entries(c).filter(([k]) => !seen.has(k));
-    }
-    entries.forEach(([k]) => seen.add(k));
-    if (!entries.length) continue;
-    entries.sort((a, b) => b[1] - a[1]);
-    const rows = entries.map(([k, v]) => {
-      const name = g.keys ? k.replace('.', ' · ') : label(k);
-      return `<div style="display:flex;justify-content:space-between;gap:12px"><span>${esc(name)}</span><strong>${v}</strong></div>`;
-    }).join('');
-    sections.push(`<div style="margin-bottom:10px"><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;color:#8b949e;margin-bottom:3px">${esc(g.title)}</div>${rows}</div>`);
-  }
-  const summary = `
-    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle)">
-      <span>Sessions</span><strong>${_metrics.sessions || 0}</strong>
-    </div>
-    <div style="display:flex;justify-content:space-between;gap:12px;font-size:0.75rem;color:#8b949e;margin-bottom:12px">
-      <span>Since ${esc(fmtDate(_metrics.firstSeen))}</span><span>Last active ${esc(fmtDate(_metrics.lastSeen))}</span>
-    </div>`;
-  host.innerHTML = summary + (sections.join('') || '<p style="color:#8b949e">Nothing recorded yet — use the app and come back.</p>');
+  // v1.0.242 — the v1.0.239 "Your Kessen stats" panel is gone. It rendered
+  // the raw metric keys ("gaps", "compat", "predict · run") to users, which
+  // was developer telemetry, not a feature. The counters themselves are
+  // still collected and ride along with the cloud save (see _metrics); the
+  // privacy policy lists what is counted.
 }
 
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
@@ -14955,8 +15000,10 @@ function tryLoadSharedView() {
 
     byId(IDS.sharedTitle).textContent =
       ms ? `${u} hit ${ms}` : `${u}'s Top ${top.length} Anime`;
+    // v1.0.242 — say where this came from; visitors arriving from a link
+    // have no other context.
     byId(IDS.sharedSubtitle).textContent =
-      ms ? `Top 5 after ${b} battles` : `After ${b} battles`;
+      ms ? `Top 5 after ${b} battles · ranked on Kessen` : `Ranked head-to-head on Kessen · ${b} ${b === 1 ? 'battle' : 'battles'}`;
 
     const list = byId(IDS.sharedList);
     list.textContent = ''; // clear without innerHTML
@@ -17150,7 +17197,7 @@ function toggleLanguage() {
 
 // ─── SORT & FUZZY FILTER ─────────────────────────────────────────────────────
 // Maps sort type → table header element id
-const _sortToTh = { elo: 'th-elo', title: 'th-title', winrate: 'th-wr', battles: 'th-bt', score: 'th-sc', tier: 'th-tier', confidence: 'th-conf' };
+const _sortToTh = { elo: 'th-elo', title: 'th-title', winrate: 'th-wr', battles: 'th-bt', score: 'th-sc', confidence: 'th-conf' }; // v1.0.242 — Tier column is display-only
 
 function _syncSortUI() {
   const ascFirst = _ascFirstSorts.has(currentSort);
@@ -17289,14 +17336,15 @@ function setFranchiseSortFromMenu(type) {
 }
 
 // Sort types where ascending is the natural first direction
-const _ascFirstSorts = new Set(['title', 'tier', 'confidence']);
+const _ascFirstSorts = new Set(['title', 'confidence']);
 
 function setSort(type) {
+  if (type === 'tier') type = 'elo'; // v1.0.242 — Tier sort removed; any stale caller gets ELO
   if (currentSort === type) {
     sortAsc = !sortAsc;
   } else {
     currentSort = type;
-    // Title → A–Z first; Tier → S first (index 0); Confidence → most confident first (index 0)
+    // Title → A–Z first; Confidence → most confident first (index 0)
     // Everything else (ELO, win rate, battles, score) → highest first (descending)
     sortAsc = _ascFirstSorts.has(type);
   }
@@ -19232,6 +19280,8 @@ function pickWinnerTower(side) {
   // Apply ELO
   const winner = championWon ? animeList[towerChampIdx] : animeList[oppIdx];
   const loser  = championWon ? animeList[oppIdx] : animeList[towerChampIdx];
+  const champBefore = animeList[towerChampIdx].elo;
+  const oppBefore   = animeList[oppIdx].elo;
   updateElo(winner, loser);
   winner.battles = (winner.battles || 0) + 1;
   loser.battles  = (loser.battles  || 0) + 1;
@@ -19248,6 +19298,10 @@ function pickWinnerTower(side) {
   if (towerRound >= TOWER_ROUNDS) {
     finishTower();
   } else {
+    // v1.0.242 — same result beat as a standard pick; the next round's cards
+    // paint when it ends. The final round skips it: the summary screen is
+    // the feedback there.
+    _startResultBeat(side, animeList[towerChampIdx].elo - champBefore, animeList[oppIdx].elo - oppBefore);
     renderTowerRound();
   }
   saveState();
@@ -20786,18 +20840,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.241 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.242 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🏷 Unranked is now a thing. Anime you haven\'t battled yet (and that weren\'t seeded from a score) show an "Unranked" pill instead of a made-up rank and tier. They sit below your ranked anime, don\'t count toward the S–D percentiles, and drop out of the shared tier list, Predict and the Taste panels until they\'ve had a battle. A fresh list no longer opens on "#1 S … #250 D".',
-    '🏆 Achievements that depend on where things sit in your rankings (All-Stars, Tastemaker, Era Curator, Hidden Gem Fan, Old Soul, Comeback Kid) now wait for 20 battles and only count anime that have actually battled. One battle on a new list was unlocking three of them.',
-    '☁️ The "Newer cloud save found" prompt now has two real choices — Load cloud save, or Keep this device\'s copy — and says plainly that keeping the local copy will overwrite the cloud one on your next battle. Before, a stray Cancel (or tapping outside the box) did that silently and your other device\'s progress was gone.',
-    '📱 Guest mode on phones no longer overflows the header. The row needed 449px on a 375px screen, so the whole page shrank to fit and the Change User button fell off the edge. It\'s now an icon on small screens and the stats text gives way first.',
-    '🧹 Small ones: "1 battles" reads "1 battle", the Battles tab says "No battles yet" instead of listing five titles with a 0, Predict no longer claims a never-battled title is "already ranked", confirm dialogs keep their paragraph breaks, and a stray line above the Manage tab is gone.',
+    '⚔ Battles now show their result. Pick a winner and it glows green while both cards float their ELO change (+14 / −14) before the next pair slides in — about half a second. Blind mode keeps the glow and hides the numbers; Tower rounds get it too. Before, the next pair replaced the current one in the same frame, so every click felt identical.',
+    '🔗 Shared tier lists now say what they are. A link to your top 20 used to open on a bare grid; it now says it was ranked on Kessen and ends with a "Rank your anime" card for whoever you sent it to.',
+    '🧹 Removed: the "Your Kessen stats" panel in Manage (it was showing raw internal counter names — the anonymous usage tallies are still collected and now listed in the privacy policy and your backup file), and the "Tier" sort in Rankings, which produced exactly the ELO order.',
+    '👥 Looking up an AniList or MAL username that doesn\'t exist now says so — "No AniList user called X — check the spelling" — once, instead of "Error: HTTP 404" twice.',
+    '📝 Small ones: Missing says "scanned just now / 5 min ago" instead of "scan from 0m ago", and the Help text is back in step with the app (the Filter popover\'s watch-status toggles, the current sort names, what the bell actually shows).',
   ],
 };
 

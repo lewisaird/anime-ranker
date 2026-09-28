@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.241" />
+  <meta name="version" content="1.0.242" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1114,7 +1114,7 @@
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="winrate"    data-label="Win Rate"     onclick="setSortFromMenu('winrate')">Win Rate</button>
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="battles"    data-label="Battles"      onclick="setSortFromMenu('battles')">Battles</button>
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="score"      data-label="AniList Avg"  onclick="setSortFromMenu('score')">AniList Avg</button>
-            <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="tier"       data-label="Tier"         onclick="setSortFromMenu('tier')">Tier</button>
+            <!-- v1.0.242 — "Tier" sort removed: identical to the ELO order. -->
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="confidence" data-label="Confidence"   onclick="setSortFromMenu('confidence')">Confidence</button>
           </div>
         </div>
@@ -1156,7 +1156,7 @@
               <th onclick="setSort('winrate')"    id="th-wr">Win Rate</th>
               <th onclick="setSort('battles')"    id="th-bt">Battles</th>
               <th onclick="setSort('score')"      id="th-sc">AniList Avg</th>
-              <th onclick="setSort('tier')"       id="th-tier">Tier</th>
+              <th class="th-static">Tier</th>
               <th onclick="setSort('confidence')" id="th-conf">Confidence</th>
             </tr>
           </thead>
@@ -1633,15 +1633,6 @@
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
         </div>
 
-        <!-- v1.0.239 — Transparent view of the usage counters Kessen keeps.
-             Shows the user exactly what's recorded (feature-usage tallies,
-             nothing else). Filled by _renderManageStats() on Manage open. -->
-        <div class="manage-section">
-          <div class="manage-section-title">Your Kessen stats</div>
-          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">A tally of which features you use. Kept locally and synced with your cloud save. No titles, no timestamps per action — just counts.</p>
-          <div id="manage-stats-body" style="font-size:0.82rem;line-height:1.7;color:var(--text-primary)"></div>
-        </div>
-
         <div class="manage-section manage-feedback-section">
           <div class="manage-section-title">Feedback</div>
           <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Found a bug or have a suggestion? We'd love to hear it.</p>
@@ -1763,7 +1754,7 @@
 
         <div class="help-section">
           <h4>≡ Battle Pool Filter</h4>
-          <p>Tap the Filter button in the battle screen to exclude formats (TV, Movie, OVA…) from matchmaking. Useful if you only want to rank one type at a time. The same popover has an <strong>Avoid same franchise</strong> toggle that stops the picker from pairing sequels against each other (so you don't keep getting AoT S1 vs AoT S2). Both settings persist between sessions.</p>
+          <p>Tap the Filter button in the battle screen to choose which formats (TV, Movie, OVA…) stay in the matchmaking pool — useful if you only want to rank one type at a time — and whether shows you're currently watching or rewatching are kept out until you've finished them. The same popover has an <strong>Avoid same franchise</strong> toggle that stops the picker from pairing sequels against each other (so you don't keep getting AoT S1 vs AoT S2). All of these persist between sessions.</p>
         </div>
 
         <div class="help-section">
@@ -1778,7 +1769,7 @@
 
         <div class="help-section">
           <h4>📋 Rankings</h4>
-          <p>Title search at the top, then a row of filter chips: <strong>+ Genre</strong>, <strong>+ Studio</strong>, <strong>+ Year</strong>, <strong>+ Format</strong>, <strong>+ Length</strong>. Each opens a popover listing the actual values from your list with counts, so you can see at a glance what's worth filtering by. Picks become removable chips — combine across categories (AND) or pick multiple values in one category (OR). One <strong>⤫ Clear filters</strong> button wipes everything. Sort by ELO, Title, Win Rate, Battles, AniList Score, Tier, or Confidence. Toggle grid or list view. Fuzzy-only and Franchise mode live in the row below.</p>
+          <p>Title search at the top, then a row of filter chips: <strong>+ Genre</strong>, <strong>+ Studio</strong>, <strong>+ Year</strong>, <strong>+ Format</strong>, <strong>+ Length</strong>. Each opens a popover listing the actual values from your list with counts, so you can see at a glance what's worth filtering by. Picks become removable chips — combine across categories (AND) or pick multiple values in one category (OR). One <strong>⤫ Clear filters</strong> button wipes everything. Sort by ELO, Title, Win Rate, Battles, AniList Avg, or Confidence. Toggle grid or list view. Fuzzy-only and Franchise mode live in the row below.</p>
         </div>
 
         <div class="help-section">
@@ -1813,7 +1804,7 @@
 
         <div class="help-section">
           <h4>🔔 Notifications</h4>
-          <p>The bell icon in the header shows alerts for newly added anime on your list, cloud sync events, finish-watching prompts, and a one-time <strong>✨ What's new</strong> entry whenever Kessen updates to a new version (tap it to see the release highlights). Tap the bell to open the notification centre and review or clear alerts.</p>
+          <p>The bell icon in the header shows alerts for anime newly added to or removed from your list, finish-watching prompts, and a one-time <strong>✨ What's new</strong> entry whenever Kessen updates to a new version (tap it to see the release highlights). Tap the bell to open the notification centre and review or clear alerts.</p>
         </div>
 
                 <div class="help-section" id="help-anilist-section" style="display:none">
@@ -1847,6 +1838,14 @@
       <p id="shared-subtitle"></p>
     </div>
     <div class="ranking-list" id="shared-list"></div>
+    <!-- v1.0.242 — Every shared link used to dead-end on the grid. This is the
+         one place a new person meets Kessen, so say what it is and offer the
+         way in. Plain href so it works with no JS state at all. -->
+    <div class="shared-cta">
+      <h3>Make your own tier list</h3>
+      <p>Kessen ranks your anime one head-to-head battle at a time — pick the one you'd rather watch, and your tier list builds itself. Free, no signup: connect AniList or MyAnimeList, or try it as a guest.</p>
+      <a class="btn-primary shared-cta-btn" href="/">⚔ Rank your anime</a>
+    </div>
   </div>
 
   <!-- DETAIL MODAL -->

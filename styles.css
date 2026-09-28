@@ -745,6 +745,43 @@
     }
     .anime-card:active { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(88,166,255,0.2); }
 
+    /* v1.0.242 — Battle result beat (see _startResultBeat in app.js). The
+       winner gets a green ring + a small scale pulse, the loser dims, and
+       each card floats its ELO change up from the top edge. The screen-level
+       .result-beat class locks input on the arena and action bar until the
+       next pair is painted. */
+    .anime-card.result-win {
+      border-color: var(--accent-green);
+      box-shadow: 0 0 0 2px rgba(63,185,80,0.35), 0 0 28px rgba(63,185,80,0.25);
+      animation: card-win-pulse 0.42s ease-out;
+    }
+    .anime-card.result-lose { opacity: 0.5; filter: saturate(0.6); }
+    @keyframes card-win-pulse {
+      0%   { transform: scale(1); }
+      35%  { transform: scale(1.03); }
+      100% { transform: scale(1); }
+    }
+    .elo-delta {
+      position: absolute; top: 10px; left: 50%;
+      font-size: 1.15rem; font-weight: 800; line-height: 1;
+      pointer-events: none; z-index: 6;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.65);
+      animation: elo-delta-float 0.9s ease-out forwards;
+    }
+    .elo-delta.up   { color: var(--accent-green); }
+    .elo-delta.down { color: #f85149; }
+    @keyframes elo-delta-float {
+      0%   { opacity: 0; transform: translate(-50%, 10px); }
+      20%  { opacity: 1; transform: translate(-50%, 0); }
+      100% { opacity: 0; transform: translate(-50%, -30px); }
+    }
+    #battle-screen.result-beat .battle-arena,
+    #battle-screen.result-beat .battle-actions { pointer-events: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .anime-card.result-win { animation: none; }
+      .elo-delta { animation: none; opacity: 1; transform: translateX(-50%); }
+    }
+
     /* Fast tap — no 300ms delay on touch */
     .anime-card, .btn-primary, .btn-secondary, .btn-danger,
     .res-tab, .rank-card, .battle-actions button, .util-btn,
@@ -2911,6 +2948,18 @@
     .shared-header { text-align: center; margin-bottom: 28px; }
     .shared-header h2 { font-size: 1.6rem; color: var(--accent-blue); margin-bottom: 6px; }
     .shared-header p { color: var(--text-secondary); }
+    /* v1.0.242 — call to action under a shared tier list */
+    .shared-cta {
+      margin: 36px auto 24px; max-width: 520px; padding: 24px 22px;
+      background: var(--bg-secondary); border: 1px solid var(--border-default);
+      border-radius: 14px; text-align: center;
+    }
+    .shared-cta h3 { font-size: 1.15rem; color: var(--text-bright); margin: 0 0 8px; }
+    .shared-cta p  { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.55; margin: 0 0 16px; }
+    .shared-cta-btn {
+      display: inline-block; padding: 11px 22px; border-radius: 8px;
+      font-weight: 600; font-size: 0.95rem; text-decoration: none; color: #fff;
+    }
 
     /* WARM START OPTION */
     .warm-start-row {
@@ -4045,6 +4094,9 @@
     }
     .ranking-table th:hover { color: var(--accent-blue); }
     .ranking-table th.sorted { color: var(--accent-blue); }
+    /* v1.0.242 — non-sortable columns (Tier is display-only now) */
+    .ranking-table th.th-static { cursor: default; }
+    .ranking-table th.th-static:hover { color: var(--text-secondary); }
     .ranking-table td {
       padding: 7px 10px; border-bottom: 1px solid var(--border-subtle);
       vertical-align: middle;
