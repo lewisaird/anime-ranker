@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.240" />
+  <meta name="version" content="1.0.241" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -103,7 +103,12 @@
     </svg>
     <h1>Kessen</h1>
   </div>
-  <div style="display:flex;align-items:center;gap:10px;">
+  <!-- v1.0.241 — .header-right has min-width:0 so this cluster can shrink
+       and #progress-info's ellipsis actually engages. Before, the cluster's
+       default min-width:auto meant it could never be narrower than its
+       content: in guest mode on a 375px phone the row needed 449px, Chrome
+       zoomed the whole page out to fit, and Change User fell off the edge. -->
+  <div class="header-right">
     <span id="progress-info"></span>
     <!-- v1.0.238 — Daily battle streak badge. Hidden by default; _renderDailyStreakBadge
          reveals it once the user has current > 0.
@@ -140,7 +145,7 @@
          Driven by _setSyncIndicator. -->
     <span id="cloud-sync-indicator" class="sync-dot" style="display:none" title="Cloud sync status" aria-hidden="true"></span>
     </div>
-    <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄ Change User</button>
+    <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" aria-label="Change user" title="Change user" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄<span class="change-user-label"> Change User</span></button>
   </div>
 </header>
 
@@ -1578,10 +1583,6 @@
     <!-- ── MANAGE panel ──────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-manage" style="display:none">
 
-      <!-- Sub-tab bar -->
-      <div class="source-tabs">
-      </div>
-
       <div class="manage-tab-content">
         <!-- v1.0.209 — Manage section order tuned for column-flow balance:
              Appearance + accounts (smaller) → Backup/Export (tallest) →
@@ -1728,7 +1729,7 @@
 
         <div class="help-section">
           <h4>🏷 Tiers</h4>
-          <p>Calculated dynamically from your ELO rankings: <strong>S</strong> top 10% · <strong>A</strong> 10–25% · <strong>B</strong> 25–55% · <strong>C</strong> 55–80% · <strong>D</strong> bottom 20%.</p>
+          <p>Calculated dynamically from your ELO rankings: <strong>S</strong> top 10% · <strong>A</strong> 10–25% · <strong>B</strong> 25–55% · <strong>C</strong> 55–80% · <strong>D</strong> bottom 20%. Anime you haven't battled yet show as <strong>Unranked</strong> and sit outside the tiers until their first battle.</p>
         </div>
 
         <div class="help-section">
@@ -2095,12 +2096,12 @@
 </div>
 
 <!-- Confirm modal (replaces browser confirm() dialogs) -->
-<div id="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-body" onclick="if(event.target===this)_confirmCancel()">
+<div id="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-body" onclick="if(event.target===this)_confirmBackdropClick()">
   <div class="confirm-modal-box">
     <h3 id="confirm-modal-title"></h3>
     <p  id="confirm-modal-body"></p>
     <div class="confirm-modal-actions">
-      <button class="confirm-btn-cancel" onclick="_confirmCancel()">Cancel</button>
+      <button class="confirm-btn-cancel" id="confirm-modal-cancel" onclick="_confirmCancel()">Cancel</button>
       <button class="confirm-btn-danger" id="confirm-modal-ok">Confirm</button>
     </div>
   </div>

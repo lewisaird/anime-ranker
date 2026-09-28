@@ -38,6 +38,7 @@ const IDS = Object.freeze({
   compatUsernameInput:    'compat-username-input',
   confirmModal:           'confirm-modal',
   confirmModalBody:       'confirm-modal-body',
+  confirmModalCancel:     'confirm-modal-cancel',
   confirmModalOk:         'confirm-modal-ok',
   confirmModalTitle:      'confirm-modal-title',
   copyBtn:                'copy-btn',
@@ -2348,7 +2349,9 @@ function _startFirebaseSyncAttach() {
       _lastFirebaseSyncTs = remoteTs; // mark ping as seen regardless of decision
       const count = (data.battleCount || 0) - battleCount;
       const msg = byId(IDS.realtimeSyncMsg);
-      if (msg) msg.textContent = `📱 Your other device ranked ${count} more anime`;
+      // v1.0.241 — say what ✕ means: this device's next save replaces the
+      // other device's progress (last-write-wins, no merge).
+      if (msg) msg.textContent = `📱 Your other device ranked ${count} more anime. Apply them, or your next battle here replaces them.`;
       byId(IDS.realtimeSyncBanner)?.classList.add('active');
     }
   }, err => {
@@ -2620,22 +2623,35 @@ async function checkAndApplyCloudSave(localSaveKey) {
 
   // Compare with local — only prompt if cloud has more battles
   const localRaw = localStorage.getItem(localSaveKey);
+  let localBattles = null; // null = no usable local copy on this device
   if (localRaw) {
     try {
       const local = JSON.parse(localRaw);
-      const cloudBattles = cloud.battleCount || 0;
-      const localBattles = local.battleCount || 0;
-      if (cloudBattles <= localBattles) return false; // local is at least as fresh
+      localBattles = local.battleCount || 0;
+      if ((cloud.battleCount || 0) <= localBattles) return false; // local is at least as fresh
     } catch { /* corrupt local save — fall through */ }
   }
 
   const dateStr    = cloudDate ? cloudDate.toLocaleString() : 'an unknown time';
   const cloudBattles = cloud.battleCount || 0;
   const cloudCount   = cloud.animeList.length;
+  // v1.0.241 — Both buttons are real decisions, so both are labelled and the
+  // backdrop no longer dismisses. Previously "Cancel" silently kept the older
+  // local copy, and the next battle's debounced cloud save overwrote the
+  // newer cloud copy with it — the other device's progress was gone.
+  const hasLocal = localBattles !== null;
+  const body = hasLocal
+    ? `Cloud: ${cloudBattles} battles across ${cloudCount} anime, saved ${dateStr}.\nThis device: ${localBattles} battles.\n\n`
+      + "Load the cloud save? This device's copy will be replaced.\n\n"
+      + "If you keep this device's copy instead, it will replace the cloud save the next time you battle."
+    : `Cloud: ${cloudBattles} battles across ${cloudCount} anime, saved ${dateStr}.\nThis device has no saved rankings yet.\n\n`
+      + 'Load the cloud save?\n\n'
+      + 'If you start fresh instead, the cloud save will be replaced the next time you battle.';
   const ok = await _confirmAsync(
     '☁️ Newer cloud save found',
-    `Saved ${dateStr} — ${cloudBattles} battles across ${cloudCount} anime.\n\nLoad the cloud save? Your local data will be replaced.`,
-    'Load cloud save'
+    body,
+    'Load cloud save',
+    { cancelLabel: hasLocal ? "Keep this device's copy" : 'Start fresh instead', dismissable: false, okStyle: 'primary' }
   );
   if (!ok) return false;
 
@@ -3128,7 +3144,7 @@ function updateProgress() {
   const pct = Math.round(totalConf / n * 100);
   byId(IDS.progressBar).style.width = pct + '%';
   byId(IDS.progressInfo).textContent =
-    `${battleCount} battles · ${n} anime`;
+    `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${n} anime`;
   // v1.0.238 — keep the streak badge in sync with the header progress row
   _renderDailyStreakBadge();
 }
@@ -4037,11 +4053,11 @@ function getSortedList() {
       break;
     case 'tier': {
       const tierOrder = { S: 0, A: 1, B: 2, C: 3, D: 4 };
-      const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
-      const rankMap   = new Map(eloSorted.map((a, i) => [a.id, i]));
+      const { rankMap, total } = _rankedEloOrder(); // v1.0.241 — unranked anime have no tier; they sort last
       sorted = [...animeList].sort((a, b) => {
-        const ta = tierOrder[getTier(rankMap.get(a.id) ?? 0, animeList.length)] ?? 5;
-        const tb = tierOrder[getTier(rankMap.get(b.id) ?? 0, animeList.length)] ?? 5;
+        const ra = rankMap.get(a.id), rb = rankMap.get(b.id);
+        const ta = ra === undefined ? 5 : tierOrder[getTier(ra, total)];
+        const tb = rb === undefined ? 5 : tierOrder[getTier(rb, total)];
         return ta !== tb ? (ta - tb) : (b.elo - a.elo); // within tier, ELO desc
       });
       break;
@@ -4055,8 +4071,15 @@ function getSortedList() {
       });
       break;
     }
-    default:
-      sorted = [...animeList].sort((a, b) => b.elo - a.elo); // DESC (canonical)
+    default: {
+      // DESC (canonical). v1.0.241 — ranked anime in ELO order, then the
+      // Unranked block (list order) always last, whichever direction is
+      // picked. Pure ELO order put a first-battle loser at 1184 *below* 248
+      // untouched 1200s, so "#2" appeared at the very bottom of the grid.
+      const ranked   = animeList.filter(_isRanked).sort((a, b) => b.elo - a.elo);
+      const unranked = animeList.filter(a => !_isRanked(a));
+      return (canonical ? ranked : ranked.reverse()).concat(unranked);
+    }
   }
   return canonical ? sorted : sorted.reverse();
 }
@@ -4076,11 +4099,14 @@ function _tierTooltip(tier) {
 }
 
 function _buildRankCard(anime, i, eloRankMap, totalLen) {
-  const eloRank = eloRankMap.get(anime.id) ?? i;
-  const displayRank = eloRank + 1; // always show true ELO rank, regardless of current sort
+  // v1.0.241 — eloRankMap only holds ranked anime (see _rankedEloOrder);
+  // anything absent is Unranked: no "#n", no tier letter.
+  const eloRank = eloRankMap.get(anime.id);
+  const isRanked = eloRank !== undefined;
+  const displayRank = isRanked ? eloRank + 1 : null; // true ELO rank, regardless of current sort
   const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
   const conf = confidenceLabel(anime.battles || 0);
-  const tier = getTier(eloRank, totalLen);
+  const tier = isRanked ? getTier(eloRank, totalLen) : 'unranked';
 
   const card = document.createElement('div');
   // v1.0.164 — Rank cards don't carry the amber outline any more. The fuzzy
@@ -4109,8 +4135,10 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     ? `<span class="ep-badge">Movie</span>`
     : anime.episodes ? `<span class="ep-badge">${anime.episodes} ep</span>` : '';
   card.innerHTML = `
-    <span class="rank-number ${numClass}">#${displayRank}</span>
-    <span class="tier-badge t-${tier.toLowerCase()}" title="${_tierTooltip(tier)}">${tier}</span>
+    ${isRanked ? `<span class="rank-number ${numClass}">#${displayRank}</span>` : ''}
+    ${isRanked
+      ? `<span class="tier-badge t-${tier.toLowerCase()}" title="${_tierTooltip(tier)}">${tier}</span>`
+      : `<span class="tier-badge t-unranked" title="Unranked — not battled yet. Its place in your rankings appears after its first battle.">Unranked</span>`}
     <img${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="${esc(displayTitle(anime))}" loading="lazy" />
     <div class="rank-title">${esc(displayTitle(anime))}</div>
     ${epBadge}
@@ -5114,8 +5142,13 @@ function _buildFranchiseGroups(sorted) {
     result.push(group);
   }
   // Compute ELO rank for each group (used for tier badge regardless of sort order)
-  const eloSorted = [...result].sort((a, b) => b.bestElo - a.bestElo);
-  eloSorted.forEach((g, i) => { g.eloRank = i; });
+  // v1.0.241 — a franchise is Unranked when none of its members is ranked
+  // (see _isRanked). Only ranked groups get an eloRank; tiers are taken
+  // against the ranked-group count. Unranked groups keep eloRank undefined
+  // and the renderers show an "Unranked" pill instead of "#n" + tier.
+  const rankedGroups = result.filter(g => g.members.some(_isRanked)).sort((a, b) => b.bestElo - a.bestElo);
+  rankedGroups.forEach((g, i) => { g.eloRank = i; });
+  result.forEach(g => { g.unranked = g.eloRank === undefined; g.rankedTotal = rankedGroups.length; });
 
   // Sort groups by the current sort metric using aggregated values
   const dir = sortAsc ? 1 : -1;
@@ -5193,7 +5226,7 @@ function _applyRankingViewState() {
   }
 }
 
-function _buildFranchiseCard(group, rank, totalGroups) {
+function _buildFranchiseCard(group, rank, _totalGroups) {
   const isSingle = group.members.length === 1;
   // v1.0.164 — Franchise cards (single-member or otherwise) no longer carry
   // the amber outline. Outline only appears on member rows inside the
@@ -5208,11 +5241,14 @@ function _buildFranchiseCard(group, rank, totalGroups) {
   // current filters.
   card.dataset.memberIds = group.members.map(a => a.id).join(',');
 
-  // Tier is always based on ELO rank, not current sort position
-  const tier = getTier(group.eloRank ?? rank, totalGroups);
+  // Tier is always based on ELO rank, not current sort position.
+  // v1.0.241 — null tier for Unranked groups (no battled/seeded member).
+  const tier = _franchiseTier(group);
   const tierColors = { S:'#ff9b00', A:'#3fb950', B:'#58a6ff', C:'#d29922', D:'#f85149' };
   const tierColor = tierColors[tier] || '#8b949e';
-  const tierBadge = `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">${tier}</span>`;
+  const tierBadge = tier
+    ? `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">${tier}</span>`
+    : `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">Unranked</span>`;
   const countBadge = !isSingle ? `<span class="franchise-count">${group.members.length} entries</span>` : '';
   // v1.0.165 — fuzzy-member count badge. Renders alongside the entries
   // count when at least one member is flagged so users can spot
@@ -5266,7 +5302,7 @@ function _buildFranchiseCard(group, rank, totalGroups) {
     // which is the position in the currently-sorted list, so sorting a
     // franchise view by title made #1 become whichever franchise was
     // alphabetically first — confusing to anyone tracking their ELO ranks.
-    const displayRank = (group.eloRank ?? rank) + 1;
+    const displayRank = group.unranked ? null : (group.eloRank ?? rank) + 1;
     // v1.0.167 — apply the same gold/silver/bronze styling that flat rank
     // cards use. Top-3 franchises (by ELO rank, not sort position) should
     // stand out in franchise mode just like they do in flat-list mode.
@@ -5282,8 +5318,8 @@ function _buildFranchiseCard(group, rank, totalGroups) {
       ? `<span class="franchise-peak" title="Highest current ELO in this franchise. Historical peak shown in the franchise overview.">★ Top ${group.peakElo}</span>`
       : '';
     card.innerHTML = `
-      <span class="rank-number ${numClass}">#${displayRank}</span>
-      <span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>
+      ${displayRank ? `<span class="rank-number ${numClass}">#${displayRank}</span>` : ''}
+      ${tier ? `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}
       <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
       ${countBadge || fuzzyCountBadge || peakBadge ? `<div class="franchise-grid-meta">${countBadge}${peakBadge}${fuzzyCountBadge}</div>` : ''}
@@ -5326,16 +5362,17 @@ function showFranchiseDetail(groupName, opts) {
   const group  = groups.find(g => g.name === groupName);
   if (!group) return;
 
-  const tier = getTier(group.eloRank ?? 0, groups.length);
+  const tier = _franchiseTier(group); // v1.0.241 — null when the franchise is Unranked
   const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
   const conf  = confidenceLabel(group.totalBattles || 0);
   const fmtLabel = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' };
 
+  // v1.0.241 — one ranked-order pass for every member (was a full sort per
+  // member); unranked members get the Unranked pill.
+  const { rankMap: memberRankMap, total: memberRankTotal } = _rankedEloOrder();
   const membersHtml = group.members.map((a, i) => {
-    const memberTier = getTier(
-      [...animeList].sort((x,y) => y.elo - x.elo).findIndex(x => x.id === a.id),
-      animeList.length
-    );
+    const memberRank = memberRankMap.get(a.id);
+    const memberTier = memberRank === undefined ? null : getTier(memberRank, memberRankTotal);
     const wr = (a.wins + a.losses) > 0
       ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
     // v1.0.163 — Mark each member row as is-fuzzy if that specific entry
@@ -5353,7 +5390,9 @@ function showFranchiseDetail(groupName, opts) {
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
         <div class="franchise-detail-member-stats">
-          <span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>
+          ${memberTier
+            ? `<span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>`
+            : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex">Unranked</span>'}
           <span>ELO ${a.elo}</span>
           <span>${wr} WR</span>
         </div>
@@ -5367,7 +5406,9 @@ function showFranchiseDetail(groupName, opts) {
   coverEl.src = group.cover;
   coverEl.alt = group.name;
   byId(IDS.modalTitle).textContent = group.name;
-  const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
+  const tierHtml = tier
+    ? `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`
+    : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex;margin-right:6px">Unranked</span>';
   // v1.0.211 — Historical peak (highest ELO any member has ever reached) is
   // derived from each member's eloHistory array (capped at 30 entries, so
   // this is "all-time" only within that window — older peaks roll off).
@@ -5610,8 +5651,7 @@ function renderRankingList() {
   }
 
   const sorted = getSortedList();
-  const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
-  const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i]));
+  const { rankMap: eloRankMap, total: rankedTotal } = _rankedEloOrder(); // v1.0.241 — ranked anime only
 
   // v1.0.153 — bump chunk size at scale to reduce idle-callback round-trips.
   // The browser is fast enough to inject 200 cards per frame; the previous
@@ -5623,7 +5663,7 @@ function renderRankingList() {
     const frag = document.createDocumentFragment();
     const end = Math.min(start + CHUNK, sorted.length);
     for (let i = start; i < end; i++) {
-      frag.appendChild(_buildRankCard(sorted[i], i, eloRankMap, sorted.length));
+      frag.appendChild(_buildRankCard(sorted[i], i, eloRankMap, rankedTotal));
     }
     list.appendChild(frag);
     if (end < sorted.length) {
@@ -5680,8 +5720,9 @@ function showResults() {
   document.body.classList.toggle('franchise-mode-on', franchiseMode);
   _applyRankingViewState();
 
-  byId(IDS.resultsSubtitle).textContent =
-    `After ${battleCount} battles · Rankings update as you keep going`;
+  byId(IDS.resultsSubtitle).textContent = battleCount === 0
+    ? 'No battles yet · Rankings take shape as you battle'
+    : `After ${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · Rankings update as you keep going`;
 
   syncFormatButtons();
   syncEpRangeButtons();
@@ -5902,10 +5943,15 @@ function resumeBattle() {
 }
 
 function exportRankings() {
-  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
-  const text = sorted.map((a, i) =>
-    `${(i+1).toString().padStart(3, ' ')}. ${a.title} (ELO: ${a.elo})`
-  ).join('\n');
+  // v1.0.241 — ranked anime numbered, then an Unranked block underneath.
+  const { ranked } = _rankedEloOrder();
+  const unranked = animeList.filter(a => !_isRanked(a));
+  const lines = ranked.map((a, i) => `${(i+1).toString().padStart(3, ' ')}. ${a.title} (ELO: ${a.elo})`);
+  if (unranked.length) {
+    lines.push('', `Unranked (${unranked.length} not battled yet):`);
+    unranked.forEach(a => lines.push(`  - ${a.title}`));
+  }
+  const text = lines.join('\n');
 
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text)
@@ -5924,10 +5970,14 @@ function _exportRankingsFallback(text) {
 }
 
 function exportCSV() {
-  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  // v1.0.241 — ranked rows first (numbered, tiered), then unranked rows with
+  // an empty Rank and "Unranked" in the Tier column.
+  const { ranked, total } = _rankedEloOrder();
+  const sorted = [...ranked, ...animeList.filter(a => !_isRanked(a))];
   const headers = ['Rank','Title','ELO','Tier','Win Rate','Wins','Losses','Battles','AniList Avg','Format','Season Year'];
   const rows = sorted.map((a, i) => {
-    const tier = getTier(i, sorted.length);
+    const isRanked = i < total;
+    const tier = isRanked ? getTier(i, total) : 'Unranked';
     const battles = a.battles || 0;
     const winRate = (a.wins + a.losses) > 0 ? Math.round((a.wins || 0) / (a.wins + a.losses) * 100) + '%' : 'N/A';
     const avgScore = a.globalScore != null ? a.globalScore + '%' : '';
@@ -5935,7 +5985,7 @@ function exportCSV() {
     const year = a.seasonYear || '';
     // Escape any commas or quotes in title
     const safeTitle = '"' + (a.title || '').replace(/"/g, '""') + '"';
-    return [i + 1, safeTitle, a.elo, tier, winRate, a.wins || 0, a.losses || 0, battles, avgScore, fmt, year].join(',');
+    return [isRanked ? i + 1 : '', safeTitle, a.elo, tier, winRate, a.wins || 0, a.losses || 0, battles, avgScore, fmt, year].join(',');
   });
   const csv = [headers.join(','), ...rows].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -5996,7 +6046,9 @@ async function _buildTierListBlob() {
   const CANVAS_W = 900;
   const PER_ROW = Math.floor((CANVAS_W - LABEL_W - H_PAD * 2 + GAP) / (COVER_W + GAP));
 
-  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
+  // v1.0.241 — ranked anime only; Unranked entries have no tier to sit in.
+  // shareRankings() refuses to open the modal when nothing is ranked yet.
+  const sorted = _rankedEloOrder().ranked;
   const TIER_ORDER  = ['S', 'A', 'B', 'C', 'D'];
   const TIER_COLORS = { S: '#ff9b00', A: '#3fb950', B: '#58a6ff', C: '#d29922', D: '#f85149' };
   const TIER_BG     = { S: '#2d1f00', A: '#0d2016', B: '#0d1b2e', C: '#1e1600', D: '#200d0d' };
@@ -6240,23 +6292,38 @@ async function importBackup(event) {
 }
 
 let _confirmCancelCb = null;
-function _showConfirm(title, body, okLabel, onOk, onCancel) {
+let _confirmDismissable = true;
+// opts (v1.0.241): { cancelLabel } relabels the Cancel button for prompts
+// where "Cancel" is itself a real decision (e.g. keeping this device's copy
+// over a newer cloud save); { dismissable: false } makes a backdrop click
+// a no-op so the user has to pick one of the two buttons.
+function _showConfirm(title, body, okLabel, onOk, onCancel, opts = {}) {
   byId(IDS.confirmModalTitle).textContent = title;
   byId(IDS.confirmModalBody).textContent  = body;
   const okBtn = byId(IDS.confirmModalOk);
   okBtn.textContent = okLabel;
+  // opts.okStyle === 'primary' → green instead of the default destructive red,
+  // for prompts where the OK action is the safe one (loading a cloud save).
+  okBtn.classList.toggle('confirm-btn-primary', opts.okStyle === 'primary');
+  const cancelBtn = byId(IDS.confirmModalCancel);
+  if (cancelBtn) cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+  _confirmDismissable = opts.dismissable !== false;
   okBtn.onclick = () => { _confirmCancelCb = null; _confirmCancel(); onOk(); };
   _confirmCancelCb = onCancel || null;
   byId(IDS.confirmModal).classList.add('open');
 }
 function _confirmCancel() {
   byId(IDS.confirmModal).classList.remove('open');
+  _confirmDismissable = true;
   if (_confirmCancelCb) { const cb = _confirmCancelCb; _confirmCancelCb = null; cb(); }
 }
+function _confirmBackdropClick() {
+  if (_confirmDismissable) _confirmCancel();
+}
 // Promise-based wrapper — lets async functions await the user's choice
-function _confirmAsync(title, body, okLabel) {
+function _confirmAsync(title, body, okLabel, opts) {
   return new Promise(resolve => {
-    _showConfirm(title, body, okLabel, () => resolve(true), () => resolve(false));
+    _showConfirm(title, body, okLabel, () => resolve(true), () => resolve(false), opts);
   });
 }
 
@@ -7458,8 +7525,10 @@ function getNextSeason(season, year) {
 
 async function fetchRecommendationsForYou() {
   // Returns { grouped: true, groups: [{seed, recs[]}] } or { grouped: false, items: [...] }
-  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
-  const seeds  = sorted.slice(0, 3); // top 3 seeds — one group each
+  // v1.0.241 — seeds come from ranked anime only. With nothing ranked, skip
+  // straight to the highly-rated fallback instead of claiming "Because you
+  // loved <first anime in the list>".
+  const seeds  = _rankedEloOrder().ranked.slice(0, 3); // top 3 seeds — one group each
   const ownIds = new Set(animeList.map(a => a.id));
   const usedIds = new Set(); // dedup across groups
   const groups = [];
@@ -12800,6 +12869,34 @@ function reAddAnime(id) {
   }
 }
 
+// ─── RANKED vs UNRANKED ──────────────────────────────────────────────────────
+// v1.0.241 — An anime is "ranked" once Kessen has any signal for it: it has
+// been in at least one battle, or its ELO was seeded away from the neutral
+// 1200 by a score-based warm start. Everything else is Unranked — no rank
+// number, no tier, and it doesn't count toward tier percentiles or the
+// tier-based achievements. Before this, a fresh 250-anime guest list showed
+// "#1 S … #250 D" purely from insertion order, Predict called any new title
+// "D tier, high confidence", and one battle unlocked three achievements.
+function _isRanked(a) {
+  return (a.battles || 0) > 0 || (a.elo ?? 1200) !== 1200;
+}
+// ELO order over ranked anime only. Returns the sorted ranked list, a Map of
+// id → zero-based rank (unranked ids are simply absent), and the count that
+// tier percentiles should be taken against.
+function _rankedEloOrder(list = animeList) {
+  const ranked = list.filter(_isRanked).sort((a, b) => b.elo - a.elo);
+  return { ranked, rankMap: new Map(ranked.map((a, i) => [a.id, i])), total: ranked.length };
+}
+// Minimum number of ranked anime before ELO-derived features (Predict, the
+// Taste panels, tier-based achievements) have anything real to work with.
+const MIN_RANKED_FOR_INSIGHTS = 20;
+// Franchise groups carry their own rank (set in _buildFranchiseGroups over
+// groups with at least one ranked member). null = Unranked group.
+function _franchiseTier(group) {
+  if (group.unranked || group.eloRank === undefined) return null;
+  return getTier(group.eloRank, group.rankedTotal || 1);
+}
+
 // ─── TIER HELPERS ────────────────────────────────────────────────────────────
 // Percentile bands: S top 10%, A 10-25%, B 25-55%, C 55-80%, D 80-100%
 function getTier(zeroIndex, total) {
@@ -13276,9 +13373,10 @@ function _computeTasteInsights(battleMilestone) {
   // ── Insight 3: Contrarian take ──────────────────────────────────────────
   const scored = animeList.filter(a => a.globalScore > 0 && (a.battles || 0) > 0);
   if (scored.length >= 5) {
-    const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
+    // v1.0.241 — positions among ranked anime only (matches the tier badges).
+    const { rankMap, total: rankedTotal } = _rankedEloOrder();
     const withRank  = scored.map(a => {
-      const eloRank  = eloSorted.findIndex(x => x.id === a.id) / animeList.length;
+      const eloRank  = (rankMap.get(a.id) ?? rankedTotal) / Math.max(1, rankedTotal);
       const commRank = 1 - (a.globalScore / 100);
       return { a, gap: commRank - eloRank };
     }).sort((x, y) => Math.abs(y.gap) - Math.abs(x.gap));
@@ -13286,7 +13384,7 @@ function _computeTasteInsights(battleMilestone) {
     const biggest = withRank[0];
     if (biggest && Math.abs(biggest.gap) > 0.1) {
       const higher    = biggest.gap > 0;
-      const tierLabel = getTier(eloSorted.findIndex(x => x.id === biggest.a.id), animeList.length);
+      const tierLabel = getTier(rankMap.get(biggest.a.id) ?? 0, Math.max(1, rankedTotal));
       cards.push({
         type:     'contrarian',
         label:    'Your hottest take',
@@ -13552,7 +13650,14 @@ async function exportTasteStoryCard() {
 
 // ─── SHARE LINK ───────────────────────────────────────────────────────────────
 function shareRankings() {
-  const top20 = [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 20);
+  // v1.0.241 — nothing ranked = nothing to share. Previously a fresh guest
+  // could share "guest's Top 20" that was just the first 20 in list order.
+  const ranked = _rankedEloOrder().ranked;
+  if (!ranked.length) {
+    showToast('Battle a few times first — nothing is ranked yet.');
+    return;
+  }
+  const top20 = ranked.slice(0, 20);
   const user  = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
   const payload = {
     u: user,
@@ -14058,13 +14163,21 @@ function _checkAchievements() {
   // tier/depth-based criteria that measure HOW you rank rather than
   // HOW MUCH.
 
+  // v1.0.241 — Everything derived from ELO position (All-Stars, Tastemaker,
+  // Era Curator, Hidden Gem Fan, Old Soul, Comeback Kid) waits until the
+  // user has actually ranked something. Before this, one battle on a fresh
+  // list unlocked Era Curator (Silver) + Tastemaker (Bronze): with every
+  // anime tied at 1200, "top 10%" was just the first 25 in insertion order.
+  const rankingReady = battleCount >= MIN_RANKED_FOR_INSIGHTS;
+
   // All-Stars — anime that have climbed to ELO 1400+ (200 above the
   // 1200 default seed). These are the anime you've actively favoured
-  // through wins, not just touched once.
-  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400).length;
-  _tryUnlock('all-stars-bronze', allStarsCount >= 10, '⭐ All-Stars (Bronze)');
-  _tryUnlock('all-stars-silver', allStarsCount >= 25, '⭐ All-Stars (Silver)');
-  _tryUnlock('all-stars-gold',   allStarsCount >= 50, '⭐ All-Stars (Gold)');
+  // through wins, not just touched once — so a score-seeded 1400 with no
+  // battles doesn't count.
+  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400 && (a.battles || 0) > 0).length;
+  _tryUnlock('all-stars-bronze', rankingReady && allStarsCount >= 10, '⭐ All-Stars (Bronze)');
+  _tryUnlock('all-stars-silver', rankingReady && allStarsCount >= 25, '⭐ All-Stars (Silver)');
+  _tryUnlock('all-stars-gold',   rankingReady && allStarsCount >= 50, '⭐ All-Stars (Gold)');
 
   // Loyalist — anime stress-tested through many battles (≥20 each).
   // Different from Settled (uniform 10+ across whole list) — Loyalist
@@ -14088,8 +14201,8 @@ function _checkAchievements() {
   // (S/A/B/C/D) using the same percentile rules as the ranking UI, then
   // measure breadth at the top end. Multi-genre tagging no longer matters
   // because Tastemaker uses each anime's PRIMARY genre only.
-  const byEloDesc = [...animeList].sort((a, b) => b.elo - a.elo);
-  const totalRanked = byEloDesc.length;
+  // v1.0.241 — ranked anime only (see _rankedEloOrder); unranked have no tier.
+  const { ranked: byEloDesc, total: totalRanked } = _rankedEloOrder();
   const tierOf = new Map();
   byEloDesc.forEach((a, i) => tierOf.set(a.id, getTier(i, totalRanked)));
 
@@ -14101,9 +14214,9 @@ function _checkAchievements() {
     if (primary) sTierPrimaryGenres.add(primary);
   }
   const tastemakerCount = sTierPrimaryGenres.size;
-  _tryUnlock('tastemaker-bronze', tastemakerCount >= 3, '🎭 Tastemaker (Bronze)');
-  _tryUnlock('tastemaker-silver', tastemakerCount >= 5, '🎭 Tastemaker (Silver)');
-  _tryUnlock('tastemaker-gold',   tastemakerCount >= 8, '🎭 Tastemaker (Gold)');
+  _tryUnlock('tastemaker-bronze', rankingReady && tastemakerCount >= 3, '🎭 Tastemaker (Bronze)');
+  _tryUnlock('tastemaker-silver', rankingReady && tastemakerCount >= 5, '🎭 Tastemaker (Silver)');
+  _tryUnlock('tastemaker-gold',   rankingReady && tastemakerCount >= 8, '🎭 Tastemaker (Gold)');
 
   // Era Curator — distinct decades represented in A-tier or higher (top 25%).
   const topDecades = new Set();
@@ -14114,9 +14227,9 @@ function _checkAchievements() {
     topDecades.add(Math.floor(a.seasonYear / 10) * 10);
   }
   const eraCuratorCount = topDecades.size;
-  _tryUnlock('era-curator-bronze', eraCuratorCount >= 3, '🕰️ Era Curator (Bronze)');
-  _tryUnlock('era-curator-silver', eraCuratorCount >= 4, '🕰️ Era Curator (Silver)');
-  _tryUnlock('era-curator-gold',   eraCuratorCount >= 5, '🕰️ Era Curator (Gold)');
+  _tryUnlock('era-curator-bronze', rankingReady && eraCuratorCount >= 3, '🕰️ Era Curator (Bronze)');
+  _tryUnlock('era-curator-silver', rankingReady && eraCuratorCount >= 4, '🕰️ Era Curator (Silver)');
+  _tryUnlock('era-curator-gold',   rankingReady && eraCuratorCount >= 5, '🕰️ Era Curator (Gold)');
 
   // Undefeated
   const hasUndefeated = animeList.some(a => a.wins >= 10 && a.losses === 0);
@@ -14135,7 +14248,7 @@ function _checkAchievements() {
   // leader typically had fewer total wins than the displaced one).
   // Using max(wins) instead means any anime that has ever been dominant
   // counts toward the achievement and progress can never go backwards.
-  const byElo  = [...animeList].sort((a, b) => b.elo - a.elo);
+  const byElo  = byEloDesc; // ranked anime only (v1.0.241)
   const topWins = Math.max(0, ...animeList.map(a => a.wins || 0));
   _tryUnlock('top-dog-bronze', topWins >= 20,  '👑 Top Dog (Bronze)');
   _tryUnlock('top-dog-silver', topWins >= 75,  '👑 Top Dog (Silver)');
@@ -14150,11 +14263,11 @@ function _checkAchievements() {
   // Hidden Gem Fan — sub-50k popularity anime in top 10
   const top10 = byElo.slice(0, 10);
   const hasHiddenGem = top10.some(a => a.popularity > 0 && a.popularity < 50000);
-  _tryUnlock('hidden-gem-fan', hasHiddenGem, '💎 Hidden Gem Fan');
+  _tryUnlock('hidden-gem-fan', rankingReady && hasHiddenGem, '💎 Hidden Gem Fan');
 
   // Old Soul — pre-1990 anime in top 10
   const hasOldSoul = top10.some(a => a.seasonYear && a.seasonYear < 1990);
-  _tryUnlock('old-soul', hasOldSoul, '📼 Old Soul');
+  _tryUnlock('old-soul', rankingReady && hasOldSoul, '📼 Old Soul');
 
   // Rival — franchise-vs-franchise rivalries with 3+ battles + at least one
   // win each side. Uses the same aggregator as the Stats tab so the trophy
@@ -14181,7 +14294,7 @@ function _checkAchievements() {
                : null;
     return seed != null && seed <= 900;
   });
-  _tryUnlock('comeback-kid', hasComeback, '📈 Comeback Kid');
+  _tryUnlock('comeback-kid', rankingReady && hasComeback, '📈 Comeback Kid');
 }
 
 // v1.0.211 — Snapshot the current progress signal for every achievement,
@@ -14189,19 +14302,20 @@ function _checkAchievements() {
 // per-tier progress bars on locked cards so users can see how close they
 // are. Returns { current, fmt(target) -> string } pairs.
 function _achievementProgress() {
-  const byElo = [...animeList].sort((a, b) => b.elo - a.elo);
+  // v1.0.241 — same ranked-only basis as _checkAchievements so a locked
+  // card can't show "4/4" progress for a tier it isn't allowed to earn yet.
+  const { ranked: byElo, total: totalRanked } = _rankedEloOrder();
   const top10 = byElo.slice(0, 10);
   const top25cutoff = Math.floor(byElo.length * 0.25);
   const top25ids    = new Set(byElo.slice(0, Math.max(1, top25cutoff)).map(a => a.id));
 
   // v1.0.211 — Pre-compute the tier map once and reuse for the new
   // tier/depth-based achievements.
-  const byEloDesc = [...animeList].sort((a, b) => b.elo - a.elo);
-  const totalRanked = byEloDesc.length;
+  const byEloDesc = byElo;
   const tierOf = new Map();
   byEloDesc.forEach((a, i) => tierOf.set(a.id, getTier(i, totalRanked)));
 
-  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400).length;
+  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400 && (a.battles || 0) > 0).length;
   const loyalistCount = animeList.filter(a => (a.battles || 0) >= 20).length;
 
   const sTierPrimaryGenres = new Set();
@@ -14272,12 +14386,18 @@ function renderAchievementsTab() {
   const tierIcons = { bronze: '🥉', silver: '🥈', gold: '🥇' };
   const tierOrder = ['bronze', 'silver', 'gold'];
 
+  // v1.0.241 — tell the user why ELO-based badges aren't lighting up yet
+  // rather than leaving a "3 / 3" progress bar sitting under a locked tier.
+  const gateNote = battleCount < MIN_RANKED_FOR_INSIGHTS
+    ? `<div style="font-size:0.78rem;color:#8b949e;margin-top:6px">Badges based on your rankings unlock after ${MIN_RANKED_FOR_INSIGHTS} battles (${MIN_RANKED_FOR_INSIGHTS - battleCount} to go).</div>`
+    : '';
   el.innerHTML = `
     <div class="achievements-summary">
       ${unlockedCount} / ${totalTiers} unlocked
       <div style="height:6px;background:var(--border-subtle);border-radius:4px;margin:8px auto;max-width:200px">
         <div style="height:100%;border-radius:4px;background:#3fb950;width:${Math.round((unlockedCount/totalTiers)*100)}%"></div>
       </div>
+      ${gateNote}
     </div>
     <div class="achievements-grid">
       ${ACHIEVEMENT_DEFS.map(def => {
@@ -14375,10 +14495,15 @@ function renderBattlesTab() {
   byId(IDS.statStability).textContent = stable + '%';
   byId(IDS.statFuzzy).textContent = animeList.filter(a => a.fuzzy).length;
 
-  const mostBattled = [...animeList].sort((a, b) => (b.battles || 0) - (a.battles || 0)).slice(0, 5);
-  byId(IDS.statMostBattled).innerHTML = mostBattled.map(a =>
-    `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${a.battles || 0}</span></div>`
-  ).join('');
+  // v1.0.241 — only anime that have actually battled; a fresh list used to
+  // show the first five titles with a 0 next to each.
+  const mostBattled = animeList.filter(a => (a.battles || 0) > 0)
+    .sort((a, b) => (b.battles || 0) - (a.battles || 0)).slice(0, 5);
+  byId(IDS.statMostBattled).innerHTML = mostBattled.length
+    ? mostBattled.map(a =>
+        `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${a.battles || 0}</span></div>`
+      ).join('')
+    : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No battles yet.</div>';
 
   const eligible = [...animeList]
     .filter(a => (a.wins + a.losses) >= 5)
@@ -16196,8 +16321,15 @@ async function renderTasteProfile(forceRefetch = false) {
   const hide = el => { if (el) el.style.display = 'none'; };
   const show = (el, disp = 'block') => { if (el) el.style.display = disp; };
 
-  // No data yet — show empty state
-  if (!animeList.length) {
+  // No data yet — show empty state.
+  // v1.0.241 — "no data" now means fewer than MIN_RANKED_FOR_INSIGHTS ranked
+  // anime, not "no anime at all". The empty-state copy always said "battle
+  // at least 20 anime to unlock your profile", but the panel rendered
+  // anyway: a fresh guest saw every genre bar at 1200, "You rate Sword Art
+  // Online +212 above the community" and a full score spread — all derived
+  // from list order. Skipping early also spares the AniList tag enrichment
+  // fetch for users who can't use the result yet.
+  if (!animeList.length || _rankedEloOrder().total < MIN_RANKED_FOR_INSIGHTS) {
     show(emptyEl);
     hide(loadingEl);
     hide(bodyEl);
@@ -16840,18 +16972,22 @@ function showAnimeDetail(id, opts) {
   const anime = animeList.find(a => a.id === id);
   if (!anime) return;
 
-  const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
-  const rank = sorted.findIndex(a => a.id === id) + 1;
-  const tier = getTier(rank - 1, sorted.length);
+  // v1.0.241 — rank/tier among ranked anime only; Unranked gets a plain label.
+  const { rankMap, total: rankedTotal } = _rankedEloOrder();
+  const eloRank = rankMap.get(id);
+  const isRanked = eloRank !== undefined;
+  const rank = isRanked ? eloRank + 1 : null;
+  const tier = isRanked ? getTier(eloRank, rankedTotal) : null;
 
   const coverEl = byId(IDS.modalCover);
   coverEl.classList.remove('img-broken'); // clear any stale failure state from a previous modal open
   coverEl.src = anime.cover;
   coverEl.alt = displayTitle(anime);
   byId(IDS.modalTitle).textContent = displayTitle(anime);
-  const tierHtml = `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`;
   const scoreStr = anime.globalScore ? `· Community ${anime.globalScore}%` : '';
-  byId(IDS.modalRankLine).innerHTML = `${tierHtml}Rank #${rank} of ${animeList.length} ${scoreStr}`;
+  byId(IDS.modalRankLine).innerHTML = isRanked
+    ? `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>Rank #${rank} of ${rankedTotal} ranked ${scoreStr}`
+    : `<span class="tier-badge t-unranked" style="position:static;display:inline-flex;margin-right:6px">Unranked</span>Not battled yet ${scoreStr}`;
 
   // Meta line: format + season/year
   const fmtLabel = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' }[anime.format] || anime.format || '';
@@ -17570,19 +17706,25 @@ async function runPredictor(prefetched = null) {
 
   if (!media) { resultsEl.innerHTML = '<p style="color:#f85149;font-size:0.85rem">No anime found — try a different title.</p>'; return; }
 
-  // Already ranked?
+  // Already in the list?
   const existing = animeList.find(a => a.id === media.id);
   if (existing) {
-    const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
-    const rank   = sorted.findIndex(a => a.id === existing.id) + 1;
-    const tier   = getTier(rank - 1, sorted.length);
-    resultsEl.innerHTML = `<p class="predictor-already">You've already ranked <strong>${esc(media.title.english || media.title.romaji)}</strong> — it's at <strong>#${rank} (${esc(tier)} tier, ELO ${existing.elo | 0})</strong>.</p>`;
+    const title = esc(media.title.english || media.title.romaji);
+    const { rankMap, total } = _rankedEloOrder();
+    const eloRank = rankMap.get(existing.id);
+    if (eloRank === undefined) {
+      // v1.0.241 — in the list but never battled: say so instead of inventing a rank.
+      resultsEl.innerHTML = `<p class="predictor-already"><strong>${title}</strong> is already in your list, but you haven't battled it yet — its rank appears after its first battle.</p>`;
+      return;
+    }
+    const tier = getTier(eloRank, total);
+    resultsEl.innerHTML = `<p class="predictor-already">You've already ranked <strong>${title}</strong> — it's at <strong>#${eloRank + 1} (${esc(tier)} tier, ELO ${existing.elo | 0})</strong>.</p>`;
     return;
   }
 
   const prediction = _predictElo(media);
   if (!prediction) {
-    resultsEl.innerHTML = '<p style="color:#8b949e;font-size:0.85rem">Not enough taste data yet — keep ranking to improve predictions!</p>';
+    resultsEl.innerHTML = `<p style="color:#8b949e;font-size:0.85rem">Not enough to go on yet — Predict needs at least ${MIN_RANKED_FOR_INSIGHTS} ranked anime. Keep battling and come back.</p>`;
     return;
   }
   _renderPrediction(media, prediction, resultsEl);
@@ -17593,8 +17735,12 @@ function _predictElo(media) {
   const targetYear   = media.seasonYear;
   const targetScore  = media.averageScore;  // 0–100
   const targetFormat = media.format;
-  const active       = animeList.filter(a => !excludedIds.has(a.id));
-  if (active.length < 5) return null;
+  // v1.0.241 — only ranked anime carry taste signal. Unranked entries all sit
+  // at ELO 1200, so including them dragged every prediction to the median
+  // and, at cold start, "predicted" any title into D tier with high
+  // confidence because a 1200 tie sorts last.
+  const active       = animeList.filter(a => !excludedIds.has(a.id) && _isRanked(a));
+  if (active.length < MIN_RANKED_FOR_INSIGHTS) return null;
 
   // ── User baseline ──────────────────────────────────────────────────────────
   const eloSorted  = [...active].sort((a, b) => a.elo - b.elo);
@@ -17707,7 +17853,7 @@ function _predictElo(media) {
   const rawElo       = components.reduce((s, c) => s + c.value * (c.weight / totalW), 0);
   const predictedElo = Math.max(ELO_FLOOR, Math.min(2200, Math.round(rawElo)));
 
-  const sorted   = [...animeList].sort((a, b) => b.elo - a.elo);
+  const sorted   = [...active].sort((a, b) => b.elo - a.elo); // ranked anime only (v1.0.241)
   const insertAt = sorted.findIndex(a => a.elo < predictedElo);
   const rankPos  = insertAt === -1 ? sorted.length : insertAt;
   const tier     = getTier(rankPos, sorted.length + 1);
@@ -18140,7 +18286,7 @@ function bulkExcludeFranchise(name) {
 
   _showConfirm(
     `🚫 Exclude all of "${name}" from battles?`,
-    `${newlyExcluded.length} entr${newlyExcluded.length === 1 ? 'y' : 'ies'} will be removed from your battle pool (Rankings stay unchanged). You can undo this from the Undo button or re-add individual entries from Manage → Excluded.`,
+    `${newlyExcluded.length} entr${newlyExcluded.length === 1 ? 'y' : 'ies'} will be removed from your battle pool (Rankings stay unchanged). You can undo this from the Undo button or re-add individual entries from the Excluded section at the bottom of Rankings.`,
     'Exclude all',
     () => {
       const prevA = currentA, prevB = currentB;
@@ -19277,8 +19423,7 @@ function setRankingView(view) {
 
 function renderRankingTable() {
   const sorted    = getSortedList();
-  const eloSorted = [...animeList].sort((a, b) => b.elo - a.elo);
-  const eloRankMap = new Map(eloSorted.map((a, i) => [a.id, i]));
+  const { rankMap: eloRankMap, total: rankedTotal } = _rankedEloOrder(); // v1.0.241 — ranked anime only
   // v1.0.211 — list view used to inline-parse just the title-text portion
   // of the search input. After the chip picker landed, that meant ticking
   // `+ Format: ONA` filtered the grid but did nothing here — list rendered
@@ -19289,11 +19434,11 @@ function renderRankingTable() {
 
   // Build pre-computed data array (filtered)
   _vsTableData = [];
-  sorted.forEach((anime, i) => {
+  sorted.forEach((anime) => {
     const title   = displayTitle(anime);
     const fmt    = anime.format || 'TV';
-    const eloRank = eloRankMap.get(anime.id) ?? i;
-    const tier    = getTier(eloRank, sorted.length);
+    const eloRank = eloRankMap.get(anime.id); // undefined → Unranked (v1.0.241)
+    const tier    = eloRank === undefined ? 'unranked' : getTier(eloRank, rankedTotal);
     const conf    = confidenceLabel(anime.battles || 0);
     const hidden = (query.text && !title.toLowerCase().includes(query.text)) ||
                    !_animeMatchesSearchTokens(anime, query) ||
@@ -19308,7 +19453,8 @@ function renderRankingTable() {
     // v1.0.167 — anchor rank to ELO position (matches grid view + franchise
     // table). Previously this used the current-sort position, so sorting by
     // Title swapped #312 → #260 even though the anime hadn't moved in ELO.
-    const displayIdx = (eloRankMap.get(anime.id) ?? i) + 1;
+    // v1.0.241 — '–' for Unranked.
+    const displayIdx = eloRank === undefined ? '–' : eloRank + 1;
     _vsTableData.push({ anime, displayIdx, title, tier, conf, wr, sb });
   });
 
@@ -19361,7 +19507,7 @@ function _vsRenderTableSlice() {
       <td>${wr}</td>
       <td>${anime.battles || 0}</td>
       <td>${anime.globalScore ? anime.globalScore + '%' : '–'}</td>
-      <td><span class="tier-badge t-${tier.toLowerCase()}">${tier}</span></td>
+      <td><span class="tier-badge t-${tier.toLowerCase()}">${tier === 'unranked' ? 'Unranked' : tier}</span></td>
       <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
     </tr>`;
   }
@@ -19376,8 +19522,9 @@ function renderFranchiseTable() {
   const sorted = _franchiseSortedList();
   let groups = _buildFranchiseGroups(sorted);
   let html = '';
+  const { rankMap: memberRankMap, total: memberRankTotal } = _rankedEloOrder(); // v1.0.241
   groups.forEach((group, rank) => {
-    const tier     = getTier(group.eloRank ?? rank, groups.length);
+    const tier     = _franchiseTier(group); // null = Unranked (v1.0.241)
     const isSingle = group.members.length === 1;
     const gid      = rank;
     const conf     = confidenceLabel(group.totalBattles || 0);
@@ -19387,8 +19534,8 @@ function renderFranchiseTable() {
       ? `showAnimeDetail(${group.members[0].id})`
       : `showFranchiseDetail('${esc(group.name).replace(/'/g, "\\'")}')`;
     // v1.0.162 — mirror the grid card fix: display the ELO rank, not the
-    // current-sort position. Falls back to `rank` if eloRank somehow absent.
-    const displayRank = (group.eloRank ?? rank) + 1;
+    // current-sort position. v1.0.241 — '–' for Unranked groups.
+    const displayRank = group.unranked ? '–' : (group.eloRank ?? rank) + 1;
     html += `
       <tr class="franchise-table-group" data-gid="${gid}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
         <td class="tbl-rank">${displayRank}</td>
@@ -19410,7 +19557,7 @@ function renderFranchiseTable() {
         <td>${wrStr}</td>
         <td>${group.totalBattles || 0}</td>
         <td>${scoreStr}</td>
-        <td><span class="tier-badge t-${tier.toLowerCase()}">${tier}</span></td>
+        <td>${tier ? `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}</td>
         <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
       </tr>`;
     if (!isSingle) {
@@ -19418,7 +19565,11 @@ function renderFranchiseTable() {
         const wr = (a.wins + a.losses) > 0
           ? Math.round(a.wins / (a.wins + a.losses) * 100) + '%' : '–';
         const conf = confidenceLabel(a.battles || 0);
-        const memberTier = getTier(sorted.indexOf(a), sorted.length);
+        // v1.0.241 — member tier from the ranked ELO order (was the position
+        // in the current, possibly title-sorted, list — so sorting by Title
+        // handed out tiers alphabetically).
+        const memberRank = memberRankMap.get(a.id);
+        const memberTier = memberRank === undefined ? null : getTier(memberRank, memberRankTotal);
         // v1.0.167 — "〰️ Fuzzy" pill next to fuzzy member titles in the
         // franchise table expand, matching the grid expand + rank cards.
         const fuzzyPill = a.fuzzy
@@ -19432,7 +19583,7 @@ function renderFranchiseTable() {
           <td>${wr}</td>
           <td>${a.battles || 0}</td>
           <td>${a.globalScore ? a.globalScore + '%' : '–'}</td>
-          <td><span class="tier-badge t-${memberTier.toLowerCase()}">${memberTier}</span></td>
+          <td>${memberTier ? `<span class="tier-badge t-${memberTier.toLowerCase()}">${memberTier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}</td>
           <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
         </tr>`;
       });
@@ -20635,18 +20786,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.240 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.241 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔧 Updates now land cleanly. Previously the first load after an update could show new layout with old code behind it — buttons in odd places, a stray ☁️ next to your avatar — until you refreshed again. Fixed: the app\'s core files are now always fetched together, so what you see on the first load is the real thing.',
-    '📱 Tidier header on phones. The streak badge no longer gets squashed into a two-line pill, the "N battles · M anime" text is hidden on small screens (it\'s still on the Rankings and Battles tabs), and the cloud-sync indicator is now a small dot on your avatar\'s corner instead of an icon that shoved everything sideways whenever a save fired.',
-    '🔔 "What\'s new" now actually shows up. A bug in the last update wrote the notification into the wrong storage slot, so nobody saw the 1.0.239 notes. Fixed, and the missing entry is recovered — you may see it appear alongside this one.',
-    '⚡ Tapping a Tower push after the app was fully closed no longer leaves the "you finished X" notification lingering in the bell with a badge. That path was skipping the dismiss because the notification list hadn\'t loaded yet when the tap was handled.',
-    '📄 Privacy policy updated to describe everything the app stores — including that turning on Tower-retry notifications stores your AniList token on the server so it can check your list while the app is closed (and deletes it when you turn that off). Full text at kessen.co.uk/privacy.html.',
+    '🏷 Unranked is now a thing. Anime you haven\'t battled yet (and that weren\'t seeded from a score) show an "Unranked" pill instead of a made-up rank and tier. They sit below your ranked anime, don\'t count toward the S–D percentiles, and drop out of the shared tier list, Predict and the Taste panels until they\'ve had a battle. A fresh list no longer opens on "#1 S … #250 D".',
+    '🏆 Achievements that depend on where things sit in your rankings (All-Stars, Tastemaker, Era Curator, Hidden Gem Fan, Old Soul, Comeback Kid) now wait for 20 battles and only count anime that have actually battled. One battle on a new list was unlocking three of them.',
+    '☁️ The "Newer cloud save found" prompt now has two real choices — Load cloud save, or Keep this device\'s copy — and says plainly that keeping the local copy will overwrite the cloud one on your next battle. Before, a stray Cancel (or tapping outside the box) did that silently and your other device\'s progress was gone.',
+    '📱 Guest mode on phones no longer overflows the header. The row needed 449px on a 375px screen, so the whole page shrank to fit and the Change User button fell off the edge. It\'s now an icon on small screens and the stats text gives way first.',
+    '🧹 Small ones: "1 battles" reads "1 battle", the Battles tab says "No battles yet" instead of listing five titles with a 0, Predict no longer claims a never-battled title is "already ranked", confirm dialogs keep their paragraph breaks, and a stray line above the Manage tab is gone.',
   ],
 };
 

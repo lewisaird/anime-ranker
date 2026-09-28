@@ -201,34 +201,6 @@
       display: block;
       flex-shrink: 0;
     }
-    .beta-chip {
-      font-size: 0.6rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: #e3b341;
-      background: rgba(227,179,65,0.12);
-      border: 1px solid rgba(227,179,65,0.35);
-      border-radius: 4px;
-      padding: 2px 6px;
-      line-height: 1;
-      align-self: center;
-      flex-shrink: 0;
-      margin-right: 8px;
-      cursor: pointer;
-      font-family: inherit;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    @media (hover: hover) {
-      .beta-chip:hover {
-        background: rgba(227,179,65,0.22);
-        border-color: rgba(227,179,65,0.55);
-      }
-    }
-    .beta-chip:focus-visible {
-      outline: 2px solid #e3b341;
-      outline-offset: 2px;
-    }
     .tab-new-badge {
       display: inline-block;
       font-size: 0.55rem;
@@ -257,6 +229,19 @@
     .manage-btn-feedback:hover { background: var(--bg-tertiary); color: var(--text-bright); }
     }
 
+    /* v1.0.241 — right-hand header cluster. min-width:0 is the whole point:
+       without it a flex item can't shrink below its content, so the stats
+       text's ellipsis never engaged and the row overflowed the phone width
+       instead (guest mode needed 449px on a 375px screen). Everything in
+       the cluster except the stats text is flex-shrink:0, so the text is
+       the only thing that gives. */
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    #notif-bell, #change-user-btn { flex-shrink: 0; }
     #progress-info {
       font-size: 0.85rem;
       color: var(--text-secondary);
@@ -2864,6 +2849,15 @@
     .tier-badge.t-b { background: #1e6e30; color: #fff; }
     .tier-badge.t-c { background: #1355a0; color: #fff; }
     .tier-badge.t-d { background: #444c56; color: #ccc; }
+    /* v1.0.241 — Unranked pill: no tier letter until the anime has a battle
+       (or a score-seeded ELO). Wider than the letter badges, deliberately
+       muted so it reads as "nothing here yet" rather than as a sixth tier. */
+    .tier-badge.t-unranked {
+      width: auto; padding: 0 6px;
+      background: var(--bg-tertiary); color: var(--text-secondary);
+      border: 1px solid var(--border-default);
+      font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    }
 
     /* SPARKLINE in detail modal */
     .sparkline-wrap { margin: 10px 0; background: var(--bg-primary); border-radius: 8px; padding: 8px 10px; }
@@ -3434,13 +3428,22 @@
       max-width: 360px; width: 100%;
     }
     .confirm-modal-box h3 { font-size: 1rem; color: var(--text-bright); margin-bottom: 8px; }
-    .confirm-modal-box p  { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; }
+    /* v1.0.241 — pre-line so the "\n\n" paragraph breaks every confirm body
+       already contains actually render, instead of collapsing to one run-on
+       sentence. */
+    .confirm-modal-box p  { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; white-space: pre-line; }
     .confirm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
     .confirm-btn-cancel  { padding: 7px 16px; border-radius: 6px; border: 1px solid var(--border-default); background: transparent; color: var(--text-primary); cursor: pointer; font-size: 0.85rem; }
     @media (hover: hover) {
     .confirm-btn-cancel:hover  { background: var(--border-subtle); }
     }
     .confirm-btn-danger  { padding: 7px 16px; border-radius: 6px; border: none; background: #da3633; color: #fff; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    /* v1.0.241 — green variant for prompts whose OK is the safe choice
+       (set via _showConfirm's okStyle:'primary'). */
+    .confirm-btn-danger.confirm-btn-primary { background: var(--accent-green-dark); }
+    @media (hover: hover) {
+    .confirm-btn-danger.confirm-btn-primary:hover { background: #2ea043; }
+    }
     @media (hover: hover) {
     .confirm-btn-danger:hover  { background: var(--accent-red); }
     }
@@ -4178,29 +4181,9 @@
     }
     .mal-drop-zone:hover, .mal-drop-zone.drag-over { border-color: var(--accent-blue); color: var(--accent-blue); background: var(--hover-blue-bg); }
     .mal-drop-zone input[type="file"] { display: none; }
-    /* MANAGE SUB-TABS (Settings / Achievements) */
-    #tab-panel-manage .source-tabs {
-      display: flex;
-      gap: 0;
-      border: 1px solid var(--border-default);
-      border-radius: 8px;
-      overflow: hidden;
-      margin: 0 auto 20px;
-      max-width: 360px;
-    }
-    #tab-panel-manage .source-tab {
-      flex: 1;
-      padding: 9px 20px;
-      background: var(--bg-secondary);
-      color: var(--text-secondary);
-      font-size: 0.88rem;
-      font-weight: 500;
-      cursor: pointer;
-      border: none;
-      transition: all 0.15s;
-    }
-    #tab-panel-manage .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
-    @media (hover: hover) { #tab-panel-manage .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
+    /* v1.0.241 — Manage sub-tab styles removed: Achievements moved to Profile
+       long ago and the leftover empty .source-tabs div was rendering as a
+       stray 360px rule above the Manage columns. */
 
     /* PROFILE SUB-TABS (Taste / Achievements) */
     #tab-panel-profile .source-tabs {
@@ -5146,7 +5129,11 @@
 
       /* Header */
       header h1 { font-size: 1rem; }
-      #change-user-btn { font-size: 0.72rem; padding: 5px 8px; }
+      /* v1.0.241 — icon-only on phones (aria-label carries the name). The
+         full "⇄ Change User" button was 97px, the single biggest reason the
+         guest header overflowed a 375px screen. */
+      #change-user-btn { font-size: 0.85rem; padding: 5px 9px; }
+      #change-user-btn .change-user-label { display: none; }
 
       /* Results hero */
       .results-util-bar { gap: 5px; }
