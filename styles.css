@@ -171,6 +171,12 @@
       justify-content: space-between;
       flex-wrap: nowrap;
       min-height: 0;
+      /* v1.0.240 — guaranteed breathing room between the brand and the
+         right-hand cluster. space-between alone distributes *leftover*
+         space, so on a tight row the two touched ("Kessen197 battles").
+         A flex gap is honoured even when the row is full — the stats
+         text gives up width via its ellipsis instead. */
+      gap: 14px;
     }
     @keyframes sync-pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
     .sync-pulse { animation: sync-pulse 1.4s ease-in-out infinite; }
@@ -5296,11 +5302,13 @@
 
       /* ── Header: avatar only — name + logout live in Manage tab ── */
       header { padding: 10px 14px; }
-      /* v1.0.239 — hide the "N battles · M anime" text on phones. Seven
-         items in a ~360px row was too many: this text was truncating to
-         "367 ani…" and squeezing the streak badge into a two-line pill.
-         The counts are still on the Rankings and Battles tabs. */
-      #progress-info { display: none; }
+      /* v1.0.240 — stats text stays on phones. It was hidden briefly in
+         1.0.239 when the row was over-full, but the real space hog was the
+         cloud-sync icon (and its reserved slot); that's now a dot on the
+         avatar with zero width, so the text fits again. If a narrower
+         phone still can't fit it, the base rule's ellipsis truncates the
+         text rather than squashing anything else. */
+      #progress-info { font-size: 0.75rem; }
 
       /* ── Manage tab ── */
       /* v1.0.209 — center the button text on mobile. Desktop keeps the
