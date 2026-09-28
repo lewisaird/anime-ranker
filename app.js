@@ -2913,6 +2913,12 @@ function loadState(username, source = 'anilist') {
     // first battle for users who'd toggled it in a prior session. The cost is
     // one localStorage read.
     _loadViewPrefs();
+    // v1.0.239 — load the notification centre (and run the "What's new"
+    // version check inside it) here, now that saveKey is set. This is the
+    // correct home for the boot-time check: it fires regardless of which
+    // screen the user lands on, and writes to the right per-user bucket.
+    // _ncLoad is idempotent, so the later call from showResults is harmless.
+    _ncLoad();
     return true;
   } catch { return false; }
 }
@@ -9317,6 +9323,11 @@ function _maybeShowInstallBanner() {
   } else {
     return;   // no install path available on this browser — stay quiet
   }
+  // Inline display so the hidden/shown state never depends on styles.css
+  // having loaded — a stale or missed stylesheet push must not leave a raw
+  // unstyled banner sitting in the page (which is exactly what happened on
+  // first deploy of 1.0.239). The .show class still carries the animation.
+  banner.style.display = 'flex';
   banner.classList.add('show');
   _installBannerShown = true;
   _metric('install.shown');
@@ -9335,7 +9346,7 @@ async function installBannerAction() {
 }
 function dismissInstallBanner(installed = false) {
   const banner = byId(IDS.installBanner);
-  if (banner) banner.classList.remove('show');
+  if (banner) { banner.classList.remove('show'); banner.style.display = 'none'; }
   try {
     // Installed → suppress for a very long time (effectively forever);
     // dismissed → 30 days.
@@ -20468,6 +20479,26 @@ function _ncLoad() {
       if (_notifCentre.length !== before) _ncSave();
     }
   } catch { /* defensive */ }
+  // v1.0.239 — One-shot recovery for the 1.0.238 bug that wrote the
+  // "What's new" entry into the '.guest' bucket before saveKey was set. If
+  // the guest bucket holds an app_update the current user's bucket lacks,
+  // adopt it, then clear it from guest so this doesn't repeat. Cheap, and
+  // it means everyone who upgraded during the bug window still gets the
+  // notification once they're on this build.
+  try {
+    if (saveKey && saveKey !== KESSEN_KEYS.session.guest) {
+      const gRaw = localStorage.getItem(KESSEN_KEYS.data.notifCentre(''));  // '' → 'guest'
+      const guestNc = gRaw ? JSON.parse(gRaw) : [];
+      const stray = guestNc.filter(n => n.type === 'app_update');
+      if (stray.length) {
+        const haveVersions = new Set(_notifCentre.filter(n => n.type === 'app_update').map(n => n.data?.toVersion));
+        const adopt = stray.filter(n => !haveVersions.has(n.data?.toVersion));
+        if (adopt.length) { _notifCentre.unshift(...adopt); _ncSave(); }
+        const rest = guestNc.filter(n => n.type !== 'app_update');
+        localStorage.setItem(KESSEN_KEYS.data.notifCentre(''), JSON.stringify(rest));
+      }
+    }
+  } catch { /* defensive */ }
   // v1.0.210 — surface the "What's new" entry on first boot of a new version.
   // Runs once per session (idempotent inside the helper).
   _checkAppUpdateNotif();
@@ -20622,8 +20653,16 @@ const WHATS_NEW = {
 let _appUpdateChecked = false;
 function _checkAppUpdateNotif() {
   if (_appUpdateChecked) return;
-  _appUpdateChecked = true;
   if (!APP_VERSION) return;
+  // v1.0.239 — Must not run before saveKey is known. The 1.0.238 change
+  // called this from window 'load', which fires before loadState assigns
+  // saveKey — so _ncSave wrote the entry into the '.guest' bucket, the
+  // version stamp advanced, and the user's real bucket never got it. The
+  // "What's new" for 1.0.239 was lost on every device that upgraded.
+  // Bail WITHOUT marking checked or stamping the version so a later call
+  // (from _ncLoad, or the loadState hook below) does the real work.
+  if (!saveKey) return;
+  _appUpdateChecked = true;
   let stored = '';
   try { stored = localStorage.getItem(KESSEN_KEYS.ui.lastSeenAppVersion) || ''; }
   catch { return; } // storage disabled — silent no-op rather than nag every boot
@@ -21949,12 +21988,9 @@ document.addEventListener('error', e => {
 }, true);
 
 window.addEventListener('load', () => {
-  // v1.0.238 — Version check fires here regardless of which screen the
-  // user lands on. Previously it was only inside _ncLoad, which runs on
-  // Rankings visit — a user who stayed on the battle screen after a
-  // version bump never saw the "What's new" notification. Idempotent
-  // (_appUpdateChecked guard), so a later _ncLoad is a no-op.
-  try { _checkAppUpdateNotif(); } catch { /* defensive */ }
+  // v1.0.239 — the version-check call that used to live here was wrong:
+  // saveKey isn't set yet at 'load', so the notification went into the
+  // guest bucket and was lost. It now fires from loadState (see there).
   if (tryLoadSharedView()) {
     hide('username-screen');
     return;

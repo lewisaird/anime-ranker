@@ -1004,8 +1004,9 @@
        beforeinstallprompt event; on iOS Safari (no install API) the text
        explains Share → Add to Home Screen. Sits outside every screen so it
        overlays whichever one the user is on. -->
-  <div id="install-banner" role="region" aria-label="Install Kessen">
-    <div id="install-banner-text"></div>
+  <div id="install-banner" role="region" aria-label="Install Kessen"
+       style="display:none;position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:150;align-items:center;gap:12px">
+    <div id="install-banner-text" style="flex:1;min-width:0"></div>
     <div style="display:flex;gap:8px;flex-shrink:0">
       <button type="button" id="install-banner-btn" class="btn-primary" onclick="installBannerAction()">Install</button>
       <button type="button" class="btn-secondary" onclick="dismissInstallBanner()" aria-label="Not now">✕</button>
