@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.239';
+const APP_VERSION  = '1.0.240';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -173,7 +173,34 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // App shell (JS / CSS / icons): cache-first, revalidate in background
+  // v1.0.240 — app.js and styles.css are version-coupled to index.html:
+  // the HTML references DOM ids, CSS classes and JS functions that only
+  // exist in the matching build. With HTML network-first but JS/CSS
+  // cache-first, every deploy produced one load where fresh HTML ran
+  // against stale JS/CSS — visibly broken UI until a second reload (the
+  // sync dot rendered as a stray ☁️ emoji, the install banner leaked raw,
+  // etc.). Route these two through the same network-first path as
+  // navigation so all three always come from the same deploy. Cache is
+  // the offline fallback only. Icons / offline.html stay cache-first below.
+  {
+    const p = url.pathname;
+    if (url.origin === self.location.origin && (p === '/app.js' || p === '/styles.css')) {
+      event.respondWith((async () => {
+        const cache = await caches.open(CACHE_NAME);
+        try {
+          const fresh = await fetch(request);
+          if (fresh && fresh.status === 200) cache.put(request, fresh.clone());
+          return fresh;
+        } catch {
+          const cached = await cache.match(request);
+          return cached || Response.error();
+        }
+      })());
+      return;
+    }
+  }
+
+  // App shell (icons / offline page / other static): cache-first, revalidate in background
   event.respondWith(
     caches.open(CACHE_NAME).then(async cache => {
       const cached = await cache.match(request);

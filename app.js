@@ -20635,15 +20635,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.239 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.240 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '📲 Install prompt. If you use Kessen in a mobile browser, you\'ll get a one-time nudge to add it to your home screen — full-screen app, faster launch, push notifications. Android shows a real Install button; iOS explains the Share → Add to Home Screen path. Dismiss and it won\'t ask again for a month. (Not shown if you\'re already using the Play Store app.)',
-    '📊 Your Kessen stats. Manage tab now shows a tally of which features you use — battles, modes, tabs, moods, social features. Just counts, no titles, no timestamps per action. It syncs with your cloud save so it survives device switches. This is also what helps decide which features to invest in vs. retire — anonymous usage totals, nothing personal.',
+    '🔧 Updates now land cleanly. Previously the first load after an update could show new layout with old code behind it — buttons in odd places, a stray ☁️ next to your avatar — until you refreshed again. Fixed: the app\'s core files are now always fetched together, so what you see on the first load is the real thing.',
+    '📱 Tidier header on phones. The streak badge no longer gets squashed into a two-line pill, the "N battles · M anime" text is hidden on small screens (it\'s still on the Rankings and Battles tabs), and the cloud-sync indicator is now a small dot on your avatar\'s corner instead of an icon that shoved everything sideways whenever a save fired.',
+    '🔔 "What\'s new" now actually shows up. A bug in the last update wrote the notification into the wrong storage slot, so nobody saw the 1.0.239 notes. Fixed, and the missing entry is recovered — you may see it appear alongside this one.',
+    '⚡ Tapping a Tower push after the app was fully closed no longer leaves the "you finished X" notification lingering in the bell with a badge. That path was skipping the dismiss because the notification list hadn\'t loaded yet when the tap was handled.',
+    '📄 Privacy policy updated to describe everything the app stores — including that turning on Tower-retry notifications stores your AniList token on the server so it can check your list while the app is closed (and deletes it when you turn that off). Full text at kessen.co.uk/privacy.html.',
   ],
 };
 
