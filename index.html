@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.242" />
+  <meta name="version" content="1.0.243" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1034,8 +1034,9 @@
       <button class="btn-keep-ranking" onclick="resumeBattle()">▶ Keep Ranking</button>
       <p id="results-subtitle"></p>
       <div class="results-util-bar">
-        <button class="util-btn" onclick="shareRankings()">🔗 Share</button>
-        <button class="util-btn" onclick="showHelp()">❓ Help</button>
+        <!-- v1.0.243 — labels hide on phones (icon-only squares next to Keep Ranking) -->
+        <button class="util-btn" onclick="shareRankings()" aria-label="Share your tier list" title="Share your tier list">🔗<span class="util-label"> Share</span></button>
+        <button class="util-btn" onclick="showHelp()" aria-label="Help" title="Help">❓<span class="util-label"> Help</span></button>
       </div>
     </div>
 
@@ -1086,11 +1087,12 @@
            migrated into picker chips on first load post-upgrade. -->
       <div id="search-picker-row" class="search-picker-row">
         <span class="search-picker-label" aria-hidden="true">Filters:</span>
-        <button type="button" class="search-pick-btn" data-category="genre"  onclick="openSearchPicker('genre',  this)" aria-haspopup="menu" aria-expanded="false">🎭 + Genre</button>
-        <button type="button" class="search-pick-btn" data-category="studio" onclick="openSearchPicker('studio', this)" aria-haspopup="menu" aria-expanded="false">🎬 + Studio</button>
-        <button type="button" class="search-pick-btn" data-category="year"   onclick="openSearchPicker('year',   this)" aria-haspopup="menu" aria-expanded="false">📅 + Year</button>
-        <button type="button" class="search-pick-btn" data-category="format" onclick="openSearchPicker('format', this)" aria-haspopup="menu" aria-expanded="false">📺 + Format</button>
-        <button type="button" class="search-pick-btn" data-category="length" onclick="openSearchPicker('length', this)" aria-haspopup="menu" aria-expanded="false">📏 + Length</button>
+        <!-- v1.0.243 — emoji in a span so phones can drop it and fit all five chips on one row -->
+        <button type="button" class="search-pick-btn" data-category="genre"  onclick="openSearchPicker('genre',  this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">🎭 </span>+ Genre</button>
+        <button type="button" class="search-pick-btn" data-category="studio" onclick="openSearchPicker('studio', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">🎬 </span>+ Studio</button>
+        <button type="button" class="search-pick-btn" data-category="year"   onclick="openSearchPicker('year',   this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📅 </span>+ Year</button>
+        <button type="button" class="search-pick-btn" data-category="format" onclick="openSearchPicker('format', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📺 </span>+ Format</button>
+        <button type="button" class="search-pick-btn" data-category="length" onclick="openSearchPicker('length', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📏 </span>+ Length</button>
         <button type="button" class="search-clear-btn" id="search-clear-btn" onclick="clearSearchChips()" style="display:none">⤫ Clear filters</button>
         <div id="search-picker-popover" class="search-picker-popover" hidden></div>
       </div>
@@ -1136,7 +1138,7 @@
           </div>
         </div>
         <div id="ranking-controls-right">
-          <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()">〰️ Fuzzy only</button>
+          <button class="fuzzy-filter-btn" id="fuzzy-filter-btn" onclick="toggleFuzzyFilter()" title="Show only anime flagged as fuzzy">〰️ Fuzzy<span class="fuzzy-label-long"> only</span></button>
           <button class="view-btn" id="franchise-btn" onclick="toggleFranchiseMode()" title="Group sequels and seasons together" aria-pressed="false">⛓ Franchise</button>
           <div id="view-toggle-wrap">
             <button class="view-btn active" id="view-grid-btn" onclick="setRankingView('grid')" title="Grid view" aria-label="Grid view" aria-pressed="true">⊞</button>
@@ -1668,12 +1670,12 @@
   </div>
 
   <!-- LONG-PRESS FIRST-USE TIP (§5.3) — shown once on touch devices -->
-  <div id="long-press-tip" style="display:none">
-    <h5>💡 Tip</h5>
-    <p style="font-size:0.82rem;color:#c9d1d9;margin-bottom:10px">
-      <b>Long-press a card</b> (or tap the <b>⋯ More</b> chip) to open fuzzy / synopsis / exclude options.
-    </p>
-    <button class="btn-secondary" style="font-size:0.78rem;padding:5px 16px" onclick="_markLongPressTipSeen()">Got it ✓</button>
+  <!-- v1.0.243 — compact one-row bar pinned to the bottom edge on phones, so
+       it can't sit on top of the Skip / Rankings / Mode buttons (which it did
+       at bottom:110px on an 812px-tall phone). -->
+  <div id="long-press-tip" style="display:none" role="status">
+    <p class="long-press-tip-text">💡 <b>Long-press a card</b> (or tap <b>⋯ More</b>) for Fuzzy, About and Not seen.</p>
+    <button class="btn-secondary long-press-tip-btn" onclick="_markLongPressTipSeen()">Got it ✓</button>
   </div>
 
   <!-- TASTE STORY MODAL -->

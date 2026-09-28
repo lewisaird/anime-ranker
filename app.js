@@ -5748,6 +5748,11 @@ function showResults() {
   hide('battle-screen');
   hide('username-screen');
   hide('tower-summary-screen');
+  // v1.0.243 — both first-use tips are position:fixed and used to float over
+  // the Rankings page after leaving the battle screen. resumeBattle brings
+  // them back if they're still unseen.
+  const kbTip = byId(IDS.kbFirstTip); if (kbTip) kbTip.style.display = 'none';
+  const lpTip = byId(IDS.longPressTip); if (lpTip) lpTip.style.display = 'none';
   _maybeShowWeeklySummary();  // v1.0.238 — pops the recap card once per completed week
 
   // Reset search and fuzzy filter — preserve sort, view, and format filters
@@ -6004,6 +6009,7 @@ function resumeBattle() {
   hide('results-screen');
   show('battle-screen');
   maybeShowKbTip();
+  maybeShowLongPressTip(); // v1.0.243 — re-show if still unseen (showResults hides it)
 }
 
 function exportRankings() {
@@ -19027,7 +19033,7 @@ function maybeShowLongPressTip() {
   catch { seen = true; }
   if (seen) return;
   const tip = byId(IDS.longPressTip);
-  if (tip) tip.style.display = 'block';
+  if (tip) tip.style.display = 'flex'; // v1.0.243 — one-row bar (text + button)
 }
 
 // Wire long-press on both battle cards once the DOM is ready. Idempotent via
@@ -20840,18 +20846,17 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.242 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.243 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '⚔ Battles now show their result. Pick a winner and it glows green while both cards float their ELO change (+14 / −14) before the next pair slides in — about half a second. Blind mode keeps the glow and hides the numbers; Tower rounds get it too. Before, the next pair replaced the current one in the same frame, so every click felt identical.',
-    '🔗 Shared tier lists now say what they are. A link to your top 20 used to open on a bare grid; it now says it was ranked on Kessen and ends with a "Rank your anime" card for whoever you sent it to.',
-    '🧹 Removed: the "Your Kessen stats" panel in Manage (it was showing raw internal counter names — the anonymous usage tallies are still collected and now listed in the privacy policy and your backup file), and the "Tier" sort in Rankings, which produced exactly the ELO order.',
-    '👥 Looking up an AniList or MAL username that doesn\'t exist now says so — "No AniList user called X — check the spelling" — once, instead of "Error: HTTP 404" twice.',
-    '📝 Small ones: Missing says "scanned just now / 5 min ago" instead of "scan from 0m ago", and the Help text is back in step with the app (the Filter popover\'s watch-status toggles, the current sort names, what the bell actually shows).',
+    '📱 All six tabs are visible on phones. Rankings · Battles · Profile on one row, Discover · Social · Manage on the next. Before, the last two were off the right edge of a scrolling strip with nothing to say they existed.',
+    '📱 The Rankings page starts higher on phones. Keep Ranking, Share and Help now sit on one row, the sentence under the button is gone, the "Filters:" label and "Sort:" prefix are dropped, and the sort dropdown, Fuzzy, Franchise and view toggles share a single row — the first anime card is roughly 200px nearer the top.',
+    '📱 Sign in first on phones. The landing page put three explainer cards above the AniList / MAL buttons, which landed below the fold; the buttons and Guest Mode now come straight after the title, with the explainer underneath.',
+    '💡 The "long-press a card" tip on touch screens is a slim bar along the bottom edge instead of a box sitting on top of the Skip / Rankings / Mode buttons, and both first-use tips now clear off when you open Rankings.',
   ],
 };
 

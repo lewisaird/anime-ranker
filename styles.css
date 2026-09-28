@@ -346,6 +346,17 @@
     @media (max-width: 520px) {
       .onboarding-steps { flex-direction: column; }
     }
+    /* v1.0.243 — On phones the sign-in cards come first. The three explainer
+       cards were pushing the AniList button below the fold (~1,460px down on
+       a 375×812 screen); now the order is title → sign in / guest → explainer
+       → privacy. Done with flex order so the markup (and desktop) is untouched. */
+    @media (max-width: 600px) {
+      #username-screen { padding: 20px 0 48px; gap: 12px; }
+      .onboarding-divider { order: 1; }
+      .onboarding-steps   { order: 2; gap: 8px; }
+      .onboarding-step    { padding: 12px 10px; }
+      #username-screen > p:last-child { order: 3; }
+    }
 
     .input-row {
       display: flex;
@@ -1067,7 +1078,27 @@
       animation: fadeInUp 0.3s ease;
       max-width: 90vw;
     }
-    #long-press-tip h5 { font-size: 0.85rem; color: var(--accent-blue); margin-bottom: 8px; }
+    /* v1.0.243 — long-press tip is a compact bar: text + "Got it" in one row,
+       pinned just above the bottom edge (it only ever shows on touch screens). */
+    #long-press-tip {
+      bottom: calc(12px + env(safe-area-inset-bottom));
+      left: 12px;
+      right: 12px;
+      transform: none;
+      max-width: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      text-align: left;
+      animation-name: fadeInUpBar;
+    }
+    .long-press-tip-text { flex: 1; font-size: 0.8rem; color: var(--text-primary); line-height: 1.35; margin: 0; }
+    .long-press-tip-btn { flex-shrink: 0; font-size: 0.78rem; padding: 6px 12px; white-space: nowrap; }
+    @keyframes fadeInUpBar {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
     @keyframes fadeInUp {
       from { opacity:0; transform: translateX(-50%) translateY(10px); }
       to   { opacity:1; transform: translateX(-50%) translateY(0); }
@@ -5273,31 +5304,66 @@
            · On the franchise-sort dropdown specifically, hide the prefix
              text ("Franchise sort:") and keep just the ⛓ icon so both
              dropdowns are similar widths when franchise mode is on. */
-      .search-pick-btn { font-size: 0.75rem; padding: 5px 11px; }
-      .sort-menu-btn {
+      /* v1.0.243 — Filters row: drop the "Filters:" label and tighten the
+         chips so all five fit on one line at 375px. */
+      .search-picker-label { display: none; }
+      .search-picker-row { gap: 5px; }
+      .search-pick-btn { font-size: 0.72rem; padding: 5px 8px; }
+      .search-pick-btn .pick-emoji { display: none; }
+      /* v1.0.243 — Sort row: the sort dropdown drops its "Sort:" prefix and
+         takes whatever width is left (flex: 1), so the label changing from
+         "ELO" to "AniList Avg" never reflows the toggles beside it, and the
+         whole toolbar sits on one row instead of two. */
+      /* Main sort wrap only — the franchise variant keeps its display:none /
+         body.franchise-mode-on toggle from the base rules. */
+      .sort-menu-wrap:not(.sort-menu-franchise) { flex: 1; display: flex; min-width: 0; }
+      .sort-menu-wrap:not(.sort-menu-franchise) .sort-menu-btn {
+        flex: 1;
+        min-width: 104px;          /* never collapses; "AniList Avg ↓ ▾" fits */
         font-size: 0.78rem;
-        padding: 5px 10px 5px 12px;
-        min-width: 138px;          /* fits "Sort: AniList Avg ▾" comfortably */
-        justify-content: flex-start;
+        padding: 6px 8px 6px 10px;
+        justify-content: space-between;
       }
-      .sort-menu-franchise .sort-menu-btn {
-        min-width: 96px;           /* tighter — franchise sort labels are short */
-      }
+      .sort-menu-wrap:not(.sort-menu-franchise) .sort-menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sort-menu-wrap:not(.sort-menu-franchise) .sort-menu-btn > .sort-menu-label-prefix { display: none; }
+      .sort-menu-franchise .sort-menu-btn { min-width: 84px; font-size: 0.78rem; padding: 6px 8px; }
       #ranking-controls-right { margin-left: 0; }
-      .fuzzy-filter-btn { padding: 5px 9px; }
-      .view-btn { padding: 4px 8px; }
+      .fuzzy-filter-btn { padding: 6px 8px; }
+      .fuzzy-filter-btn .fuzzy-label-long { display: none; }
+      .view-btn { padding: 5px 8px; }
       /* Franchise sort prefix: just the ⛓ icon on mobile — the dropdown
          label ("Top ELO" / "Members" / "—") plus the brand-blue left border
          already say "this is the franchise variant". */
       .sort-menu-franchise .sort-menu-prefix-text { display: none; }
 
-      /* ── Results util bar — allow wrapping ── */
-      .results-util-bar { flex-wrap: wrap; }
-      .util-btn { font-size: 0.72rem; padding: 5px 9px; }
+      /* ── Results hero on phones (v1.0.243) ──
+         One row: [▶ Keep Ranking] [🔗] [❓]. The sentence under the button
+         and the labelled Share/Help buttons cost ~110px of the first screen
+         on a 375px phone; the rankings themselves started 575px down. */
+      .results-hero {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .btn-keep-ranking { flex: 1; margin-bottom: 0; padding: 12px 16px; font-size: 1rem; }
+      #results-subtitle { display: none; }
+      .results-util-bar { margin-top: 0; gap: 6px; flex-wrap: nowrap; }
+      .results-util-bar .util-btn { font-size: 1rem; padding: 0; width: 42px; height: 42px; line-height: 1; border-radius: 8px; }
+      .results-util-bar .util-label { display: none; }
 
-      /* ── Tab bar — let tabs scroll naturally instead of squashing ── */
-      .results-tabs { gap: 4px; padding: 3px; }
-      .res-tab { flex: 0 0 auto; padding: 7px 10px; font-size: 0.75rem; }
+      /* ── Tab bar on phones (v1.0.243): two rows of three, all six visible.
+         The old single scrolling row hid Social and Manage past the right
+         edge with no scrollbar and no hint; Discover looked like the last tab. */
+      .results-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+        padding: 4px;
+        overflow: visible;
+        margin-bottom: 14px;
+      }
+      .res-tab { flex: none; padding: 8px 4px; font-size: 0.78rem; text-align: center; }
 
       /* ── Stats tab ── */
       .stats-grid { grid-template-columns: 1fr 1fr; }
