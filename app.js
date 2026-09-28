@@ -2193,26 +2193,23 @@ let _loadCancelTimer = null; // setTimeout handle — reveals cancel button afte
 
 function _setSyncIndicator(state) {
   // state: 'saving' | 'saved' | 'error' | 'hidden'
+  // v1.0.239 — the indicator is now a small status dot on the avatar's
+  // corner (see .sync-dot in styles.css), not an inline ☁️ in the header
+  // row. It has no layout footprint, so showing/hiding it can't shift the
+  // streak badge or leave a gap. Only visible while something is
+  // happening: pulsing grey during a save, green for ~3s after, red and
+  // persistent on error. Idle = nothing shown.
   const el = byId(IDS.cloudSyncIndicator);
   if (!el) return;
-  // v1.0.239 — toggle visibility, not display. The indicator sits in the
-  // header's right-anchored cluster; with display:none ↔ inline its
-  // appearance grew the cluster leftward and shoved the streak badge and
-  // progress text sideways every time a save fired mid-battle. With a
-  // fixed-width span that's merely invisible when idle, nothing moves.
-  if (!_cloudSyncEnabled) {
-    // No cloud → the icon can never appear; don't reserve header room for it
-    // (matters on narrow phones). Guests and offline-only users land here.
+  if (state === 'hidden' || !_cloudSyncEnabled) {
     el.style.display = 'none';
     el.classList.remove('sync-pulse');
     return;
   }
-  el.style.display = 'inline-block';
-  if (state === 'hidden') { el.style.visibility = 'hidden'; el.classList.remove('sync-pulse'); return; }
-  el.style.visibility = 'visible';
-  if (state === 'saving') { el.textContent = '☁️'; el.title = 'Saving…';     el.style.color = '#8b949e'; el.classList.add('sync-pulse'); }
-  if (state === 'saved')  { el.textContent = '☁️'; el.title = 'Synced';      el.style.color = '#3fb950'; el.classList.remove('sync-pulse'); }
-  if (state === 'error')  { el.textContent = '⚠️'; el.title = 'Sync error';  el.style.color = '#f85149'; el.classList.remove('sync-pulse'); }
+  el.style.display = 'block';
+  if (state === 'saving') { el.title = 'Saving…';    el.style.background = '#8b949e'; el.classList.add('sync-pulse'); }
+  if (state === 'saved')  { el.title = 'Synced';     el.style.background = '#3fb950'; el.classList.remove('sync-pulse'); }
+  if (state === 'error')  { el.title = 'Sync error'; el.style.background = '#f85149'; el.classList.remove('sync-pulse'); }
 }
 
 // v1.0.210 — format a relative time like "just now", "2 min ago", "3 h ago".

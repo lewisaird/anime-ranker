@@ -3317,6 +3317,27 @@
     /* Avatar dropdown shared styles */
     .avatar-badge-wrap { position: relative; cursor: pointer; flex-shrink: 0; }
     .avatar-badge-wrap img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; display: block; }
+
+    /* v1.0.239 — Cloud-sync status dot on the avatar's corner. Replaces the
+       inline ☁️ that used to sit in the header row (which either shoved the
+       streak badge sideways when it appeared, or — after the "reserve the
+       space" fix — left a visible hole on phones). A corner dot has zero
+       layout footprint. Colour is set by _setSyncIndicator; the ring
+       matches the header background so the dot reads as sitting on top of
+       the avatar rather than floating beside it. */
+    .sync-dot {
+      position: absolute;
+      right: -2px;
+      bottom: -2px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 2px solid var(--bg-secondary);
+      background: #8b949e;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .sync-dot.sync-pulse { animation: sync-pulse 1.1s ease-in-out infinite; }
     .avatar-dropdown {
       display: none;
       position: absolute;
@@ -5275,7 +5296,11 @@
 
       /* ── Header: avatar only — name + logout live in Manage tab ── */
       header { padding: 10px 14px; }
-      #progress-info { font-size: 0.75rem; }
+      /* v1.0.239 — hide the "N battles · M anime" text on phones. Seven
+         items in a ~360px row was too many: this text was truncating to
+         "367 ani…" and squeezing the streak badge into a two-line pill.
+         The counts are still on the Rankings and Battles tabs. */
+      #progress-info { display: none; }
 
       /* ── Manage tab ── */
       /* v1.0.209 — center the button text on mobile. Desktop keeps the

@@ -106,18 +106,21 @@
   <div style="display:flex;align-items:center;gap:10px;">
     <span id="progress-info"></span>
     <!-- v1.0.238 — Daily battle streak badge. Hidden by default; _renderDailyStreakBadge
-         reveals it once the user has current > 0. Sits next to progress-info so the two
-         session-context bits read together. -->
-    <span id="daily-streak-badge" style="display:none;font-size:0.75rem;color:#e3b341;background:rgba(227,179,65,0.12);border:1px solid rgba(227,179,65,0.35);border-radius:12px;padding:2px 8px;line-height:1;font-weight:600" title=""></span>
-    <!-- v1.0.239 — once cloud sync is on, this reserves its width even when
-         idle (visibility, not display) so the streak badge / progress text
-         don't shift when a save fires. Starts display:none; _setSyncIndicator
-         switches it to inline-block for cloud users. -->
-    <span id="cloud-sync-indicator" style="display:none;width:1.1em;text-align:center;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
+         reveals it once the user has current > 0.
+         v1.0.239 — white-space:nowrap + flex-shrink:0 so it can never be squeezed
+         into a two-line "🔥 / 1d" pill when the header row is tight on phones. -->
+    <span id="daily-streak-badge" style="display:none;white-space:nowrap;flex-shrink:0;font-size:0.75rem;color:#e3b341;background:rgba(227,179,65,0.12);border:1px solid rgba(227,179,65,0.35);border-radius:12px;padding:2px 8px;line-height:1;font-weight:600" title=""></span>
     <button id="notif-bell" onclick="openNotifCentre()" title="Notification Centre" aria-label="Notification Centre" style="display:none">
       🔔
       <span id="notif-badge" style="display:none"></span>
     </button>
+    <!-- v1.0.239 — Avatar slot. Wraps both account badges (only one is ever
+         visible) so the cloud-sync status dot can overlay whichever is
+         showing. The dot lives here, at the avatar's corner, instead of in
+         the header row — zero horizontal footprint, so it can neither shove
+         the streak badge sideways when it appears nor leave a reserved hole
+         when it doesn't. -->
+    <div id="avatar-slot" style="position:relative;flex-shrink:0;display:flex">
     <div id="auth-header-badge" class="avatar-badge-wrap" onclick="toggleAvatarMenu(event,'auth')" role="button" tabindex="0" title="Account menu" aria-haspopup="true" aria-expanded="false">
       <img id="auth-hdr-avatar" src="" alt="Profile" />
       <div class="avatar-dropdown" id="auth-avatar-dropdown" onclick="event.stopPropagation()">
@@ -131,6 +134,11 @@
         <span class="avatar-dropdown-name" id="mal-hdr-name"></span>
         <button class="avatar-dropdown-logout" onclick="logoutMAL();closeAvatarMenus()">Logout</button>
       </div>
+    </div>
+    <!-- Cloud-sync status dot. Hidden unless something is happening:
+         pulsing while saving, green for a moment after, red on error.
+         Driven by _setSyncIndicator. -->
+    <span id="cloud-sync-indicator" class="sync-dot" style="display:none" title="Cloud sync status" aria-hidden="true"></span>
     </div>
     <button class="btn-secondary" id="change-user-btn" onclick="changeUser()" style="display:none;font-size:0.8rem;padding:6px 12px;">⇄ Change User</button>
   </div>
