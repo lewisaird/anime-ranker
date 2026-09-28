@@ -34,27 +34,39 @@
   <a class="back" href="/">← Back to Kessen</a>
 
   <h1>Privacy Policy</h1>
-  <p class="subtitle">Last updated: May 2026</p>
+  <p class="subtitle">Last updated: September 2026</p>
 
   <p>Kessen is a personal anime ranking tool. This page explains what data is stored when you use it, and how to have it removed.</p>
 
   <h2>What we store</h2>
   <p>Kessen stores the following data, and nothing else:</p>
   <ul>
-    <li><strong>Your rankings and battle history</strong> — your ELO scores, wins/losses, and battle history for each anime you have ranked.</li>
+    <li><strong>Your rankings and battle history</strong> — your ELO scores, wins/losses, and battle history for each anime you have ranked, plus your daily streak and weekly battle counts.</li>
     <li><strong>Your account identifier</strong> — your numeric AniList user ID or MyAnimeList user ID, used as a storage key to link your rankings to your account. We do not store your email address, password, or any personal information beyond this ID.</li>
     <li><strong>Your display name and avatar URL</strong> — fetched from AniList or MyAnimeList at login and stored locally in your browser to display your profile badge. These are not sent to our servers.</li>
+    <li><strong>Your notification list</strong> — the alerts shown under the bell icon (for example "you finished X — battle it in the Tower?"), so they stay in sync across your devices.</li>
+    <li><strong>Anonymous usage counts</strong> — a tally of which features you use, such as how many times you have opened the Discover tab or started a Tower run. These are plain counts: no anime titles, no timestamps per action, nothing that identifies what you watched. You can see exactly what is recorded under <strong>Manage → Your Kessen stats</strong>. We use them only to decide which features to improve or retire.</li>
+    <li><strong>Push notification data</strong> — only if you turn notifications on. See the section below.</li>
   </ul>
 
   <h2>Where it's stored</h2>
   <ul>
     <li><strong>In your browser</strong> — your session data (rankings, battle history) is saved to <code>localStorage</code> on your device. Clearing your browser data removes it.</li>
-    <li><strong>In Netlify Blob Storage</strong> — if you are logged in via AniList or MAL OAuth, your session is also backed up to Netlify's hosted blob storage, keyed by your account ID. This enables your rankings to sync across devices. Netlify's privacy policy applies to this storage: <a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">netlify.com/privacy</a>.</li>
-    <li><strong>In Google Firebase Realtime Database</strong> — only when you actively use a multiplayer feature (Watch Together or Live Challenge). See the section below for what is stored and for how long.</li>
+    <li><strong>In Netlify Blob Storage</strong> — if you are logged in via AniList or MAL OAuth, your session (rankings, battle history, notification list, usage counts) is also backed up to Netlify's hosted blob storage, keyed by your account ID. This enables your rankings to sync across devices. If you turn on push notifications, the data described in the <em>Push notifications</em> section below is stored here too. Netlify's privacy policy applies to this storage: <a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">netlify.com/privacy</a>.</li>
+    <li><strong>In Google Firebase Realtime Database</strong> — for two things: keeping your notification list in sync between your devices while you are logged in, and coordinating multiplayer sessions (Watch Together or Live Challenge) when you actively start or join one. See the sections below for what is stored and for how long.</li>
   </ul>
 
+  <h2>Push notifications</h2>
+  <p>Notifications are off by default. If you turn them on (bell icon → push settings), Kessen stores the following in Netlify Blob Storage so that it can deliver them:</p>
+  <ul>
+    <li><strong>Your browser's push subscription</strong> — the endpoint address and encryption keys your browser generates for receiving notifications, one per device, along with that device's browser identifier string so we can tell devices apart.</li>
+    <li><strong>Which notification types you have enabled.</strong></li>
+    <li><strong>For "Tower retry" notifications only (AniList accounts):</strong> to notice when you finish an anime while Kessen is closed, our server checks your AniList list every 15 minutes. To do that it needs to act on your behalf, so <strong>we store your AniList access token on our server</strong> for as long as this notification type is switched on. We also keep the list of AniList IDs of anime you have already been notified about, so you are not notified twice. The token is used only to read your anime list; it is never logged or shared.</li>
+  </ul>
+  <p>Turning off "Tower retry" deletes the stored token and completion list immediately. Turning off all notifications, or removing the last device, deletes the whole push record. This data is also removed by <strong>Delete all my data</strong>.</p>
+
   <h2>Multiplayer (Firebase) data</h2>
-  <p>Kessen's multiplayer features (Watch Together and Live Challenge) use Google's Firebase Realtime Database to coordinate state between players. This is only used when you actively start or join a multiplayer session — Firebase is not contacted for solo battling, profile viewing, or any other part of the app.</p>
+  <p>Kessen's multiplayer features (Watch Together and Live Challenge) use Google's Firebase Realtime Database to coordinate state between players. Session data is only written when you actively start or join a multiplayer session. Outside of multiplayer, the only other thing Firebase is used for is syncing your notification list between your devices (see <em>What we store</em>); it is not used for solo battling or profile viewing.</p>
   <p>When you create or join a session, the following is written to Firebase:</p>
   <ul>
     <li><strong>Your display name</strong> as typed into the session lobby.</li>
@@ -65,13 +77,13 @@
   <p>Data is retained for the duration of the session and is removed when the session ends or expires. We do not store transcripts of completed games on Firebase. Firebase's privacy policy applies to this storage: <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">firebase.google.com/support/privacy</a>.</p>
 
   <h2>Authentication tokens</h2>
-  <p>OAuth access tokens from AniList and MyAnimeList are stored only in your browser's <code>localStorage</code>. They are sent to our Netlify Functions solely to verify your identity when reading or writing your saved rankings — they are never logged, shared, or stored on our servers.</p>
+  <p>OAuth access tokens from AniList and MyAnimeList are stored in your browser's <code>localStorage</code>. They are sent to our Netlify Functions to verify your identity when reading or writing your saved rankings, and are not retained by those functions. The one exception is described above under <em>Push notifications</em>: if you turn on "Tower retry" notifications, your AniList token is stored on our server so that we can check your list while the app is closed, and is deleted as soon as you turn that notification type off. Tokens are never logged or shared.</p>
 
   <h2>What we don't do</h2>
   <ul>
     <li>We do not sell or share your data with third parties.</li>
-    <li>We do not use analytics, advertising trackers, or cookies.</li>
-    <li>We do not store your watch history or scores from AniList or MyAnimeList — only the ELO rankings you build within Kessen.</li>
+    <li>We do not use third-party analytics, advertising trackers, or cookies. The only usage data we keep is the anonymous feature-count tally described under <em>What we store</em>, which lives in your own cloud save and nowhere else.</li>
+    <li>We do not store your watch history or scores from AniList or MyAnimeList — only the ELO rankings you build within Kessen. The one exception is the "already notified" list of completed-anime IDs kept for Tower-retry notifications, described above, which exists solely to avoid sending you the same notification twice.</li>
   </ul>
 
   <h2>Third-party services</h2>
@@ -79,12 +91,14 @@
   <ul>
     <li><a href="https://anilist.co/terms" target="_blank" rel="noopener">AniList</a> — for login, fetching your anime list, and metadata.</li>
     <li><a href="https://myanimelist.net/about/privacy_policy" target="_blank" rel="noopener">MyAnimeList</a> — for login and fetching your anime list.</li>
-    <li><a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">Netlify</a> — for hosting and cloud save storage.</li>
+    <li><a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">Netlify</a> — for hosting, cloud save storage, and push notification delivery.</li>
+    <li><a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">Google Firebase</a> — for notification-list sync and multiplayer sessions.</li>
   </ul>
 
   <h2>Deleting your data</h2>
   <p>The easiest way to delete your data is directly from within the app. Open your rankings, go to the <strong>Manage</strong> tab, scroll to the Danger Zone, and press <strong>Delete all my data</strong>. This removes your rankings from your device and from cloud storage immediately.</p>
   <p>If you are unable to access the app, email <a href="mailto:feedback@kessen.co.uk">feedback@kessen.co.uk</a> with your AniList or MyAnimeList username and we will remove your cloud data within 7 days. Please note that any data remaining on your device (such as in your browser or the installed app) will need to be cleared manually by clearing your browser or app data on your device.</p>
+
   <h2>Changes to this policy</h2>
   <p>If this policy changes in a meaningful way, a notice will be posted on the site. The date at the top of this page will always reflect the most recent update.</p>
 

@@ -376,7 +376,7 @@ const IDS = Object.freeze({
   lcHistoryListLobby:     'lc-history-list-lobby',
   moodsSection:           'moods-section',
   newBadgeTaste:          'new-badge-taste',
-  recsTabMoods:           'recs-tab-moods',
+  // v1.0.238 — recsTabMoods removed: Moods tab folded into For You mood chips.
   // v1.0.237 — Missing / franchise-gaps sub-tab
   recsTabGaps:            'recs-tab-gaps',
   gapsSection:            'gaps-section',
@@ -390,6 +390,14 @@ const IDS = Object.freeze({
   weeklySummaryCard:      'weekly-summary-card',
   foryouMoodChips:        'foryou-mood-chips',
   foryouMoodClear:        'foryou-mood-clear',
+  // v1.0.238 — mobile bottom-sheet backdrops for the two battle popovers
+  filterPopoverBackdrop:  'filter-popover-backdrop',
+  modePopoverBackdrop:    'mode-popover-backdrop',
+  // v1.0.239 — usage stats panel in Manage + PWA install banner
+  manageStatsBody:        'manage-stats-body',
+  installBanner:          'install-banner',
+  installBannerText:      'install-banner-text',
+  installBannerBtn:       'install-banner-btn',
   foryouRecsHeading:      'foryou-recs-heading',
   foryouRecsHeadingText:  'foryou-recs-heading-text',
   gapsSearchInput:        'gaps-search-input',
@@ -543,6 +551,62 @@ let _weeklyStats = {
   lastCompletedWeek: null,
   summaryShownFor:   null,
 };
+
+// v1.0.239 — LIGHTWEIGHT USAGE METRICS
+// Answers "which features actually get used?" so decisions about keeping,
+// cutting or investing in features (Predict / Rivalries / Collab / Live
+// Challenge / Missing / modes) can be data-driven instead of guessed.
+//   counts:     { 'tab.rankings': 12, 'discover.gaps': 3, 'mode.tower': 5, … }
+//   firstSeen:  ms epoch of first recorded event on this account
+//   lastSeen:   ms epoch of most recent event
+//   sessions:   count of app boots (incremented once per page load)
+// Deliberately NOT stored: per-event timestamps, anime IDs, anything that
+// would identify what the user watched. Just feature-usage tallies.
+let _metrics = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };
+let _metricsSaveTimer = null;
+let _metricsSessionCounted = false;  // once per page load
+
+function _metricsLoad() {
+  try {
+    const raw = localStorage.getItem(KESSEN_KEYS.data.metrics(saveKey));
+    const parsed = raw ? JSON.parse(raw) : null;
+    _metrics = (parsed && typeof parsed === 'object')
+      ? { counts: parsed.counts || {}, firstSeen: parsed.firstSeen || null, lastSeen: parsed.lastSeen || null, sessions: parsed.sessions || 0 }
+      : { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };
+  } catch { _metrics = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 }; }
+}
+function _metricsSave() {
+  try { localStorage.setItem(KESSEN_KEYS.data.metrics(saveKey), JSON.stringify(_metrics)); } catch { /* storage full/disabled — accept loss */ }
+}
+// Debounced so a burst of events (e.g. rapid battles) doesn't hammer
+// localStorage. 1.5s trailing edge.
+function _metricsSaveDebounced() {
+  clearTimeout(_metricsSaveTimer);
+  _metricsSaveTimer = setTimeout(_metricsSave, 1500);
+}
+// The one function every instrumented call site uses. Cheap enough to call
+// freely; does nothing destructive if metrics haven't loaded yet.
+function _metric(key) {
+  if (!key) return;
+  const now = Date.now();
+  _metrics.counts[key] = (_metrics.counts[key] || 0) + 1;
+  if (!_metrics.firstSeen) _metrics.firstSeen = now;
+  _metrics.lastSeen = now;
+  _metricsSaveDebounced();
+}
+// Merge policy for cloud sync: take the max of each counter. Counters only
+// go up, so max is the conservative "don't lose progress" merge. firstSeen
+// takes min, lastSeen max, sessions max.
+function _metricsMergeFromCloud(cloudM) {
+  if (!cloudM || typeof cloudM !== 'object') return;
+  const cc = cloudM.counts || {};
+  for (const k of Object.keys(cc)) {
+    _metrics.counts[k] = Math.max(_metrics.counts[k] || 0, cc[k] || 0);
+  }
+  if (cloudM.firstSeen && (!_metrics.firstSeen || cloudM.firstSeen < _metrics.firstSeen)) _metrics.firstSeen = cloudM.firstSeen;
+  if (cloudM.lastSeen  && (!_metrics.lastSeen  || cloudM.lastSeen  > _metrics.lastSeen))  _metrics.lastSeen  = cloudM.lastSeen;
+  _metrics.sessions = Math.max(_metrics.sessions || 0, cloudM.sessions || 0);
+}
 
 // ─── TOWER OF POWER ──────────────────────────────────────────────────────────
 let towerMode       = false;
@@ -770,6 +834,14 @@ const KESSEN_KEYS = {
     // cross-device sync merge to filter out items we just dismissed so
     // stale Firebase snapshots can't resurrect them.
     notifTombstones: (key) => `kessen.data.notifTombstones.${key || 'guest'}`,
+    // v1.0.239 — Lightweight usage metrics. Counters only (no timestamps per
+    // event, no PII) — "which tabs / modes / features get used". Local per
+    // user; also rides along in the cloud save so aggregate usage is
+    // visible in Firebase for keep/cut decisions on low-use features.
+    metrics: (key) => `kessen.data.metrics.${key || 'guest'}`,
+    // v1.0.239 — PWA install-prompt dismissal (timestamp). Suppresses the
+    // banner for 30 days after the user says "not now".
+    installPromptDismissed: 'kessen.ui.installPromptDismissed',
     // v1.0.237 — Franchise gaps cache: sequels/prequels/spin-offs of anime
     // in the user's list that they haven't watched yet. Cached per user
     // with a weekly TTL — relations rarely change but new sequels get
@@ -904,6 +976,8 @@ function _clearRankingState() {
   matchupStats      = {};
   _dailyStreak      = { current: 0, longest: 0, lastActiveDate: null };  // v1.0.238
   _weeklyStats      = { currentWeekStart: null, battlesThisWeek: 0, lastCompletedWeek: null, summaryShownFor: null };  // v1.0.238
+  _metrics          = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };  // v1.0.239
+  _metricsSessionCounted = false;
   // v1.0.211 — Clear mode flags + per-mode session state. Without this, a
   // user mid-WSO / Tower / Trio / Battle-Within who Resets and re-fetches
   // ends up in the new session with a stale champion index, trio array, or
@@ -2121,8 +2195,21 @@ function _setSyncIndicator(state) {
   // state: 'saving' | 'saved' | 'error' | 'hidden'
   const el = byId(IDS.cloudSyncIndicator);
   if (!el) return;
-  if (state === 'hidden' || !_cloudSyncEnabled) { el.style.display = 'none'; el.classList.remove('sync-pulse'); return; }
-  el.style.display = 'inline';
+  // v1.0.239 — toggle visibility, not display. The indicator sits in the
+  // header's right-anchored cluster; with display:none ↔ inline its
+  // appearance grew the cluster leftward and shoved the streak badge and
+  // progress text sideways every time a save fired mid-battle. With a
+  // fixed-width span that's merely invisible when idle, nothing moves.
+  if (!_cloudSyncEnabled) {
+    // No cloud → the icon can never appear; don't reserve header room for it
+    // (matters on narrow phones). Guests and offline-only users land here.
+    el.style.display = 'none';
+    el.classList.remove('sync-pulse');
+    return;
+  }
+  el.style.display = 'inline-block';
+  if (state === 'hidden') { el.style.visibility = 'hidden'; el.classList.remove('sync-pulse'); return; }
+  el.style.visibility = 'visible';
   if (state === 'saving') { el.textContent = '☁️'; el.title = 'Saving…';     el.style.color = '#8b949e'; el.classList.add('sync-pulse'); }
   if (state === 'saved')  { el.textContent = '☁️'; el.title = 'Synced';      el.style.color = '#3fb950'; el.classList.remove('sync-pulse'); }
   if (state === 'error')  { el.textContent = '⚠️'; el.title = 'Sync error';  el.style.color = '#f85149'; el.classList.remove('sync-pulse'); }
@@ -2341,6 +2428,9 @@ async function _doCloudSave() {
       dailyStreak: { ..._dailyStreak },  // v1.0.238 — cross-device streak sync
       weeklyStats: { ..._weeklyStats,     // v1.0.238 — cross-device weekly stats
         lastCompletedWeek: _weeklyStats.lastCompletedWeek ? { ..._weeklyStats.lastCompletedWeek } : null },
+      // v1.0.239 — usage metrics ride along so aggregate feature usage is
+      // visible in Firebase. Counters only, no PII. See _metrics definition.
+      metrics: { counts: { ..._metrics.counts }, firstSeen: _metrics.firstSeen, lastSeen: _metrics.lastSeen, sessions: _metrics.sessions },
       savedAt: new Date().toISOString(),
     };
     const body = _isMalCloudSession()
@@ -2459,6 +2549,13 @@ function _applyCloudSaveToMemory(cloud) {
       _dailyStreak.longest = Math.max(_dailyStreak.longest || 0, cloud.dailyStreak.longest || 0);
     }
     _resolveDailyStreakOnLoad();
+  }
+  // v1.0.239 — merge cloud usage metrics (max-merge per counter). Load
+  // local first so the merge has both sides; _metricsLoad is idempotent.
+  if (cloud.metrics && typeof cloud.metrics === 'object') {
+    _metricsLoad();
+    _metricsMergeFromCloud(cloud.metrics);
+    _metricsSave();
   }
   // v1.0.238 — merge cloud weekly stats. Same newest-first logic as the
   // daily streak; if cloud is behind we keep local's higher battle count.
@@ -3695,6 +3792,7 @@ function pickWinner(side) {
   _syncTasteNewBadge();
   _updateDailyStreak();  // v1.0.238 — daily streak counter, mid-session no-op after first decision of the day
   _tickWeeklyStats();    // v1.0.238 — weekly rollover + battle tally
+  _metric('battle');     // v1.0.239 — usage metrics
   // v1.0.211 — Battle Within Franchise auto-completion. No-op when the mode
   // isn't active. Reuses _mKey which is already in scope above.
   _recordBattleWithinPair(wId, lId);
@@ -3753,6 +3851,7 @@ function _updateUndoBtn() {
 }
 
 function undoLast() {
+  _metric('undo');  // v1.0.239 — usage metrics
   if (undoStack.length === 0) return;
   const snap = undoStack.pop();
 
@@ -3858,6 +3957,7 @@ function undoLast() {
 }
 
 function skipBattle() {
+  _metric('skip');  // v1.0.239 — usage metrics
   if (trioMode) { renderTrio(); return; }
   const snap = {
     winnerIdx:  currentA,  // reuse winnerIdx/loserIdx fields for the two anime
@@ -5608,6 +5708,19 @@ function showResults() {
   // Load notification centre and update bell badge; reveal the bell now that a session is active
   _ncLoad();
   _ncUpdateBell();
+  // v1.0.239 — load usage metrics for this user. Session counter bumps once
+  // per boot (guarded so repeated showResults calls don't re-count).
+  if (!_metricsSessionCounted) {
+    _metricsLoad();
+    _metrics.sessions = (_metrics.sessions || 0) + 1;
+    _metricsSave();
+    _metricsSessionCounted = true;
+    // v1.0.239 — PWA install nudge. Android fires beforeinstallprompt
+    // itself; this delayed call covers iOS (no event) and any case where
+    // the event fired before animeList was populated. 8s so the user has
+    // seen the app work before being asked to install it.
+    setTimeout(_maybeShowInstallBanner, 8000);
+  }
   byId(IDS.notifBell).style.display = 'flex';
   // Initialise NEW tab badges (hides any already-seen ones)
   _initNewBadges();
@@ -6562,14 +6675,13 @@ function refreshDiscover() {
 function setRecsTab(tab, fromMood = false) {
   if (!fromMood) _moodRecActive = false; // user switching tabs manually resets mood mode
   recsTab = tab;
+  _metric('discover.' + tab);  // v1.0.239 — usage metrics
   byId(IDS.recsTabForyou).classList.toggle('active', tab === 'foryou');
   byId(IDS.recsTabSeasonal).classList.toggle('active', tab === 'seasonal');
   byId(IDS.recsTabPredict).classList.toggle('active', tab === 'predict');
-  byId(IDS.recsTabMoods)?.classList.toggle('active', tab === 'moods');
   byId(IDS.recsTabGaps)?.classList.toggle('active', tab === 'gaps');
 
   const isPredict = tab === 'predict';
-  const isMoods   = tab === 'moods';
   const isGaps    = tab === 'gaps';
   const sub        = byId(IDS.recsSubText);
   const grid       = byId(IDS.recsGrid);
@@ -6578,9 +6690,9 @@ function setRecsTab(tab, fromMood = false) {
   const gapsSec    = byId(IDS.gapsSection);
   const refreshBtn = byId(IDS.discoverRefreshBtn);
 
-  // v1.0.238 — `isMoods` is retained as dead code for future tab restore,
-  // but no longer selectable as a tab (button removed from HTML). All
-  // mood entry now goes through the chip strip on For You.
+  // v1.0.238 — 'moods' is no longer a selectable tab (button removed from
+  // HTML). All mood entry goes through the chip strip on For You; the
+  // #moods-section container is kept hidden purely as a cache-seed host.
   const specialTab = isPredict || isGaps;
   if (sub)        sub.style.display        = specialTab ? 'none' : '';
   if (grid)       grid.style.display       = specialTab ? 'none' : (grid.style.display || '');
@@ -6999,6 +7111,7 @@ function onGapsFilterChange() {
 }
 
 function refreshFranchiseGaps() {
+  _metric('missing.rescan');  // v1.0.239 — usage metrics
   const btn = byId(IDS.gapsRefreshBtn);
   if (btn) { btn.textContent = '↻ Scanning…'; btn.disabled = true; }
   renderFranchiseGaps({ force: true }).finally(() => {
@@ -7944,6 +8057,7 @@ async function _fetchFriendList(username) {
 
 // ─── COMPATIBILITY ────────────────────────────────────────────────────────────
 async function runCompatibility() {
+  _metric('social.compat');  // v1.0.239 — usage metrics
   const username2 = byId(IDS.compatUsernameInput).value.trim();
   if (!username2) return;
   if (_socialPlatform === 'mal') return _runCompatibilityMal(username2);
@@ -8338,6 +8452,7 @@ function _renderSavedComparisons() {
 let _challengeState = null;
 
 async function openChallengeMode(username, platform) {
+  _metric('social.challenge');  // v1.0.239 — usage metrics
   const modal = byId(IDS.challengeModal);
   modal.style.display = 'flex';
   pushModalBack('challenge', closeChallengeModal);
@@ -9123,6 +9238,112 @@ function _checkSwVersionDiagnostic() {
 }
 _checkSwVersionDiagnostic();
 
+// ─── PWA INSTALL PROMPT — v1.0.239 ──────────────────────────────────────────
+// Nudges mobile-web users to install Kessen to their home screen. Three
+// gates, all must pass:
+//   1. Not already running as an installed app (TWA / standalone PWA).
+//   2. On a mobile-class device (touch + narrow viewport). Desktop users
+//      have the browser's own install affordance and don't need a banner.
+//   3. Not dismissed in the last 30 days.
+// Android/Chrome fires `beforeinstallprompt`; we stash the event and the
+// Install button calls its .prompt(). iOS Safari has no such API, so the
+// banner text explains the Share → Add to Home Screen path and the button
+// just dismisses. Never shown to guests before they've loaded a list — a
+// first-time visitor should see the app work before being asked to
+// install it.
+const INSTALL_DISMISS_MS = 30 * 24 * 60 * 60 * 1000;
+let _deferredInstallPrompt = null;
+let _installBannerShown = false;
+
+function _isRunningInstalled() {
+  try {
+    if (window.matchMedia('(display-mode: standalone)').matches) return true;
+    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
+    if (window.navigator.standalone === true) return true;      // iOS Safari PWA
+    if (document.referrer.startsWith('android-app://')) return true;  // TWA
+  } catch { /* defensive */ }
+  return false;
+}
+function _isMobileClass() {
+  try {
+    const coarse = window.matchMedia('(pointer: coarse)').matches;
+    const narrow = window.matchMedia('(max-width: 820px)').matches;
+    return coarse && narrow;
+  } catch { return false; }
+}
+function _isIOS() {
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function _installDismissedRecently() {
+  try {
+    const ts = Number(localStorage.getItem(KESSEN_KEYS.ui.installPromptDismissed) || 0);
+    return ts && (Date.now() - ts) < INSTALL_DISMISS_MS;
+  } catch { return false; }
+}
+
+// Chrome/Edge/Samsung fire this before their own mini-infobar; calling
+// preventDefault suppresses that and lets us show our banner instead.
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  _maybeShowInstallBanner();
+});
+// If the user installs (via our button or the browser menu), hide the
+// banner and don't ask again.
+window.addEventListener('appinstalled', () => {
+  _deferredInstallPrompt = null;
+  dismissInstallBanner(true);
+  _metric('install.completed');
+});
+
+function _maybeShowInstallBanner() {
+  if (_installBannerShown) return;
+  if (_isRunningInstalled()) return;
+  if (!_isMobileClass()) return;
+  if (_installDismissedRecently()) return;
+  if (!animeList.length) return;   // let them see the app work first
+  const banner = byId(IDS.installBanner);
+  const text   = byId(IDS.installBannerText);
+  const btn    = byId(IDS.installBannerBtn);
+  if (!banner || !text || !btn) return;
+  if (_deferredInstallPrompt) {
+    text.innerHTML = '<strong>Install Kessen</strong> for faster launches, push notifications and a full-screen app.';
+    btn.textContent = 'Install';
+    btn.style.display = '';
+  } else if (_isIOS()) {
+    text.innerHTML = '<strong>Add Kessen to your Home Screen</strong> — tap Share <span aria-hidden="true">⎋</span> then <em>Add to Home Screen</em>.';
+    btn.style.display = 'none';   // no programmatic install on iOS
+  } else {
+    return;   // no install path available on this browser — stay quiet
+  }
+  banner.classList.add('show');
+  _installBannerShown = true;
+  _metric('install.shown');
+}
+async function installBannerAction() {
+  if (!_deferredInstallPrompt) { dismissInstallBanner(); return; }
+  _metric('install.clicked');
+  const ev = _deferredInstallPrompt;
+  _deferredInstallPrompt = null;
+  try {
+    ev.prompt();
+    const choice = await ev.userChoice;
+    if (choice?.outcome !== 'accepted') dismissInstallBanner();
+    // 'accepted' → the appinstalled listener handles cleanup
+  } catch { dismissInstallBanner(); }
+}
+function dismissInstallBanner(installed = false) {
+  const banner = byId(IDS.installBanner);
+  if (banner) banner.classList.remove('show');
+  try {
+    // Installed → suppress for a very long time (effectively forever);
+    // dismissed → 30 days.
+    localStorage.setItem(KESSEN_KEYS.ui.installPromptDismissed, String(installed ? Date.now() + 10 * 365 * 24 * 60 * 60 * 1000 : Date.now()));
+  } catch { /* ignore */ }
+  if (!installed) _metric('install.dismissed');
+}
+
 function _towerClearDeepLink() {
   try {
     const url = new URL(window.location.href);
@@ -9214,6 +9435,7 @@ async function lcRejoinSession() {
 // ── OPEN ──────────────────────────────────────────────────────────────────────
 // Opens the modal and shows the setup panel. Auth state pre-fills username.
 function openLiveChallengeMode() {
+  _metric('social.livechallenge');  // v1.0.239 — usage metrics
   if (!_FIREBASE_READY) {
     showToast('⚠️ Live Challenge is not available right now. Please try again later.');
     return;
@@ -10339,6 +10561,7 @@ function _collabGetStoredSession() {
 }
 
 function openCollabMode() {
+  _metric('social.collab');  // v1.0.239 — usage metrics
   if (_collab?.unsubscribe) _collab.unsubscribe();
   _collab = {
     mode: null,
@@ -14118,6 +14341,7 @@ let activeResultsTab = 'rankings';
 
 function switchResultsTab(tab) {
   activeResultsTab = tab;
+  _metric('tab.' + tab);  // v1.0.239 — usage metrics
   document.querySelectorAll('.res-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
     // Scroll active tab into view on mobile (no-op on desktop)
@@ -14200,6 +14424,55 @@ function renderManageTab() {
   // so the relative time is accurate even if the user just came back to it
   // after an hour. Background ticking handles the per-minute updates.
   _updateCloudSyncTimestamp();
+  _renderManageStats();  // v1.0.239
+}
+
+// v1.0.239 — "Your Kessen stats" panel. Groups the flat counter map into
+// readable sections. Keys not matching any known prefix land in "Other" so
+// a future metric never silently disappears from view.
+function _renderManageStats() {
+  const host = byId(IDS.manageStatsBody);
+  if (!host) return;
+  const c = _metrics.counts || {};
+  const fmtDate = (ms) => ms ? new Date(ms).toLocaleDateString() : '—';
+  const label = (k) => k.split('.').slice(1).join(' · ').replace(/_/g, ' ') || k;
+  const groups = [
+    { title: 'Battles',         keys: ['battle', 'skip', 'undo', 'tower.start'] },
+    { title: 'Modes used',      prefix: 'mode.' },
+    { title: 'Tabs opened',     prefix: 'tab.' },
+    { title: 'Discover',        prefix: 'discover.' },
+    { title: 'Moods picked',    prefix: 'mood.' },
+    { title: 'Social',          prefix: 'social.' },
+    { title: 'Other',           prefix: '' },
+  ];
+  const seen = new Set();
+  const sections = [];
+  for (const g of groups) {
+    let entries;
+    if (g.keys) {
+      entries = g.keys.filter(k => c[k]).map(k => [k, c[k]]);
+    } else if (g.prefix) {
+      entries = Object.entries(c).filter(([k]) => k.startsWith(g.prefix) && !seen.has(k));
+    } else {
+      entries = Object.entries(c).filter(([k]) => !seen.has(k));
+    }
+    entries.forEach(([k]) => seen.add(k));
+    if (!entries.length) continue;
+    entries.sort((a, b) => b[1] - a[1]);
+    const rows = entries.map(([k, v]) => {
+      const name = g.keys ? k.replace('.', ' · ') : label(k);
+      return `<div style="display:flex;justify-content:space-between;gap:12px"><span>${esc(name)}</span><strong>${v}</strong></div>`;
+    }).join('');
+    sections.push(`<div style="margin-bottom:10px"><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;color:#8b949e;margin-bottom:3px">${esc(g.title)}</div>${rows}</div>`);
+  }
+  const summary = `
+    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle)">
+      <span>Sessions</span><strong>${_metrics.sessions || 0}</strong>
+    </div>
+    <div style="display:flex;justify-content:space-between;gap:12px;font-size:0.75rem;color:#8b949e;margin-bottom:12px">
+      <span>Since ${esc(fmtDate(_metrics.firstSeen))}</span><span>Last active ${esc(fmtDate(_metrics.lastSeen))}</span>
+    </div>`;
+  host.innerHTML = summary + (sections.join('') || '<p style="color:#8b949e">Nothing recorded yet — use the app and come back.</p>');
 }
 
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
@@ -16109,6 +16382,7 @@ function clearMoodRec() {
 async function applyMoodRec(moodKey) {
   const mood = _MOOD_DEFS.find(m => m.key === moodKey);
   if (!mood) return;
+  _metric('mood.' + moodKey);  // v1.0.239 — usage metrics
 
   _moodRecActive = true;
   // Clear foryou cache so normal recs don't flash in
@@ -17257,6 +17531,7 @@ function predictorPick(mediaId) {
 }
 
 async function runPredictor(prefetched = null) {
+  _metric('discover.predict.run');  // v1.0.239 — usage metrics (distinct from just opening the tab)
   const q = byId(IDS.predictorInput).value.trim();
   if (!q) return;
   byId(IDS.predictorDropdown).style.display = 'none';
@@ -17572,6 +17847,7 @@ function _exitNonTowerModes() {
 
 function setMode(name) {
   if (!['normal', 'settle', 'blind', 'trio', 'wso'].includes(name)) name = 'normal';
+  if (name !== 'normal') _metric('mode.' + name);  // v1.0.239 — usage metrics (normal is the default, not interesting)
 
   // If currently in tower, exit cleanly first. Tower is mutually exclusive
   // with the standard modes — keeping its flag set would route every battle
@@ -17961,7 +18237,7 @@ function toggleModeMenu(event) {
   if (event) event.stopPropagation();
   const pop = byId(IDS.modePopover);
   const btn = byId(IDS.modeBtn);
-  const backdrop = document.getElementById('mode-popover-backdrop');
+  const backdrop = byId(IDS.modePopoverBackdrop);
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
   // v1.0.238 — close the sibling Filter popover on open.
@@ -17988,7 +18264,7 @@ function toggleModeMenu(event) {
 function _closeModeMenu() {
   const pop = byId(IDS.modePopover);
   const btn = byId(IDS.modeBtn);
-  const backdrop = document.getElementById('mode-popover-backdrop');
+  const backdrop = byId(IDS.modePopoverBackdrop);
   if (pop) pop.classList.remove('open');
   if (btn) btn.setAttribute('aria-expanded', 'false');
   if (backdrop) backdrop.classList.remove('open');  // v1.0.238 — hide mobile bottom-sheet backdrop
@@ -18002,7 +18278,7 @@ function toggleFilterMenu(event) {
   if (event) event.stopPropagation();
   const pop = byId(IDS.filterPopover);
   const btn = byId(IDS.filterBtn);
-  const backdrop = document.getElementById('filter-popover-backdrop');
+  const backdrop = byId(IDS.filterPopoverBackdrop);
   if (!pop || !btn) return;
   const willOpen = !pop.classList.contains('open');
   // v1.0.238 — close the sibling Mode popover on open (see toggleModeMenu).
@@ -18043,7 +18319,7 @@ function _filterOutsideClick(e) {
 function _closeFilterMenu() {
   const pop = byId(IDS.filterPopover);
   const btn = byId(IDS.filterBtn);
-  const backdrop = document.getElementById('filter-popover-backdrop');
+  const backdrop = byId(IDS.filterPopoverBackdrop);
   if (pop) pop.classList.remove('open');
   if (btn) btn.setAttribute('aria-expanded', 'false');
   if (backdrop) backdrop.classList.remove('open');  // v1.0.238 — hide mobile bottom-sheet backdrop
@@ -18685,6 +18961,7 @@ function populateTowerList(q) {
 }
 
 function startTower(championIdx) {
+  _metric('tower.start');  // v1.0.239 — usage metrics
   closeTowerModal();
   // Exit any other active mode cleanly — tower is mutually exclusive with
   // trio / settle / blind. Without this reset, the prior mode's flags and
@@ -20026,6 +20303,10 @@ function _loadFinishPrompts() {
     const stale = _finishPromptQueue.filter(p => now - p.detectedAt >= FINISH_PROMPT_MAX_AGE_MS);
     _finishPromptQueue  = _finishPromptQueue.filter(p => now - p.detectedAt <  FINISH_PROMPT_MAX_AGE_MS);
     stale.forEach(p => _addPromptedId(p.id));
+    // v1.0.239 — also drop anything the user has already acted on (same
+    // cold-start ordering gap as _ncLoad — see comment there).
+    const prompted = _getPromptedIds();
+    if (prompted.size) _finishPromptQueue = _finishPromptQueue.filter(p => !prompted.has(p.id));
     _saveFinishPrompts();
   } catch { _finishPromptQueue = []; }
   _showNextFinishPrompt();
@@ -20170,6 +20451,23 @@ function _ncLoad() {
     const raw = localStorage.getItem(KESSEN_KEYS.data.notifCentre(saveKey));
     _notifCentre = raw ? JSON.parse(raw) : [];
   } catch { _notifCentre = []; }
+  // v1.0.239 — Drop any finish_prompt whose anime the user has already
+  // acted on. Closes a cold-start ordering gap: tapping a Tower push boots
+  // the app, _towerCheckDeepLink → _dismissFinishPromptForAnime runs and
+  // stamps _promptedIds BEFORE this function has loaded _notifCentre from
+  // storage, so the in-memory dismiss finds nothing — and then this load
+  // resurrects the persisted entry with a bell badge. _promptedIds is the
+  // durable "acted on" record, so filtering against it here makes the
+  // outcome load-order independent.
+  try {
+    const prompted = _getPromptedIds();
+    if (prompted.size) {
+      const before = _notifCentre.length;
+      _notifCentre = _notifCentre.filter(n =>
+        !(n.type === 'finish_prompt' && n.data?.animeId != null && prompted.has(n.data.animeId)));
+      if (_notifCentre.length !== before) _ncSave();
+    }
+  } catch { /* defensive */ }
   // v1.0.210 — surface the "What's new" entry on first boot of a new version.
   // Runs once per session (idempotent inside the helper).
   _checkAppUpdateNotif();
@@ -20309,19 +20607,15 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.238 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.239 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔥 Daily battle streak. Rank at least one battle a day and a little "🔥 Nd" badge in the header tracks how many days in a row you\'ve kept the loop going. Miss a day and it resets (honest — no grace day). Small celebration at 3, 7, 14, 30, 60 and 100 days. Syncs across devices so you can battle on your phone in the morning and desktop at night and still count as one day.',
-    '📅 Weekly recap card. When a new week begins (Monday, local time), a small purple card at the top of Rankings shows how last week went — battles decided, streak status, and a one-word vibe ("monster week", "solid week", "quiet week"). Dismissable X. Appears once per completed week and only for weeks that ended in the last 14 days, so a returning-after-a-month user doesn\'t see stale numbers.',
-    '☕ Discover tab tidied — Moods folded into For You. The separate Moods sub-tab is gone; instead you get a row of mood chips (Comforting, Devastating, Intense, Thought-provoking, Beautiful) at the top of For You that jump you straight to a mood-filtered recs view in one tap. Same recommendations under the hood — fewer tabs to remember, no more "wait, was this in For You or Moods?".',
-    '🧩 New Discover sub-tab: Missing. Scans your list and surfaces sequels, prequels, spin-offs and side stories from series you have but haven\'t watched — so a stealth spin-off like "Narumi\'s Week at Work" no longer slips past. Grid or list view, group results by franchise (using the same franchise mapping as Rankings) or by individual series, format chips that inherit your Rankings hidden-formats set (hide MOVIE / SPECIAL / TV_SHORT etc. with one tap), search by title (parent-title matches surface the whole franchise), sort by relation type / title / year, plus toggles for including announced/upcoming shows and items in your planning list. Weekly cache — hit ↻ Rescan any time to refresh. The sort dropdown, grid/list toggle and ⛓ Franchise button all use the exact same components as Rankings so switching between tabs feels like the same app instead of learning a new dialect on each screen.',
-    'Battle popover format headings tightened to "Formats to keep in pool" / "Watch statuses to keep in pool" — same behaviour as before, but the "active chip means it stays in the pool" model is now obvious rather than implied.',
-    'Winner Stays On — skipping a battle now resets the champion\'s streak. Previously the reigning champion could dodge a hard call by skipping and still keep parading their streak badge, even though they hadn\'t actually beaten the challenger in front of them. The champion still stays on (this is Winner Stays On, after all) but the streak counter resets — you have to earn each new run. Also fixed: the streak badge no longer disappears on page refresh — it was hidden by an initial-CSS state that the refresh-render path forgot to update, so the streak looked reset even though it was silently continuing under the hood.',
+    '📲 Install prompt. If you use Kessen in a mobile browser, you\'ll get a one-time nudge to add it to your home screen — full-screen app, faster launch, push notifications. Android shows a real Install button; iOS explains the Share → Add to Home Screen path. Dismiss and it won\'t ask again for a month. (Not shown if you\'re already using the Play Store app.)',
+    '📊 Your Kessen stats. Manage tab now shows a tally of which features you use — battles, modes, tabs, moods, social features. Just counts, no titles, no timestamps per action. It syncs with your cloud save so it survives device switches. This is also what helps decide which features to invest in vs. retire — anonymous usage totals, nothing personal.',
   ],
 };
 
@@ -20575,6 +20869,7 @@ function _ncRenderList() {
 let _ncTimeRefreshTimer = null;
 
 function openNotifCentre() {
+  _metric('notif.open');  // v1.0.239 — usage metrics
   _notifCentre.forEach(n => { n.read = true; });
   _ncSave();
   _ncUpdateBell();

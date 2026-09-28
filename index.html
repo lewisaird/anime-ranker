@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.238" />
+  <meta name="version" content="1.0.239" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -109,7 +109,11 @@
          reveals it once the user has current > 0. Sits next to progress-info so the two
          session-context bits read together. -->
     <span id="daily-streak-badge" style="display:none;font-size:0.75rem;color:#e3b341;background:rgba(227,179,65,0.12);border:1px solid rgba(227,179,65,0.35);border-radius:12px;padding:2px 8px;line-height:1;font-weight:600" title=""></span>
-    <span id="cloud-sync-indicator" style="display:none;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
+    <!-- v1.0.239 — once cloud sync is on, this reserves its width even when
+         idle (visibility, not display) so the streak badge / progress text
+         don't shift when a save fires. Starts display:none; _setSyncIndicator
+         switches it to inline-block for cloud users. -->
+    <span id="cloud-sync-indicator" style="display:none;width:1.1em;text-align:center;font-size:0.75rem;color:#8b949e" title="Cloud sync status"></span>
     <button id="notif-bell" onclick="openNotifCentre()" title="Notification Centre" aria-label="Notification Centre" style="display:none">
       🔔
       <span id="notif-badge" style="display:none"></span>
@@ -994,6 +998,20 @@
     </div>
   </div>
 
+  <!-- v1.0.239 — PWA install banner. Shown on mobile web only (not inside
+       the TWA / installed PWA, not after a 30-day dismissal). On Android
+       Chrome the Install button triggers the native prompt via the captured
+       beforeinstallprompt event; on iOS Safari (no install API) the text
+       explains Share → Add to Home Screen. Sits outside every screen so it
+       overlays whichever one the user is on. -->
+  <div id="install-banner" role="region" aria-label="Install Kessen">
+    <div id="install-banner-text"></div>
+    <div style="display:flex;gap:8px;flex-shrink:0">
+      <button type="button" id="install-banner-btn" class="btn-primary" onclick="installBannerAction()">Install</button>
+      <button type="button" class="btn-secondary" onclick="dismissInstallBanner()" aria-label="Not now">✕</button>
+    </div>
+  </div>
+
   <!-- RESULTS SCREEN -->
   <div id="results-screen">
 
@@ -1603,6 +1621,15 @@
           <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
           <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
+        </div>
+
+        <!-- v1.0.239 — Transparent view of the usage counters Kessen keeps.
+             Shows the user exactly what's recorded (feature-usage tallies,
+             nothing else). Filled by _renderManageStats() on Manage open. -->
+        <div class="manage-section">
+          <div class="manage-section-title">Your Kessen stats</div>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">A tally of which features you use. Kept locally and synced with your cloud save. No titles, no timestamps per action — just counts.</p>
+          <div id="manage-stats-body" style="font-size:0.82rem;line-height:1.7;color:var(--text-primary)"></div>
         </div>
 
         <div class="manage-section manage-feedback-section">
