@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.246" />
+  <meta name="version" content="1.0.247" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -130,6 +130,7 @@
       <img id="auth-hdr-avatar" src="" alt="Profile" />
       <div class="avatar-dropdown" id="auth-avatar-dropdown" onclick="event.stopPropagation()">
         <span class="avatar-dropdown-name" id="auth-hdr-name"></span>
+        <span class="avatar-dropdown-sync" id="auth-hdr-sync"></span>
         <button class="avatar-dropdown-logout" onclick="clearAuth();closeAvatarMenus()">Logout</button>
       </div>
     </div>
@@ -137,6 +138,7 @@
       <img id="mal-hdr-avatar" src="" alt="Profile" />
       <div class="avatar-dropdown" id="mal-avatar-dropdown" onclick="event.stopPropagation()">
         <span class="avatar-dropdown-name" id="mal-hdr-name"></span>
+        <span class="avatar-dropdown-sync" id="mal-hdr-sync"></span>
         <button class="avatar-dropdown-logout" onclick="logoutMAL();closeAvatarMenus()">Logout</button>
       </div>
     </div>
@@ -1113,11 +1115,12 @@
         <div id="search-picker-popover" class="search-picker-popover" hidden></div>
       </div>
       <div id="search-chips" class="search-chips" hidden></div>
-      <!-- v1.0.211 — Sort row decluttered. The 7 standard sort options +
-           2 conditional franchise sorts collapsed into a single dropdown so
-           the right-side toggles (Fuzzy / Franchise / view) get breathing
-           room on narrow viewports. Dropdown options are listed in the
-           popover; the franchise-only ones gate on body.franchise-mode-on. -->
+      <!-- v1.0.211 — Sort row decluttered: the standard sort options live in
+           a single dropdown so the right-side toggles (Fuzzy / Franchise /
+           view) get breathing room on narrow viewports. v1.0.247 — the
+           separate franchise-only sort dropdown (Top ELO / Members) was
+           removed; the same options sort franchise groups by their
+           aggregates. -->
       <div class="list-controls">
         <div class="sort-menu-wrap">
           <button type="button" class="sort-menu-btn" id="sort-menu-btn"
@@ -1134,23 +1137,6 @@
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="score"      data-label="AniList Avg"  onclick="setSortFromMenu('score')">AniList Avg</button>
             <!-- v1.0.242 — "Tier" sort removed: identical to the ELO order. -->
             <button type="button" role="menuitemradio" class="sort-menu-item" data-sort="confidence" data-label="Confidence"   onclick="setSortFromMenu('confidence')">Confidence</button>
-          </div>
-        </div>
-        <!-- v1.0.212 — Franchise sort got promoted out of the main dropdown
-             into its own visible button so users can see the franchise-only
-             options at a glance when franchise mode is on. Hidden by default;
-             body.franchise-mode-on reveals it. The label shows the active
-             franchise sort if one is selected, otherwise reads "Sort". -->
-        <div class="sort-menu-wrap sort-menu-franchise" id="franchise-sort-wrap">
-          <button type="button" class="sort-menu-btn" id="franchise-sort-menu-btn"
-                  onclick="toggleFranchiseSortMenu(event)" aria-haspopup="menu" aria-expanded="false">
-            <span class="sort-menu-label-prefix"><span class="sort-menu-prefix-icon">⛓</span> <span class="sort-menu-prefix-text">Franchise sort:</span></span>
-            <span class="sort-menu-label" id="franchise-sort-menu-current">—</span>
-            <span class="sort-menu-chevron" aria-hidden="true">▾</span>
-          </button>
-          <div id="franchise-sort-menu-popover" class="sort-menu-popover" hidden role="menu">
-            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="peak"    data-label="Top ELO"      onclick="setFranchiseSortFromMenu('peak')">★ Top ELO</button>
-            <button type="button" role="menuitemradio" class="sort-menu-item franchise-only" data-sort="members" data-label="Member count" onclick="setFranchiseSortFromMenu('members')">Members</button>
           </div>
         </div>
         <div id="ranking-controls-right">
@@ -1380,9 +1366,14 @@
             </label>
           </div>
           <!-- Format filter chips — respect your Rankings hidden formats by default. -->
-          <div id="gaps-format-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;font-size:0.75rem;align-items:center">
-            <span style="color:#6b7280;margin-right:2px">Formats shown:</span>
+          <div id="gaps-format-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;font-size:0.75rem;align-items:center">
+            <span style="color:#6b7280;margin-right:2px;min-width:104px">Formats shown:</span>
             <!-- populated by _paintGapFormatChips() -->
+          </div>
+          <!-- v1.0.247 — Relation filter chips (Sequel / Prequel / …), same toggle model. -->
+          <div id="gaps-relation-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;font-size:0.75rem;align-items:center">
+            <span style="color:#6b7280;margin-right:2px;min-width:104px">Relations shown:</span>
+            <!-- populated by _paintGapRelationChips() -->
           </div>
           <div id="gaps-meta" style="font-size:0.75rem;color:#6b7280;margin-bottom:8px;display:none"></div>
           <div id="gaps-loading" style="display:none;text-align:center;padding:32px 0;color:#8b949e">
@@ -1794,14 +1785,14 @@
           <p>Groups sequels and seasons together in the Rankings view so you can see a franchise's overall standing at a glance. Each franchise card shows the average ELO, a <strong>★ Top</strong> badge for the highest-rated entry, and the franchise's <strong>all-time best</strong> ELO. Tap a card to drill in, then use:</p>
           <p><strong>⚔ Battle within</strong> — restrict the next battles to entries inside the franchise so you can settle "which Re:Zero season is best?". Auto-stops once every pair has been battled.<br>
           <strong>🚫 Exclude all from battles</strong> — bulk-remove the whole franchise from your battle pool (with undo).</p>
-          <p>Franchise mode unlocks two extra sort options: <strong>★ Top ELO</strong> and <strong>Members</strong>.</p>
+          <p>The usual Sort menu applies to franchises too: ELO sorts by the franchise average, Battles by the total across its entries.</p>
         </div>
 
         <div class="help-section">
           <h4>📊 Tabs</h4>
           <p><strong>Battles</strong> — stats, biggest upsets, rivalries, and full battle history. Total Battles + Fuzzy Flagged tiles are clickable shortcuts.<br>
           <strong>Profile</strong> — two sub-tabs: <em>Taste</em> (your archetype, genre &amp; era breakdowns, studio affinity, taste vs the community, score distribution) and <em>Achievements</em> (milestones and badges earned through ranking).<br>
-          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime, with mood chips at the top for one-tap Comforting / Devastating / Intense / Thought-provoking / Beautiful filters), <em>This Season</em> (airing now + next), <em>Predict</em> (tier guess for any anime you haven't ranked), and <em>Missing</em> (sequels, prequels, spin-offs and side stories you have in your list but haven't watched yet). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
+          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime, with mood chips at the top for one-tap Comforting / Devastating / Intense / Thought-provoking / Beautiful filters), <em>This Season</em> (airing now + next), <em>Predict</em> (tier guess for any anime you haven't ranked), and <em>Missing</em> (sequels, prequels, spin-offs and side stories you have in your list but haven't watched yet — filter them by format and by relation type). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
           <strong>Social</strong> — multiplayer modes and taste comparison (see below).<br>
           <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, notification settings, and reset.</p>
         </div>

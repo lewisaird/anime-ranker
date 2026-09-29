@@ -3137,8 +3137,8 @@
     }
 
     /* v1.0.211 — Sort dropdown that replaced the row of 7 sort buttons.
-       Single trigger + popover menu — the franchise-only options inside
-       gate on body.franchise-mode-on. */
+       Single trigger + popover menu. (v1.0.247 — the separate franchise
+       sort dropdown and its body.franchise-mode-on gating were removed.) */
     .sort-menu-wrap { position: relative; }
     .sort-menu-btn {
       display: inline-flex;
@@ -3207,16 +3207,6 @@
       color: var(--accent-blue);
       font-weight: 600;
     }
-    /* v1.0.212 — The franchise sort dropdown is its own visible control
-       next to the main sort dropdown (more discoverable than buried inside
-       the main menu). Hidden by default; body.franchise-mode-on reveals it.
-       Picks up the same styling as the main sort menu. */
-    .sort-menu-franchise { display: none; }
-    body.franchise-mode-on .sort-menu-franchise { display: block; }
-    .sort-menu-franchise .sort-menu-btn {
-      border-left: 3px solid var(--accent-blue);
-      padding-left: 11px;
-    }
     .sort-btn {
       background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
       font-size: 0.78rem; padding: 5px 12px; border-radius: 6px; cursor: pointer;
@@ -3237,15 +3227,6 @@
       font-weight: 600;
       box-shadow: inset 0 0 0 1px var(--accent-blue);
     }
-    /* v1.0.211 — Franchise sort sub-row. Sits underneath the main sort row,
-       only visible when franchise mode is on (body.franchise-mode-on). The
-       label + faint blue left-border tie the row to the franchise theme so
-       users can see at a glance "these sorts only matter when grouped".
-       Buttons inside use the standard .sort-btn style — no extra tint needed,
-       the row itself does the visual grouping. */
-    /* v1.0.211 — .franchise-sort-row and .franchise-sort-label CSS removed.
-       The HTML row was replaced by franchise-only options inside the sort
-       dropdown popover (.sort-menu-item.franchise-only). */
     #ranking-controls-right {
       display: flex; align-items: center; gap: 6px; margin-left: auto;
     }
@@ -3483,6 +3464,12 @@
       font-size: 0.85rem; font-weight: 600;
       color: var(--text-primary); padding: 2px 4px;
     }
+    /* v1.0.247 — persistent "Synced 2 min ago" line; the header dot stays a
+       transient flash, this is where to look for the standing answer. */
+    .avatar-dropdown-sync {
+      font-size: 0.72rem; color: var(--text-secondary); padding: 0 4px 2px;
+    }
+    .avatar-dropdown-sync:empty { display: none; }
     .avatar-dropdown-logout {
       background: none; border: 1px solid var(--border-default);
       color: var(--text-secondary); border-radius: 5px;
@@ -4509,7 +4496,12 @@
       padding: 4px 7px;
       margin-top: 5px;
       line-height: 1.35;
-      display: block;
+      /* v1.0.247 — two lines max at the 150px card width; a long franchise
+         title was stretching the whole row. Full text lives in the title. */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     .rec-relation-note strong { color: var(--accent-blue); }
 
@@ -5408,9 +5400,7 @@
              when the label changes.
            · Keep `margin-left: 0` on the right-side group so the toolbar
              reads as one continuous left-aligned block (no barbell gap).
-           · On the franchise-sort dropdown specifically, hide the prefix
-             text ("Franchise sort:") and keep just the ⛓ icon so both
-             dropdowns are similar widths when franchise mode is on. */
+         (v1.0.247 — the second, franchise-only dropdown no longer exists.) */
       /* v1.0.243 — Filters row: drop the "Filters:" label and tighten the
          chips so all five fit on one line at 375px. */
       .search-picker-label { display: none; }
@@ -5421,27 +5411,20 @@
          takes whatever width is left (flex: 1), so the label changing from
          "ELO" to "AniList Avg" never reflows the toggles beside it, and the
          whole toolbar sits on one row instead of two. */
-      /* Main sort wrap only — the franchise variant keeps its display:none /
-         body.franchise-mode-on toggle from the base rules. */
-      .sort-menu-wrap:not(.sort-menu-franchise) { flex: 1; display: flex; min-width: 0; }
-      .sort-menu-wrap:not(.sort-menu-franchise) .sort-menu-btn {
+      .sort-menu-wrap { flex: 1; display: flex; min-width: 0; }
+      .sort-menu-wrap .sort-menu-btn {
         flex: 1;
         min-width: 104px;          /* never collapses; "AniList Avg ↓ ▾" fits */
         font-size: 0.78rem;
         padding: 6px 8px 6px 10px;
         justify-content: space-between;
       }
-      .sort-menu-wrap:not(.sort-menu-franchise) .sort-menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .sort-menu-wrap:not(.sort-menu-franchise) .sort-menu-btn > .sort-menu-label-prefix { display: none; }
-      .sort-menu-franchise .sort-menu-btn { min-width: 84px; font-size: 0.78rem; padding: 6px 8px; }
+      .sort-menu-wrap .sort-menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sort-menu-wrap .sort-menu-btn > .sort-menu-label-prefix { display: none; }
       #ranking-controls-right { margin-left: 0; }
       .fuzzy-filter-btn { padding: 6px 8px; }
       .fuzzy-filter-btn .fuzzy-label-long { display: none; }
       .view-btn { padding: 5px 8px; }
-      /* Franchise sort prefix: just the ⛓ icon on mobile — the dropdown
-         label ("Top ELO" / "Members" / "—") plus the brand-blue left border
-         already say "this is the franchise variant". */
-      .sort-menu-franchise .sort-menu-prefix-text { display: none; }
 
       /* ── Results hero on phones (v1.0.243) ──
          One row: [▶ Keep Ranking] [🔗] [❓]. The sentence under the button

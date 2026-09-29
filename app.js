@@ -19,6 +19,7 @@ const IDS = Object.freeze({
   authErrorMsg:           'auth-error-msg',
   authHdrAvatar:          'auth-hdr-avatar',
   authHdrName:            'auth-hdr-name',
+  authHdrSync:            'auth-hdr-sync', // v1.0.247
   authHeaderBadge:        'auth-header-badge',
   authLoginBtn:           'auth-login-btn',
   authUsernameBadge:      'auth-username-badge',
@@ -84,6 +85,7 @@ const IDS = Object.freeze({
   malFileInput:           'mal-file-input',
   malHdrAvatar:           'mal-hdr-avatar',
   malHdrName:             'mal-hdr-name',
+  malHdrSync:             'mal-hdr-sync', // v1.0.247
   malHeaderBadge:         'mal-header-badge',
   malNewHint:             'mal-new-hint',
   malOauthBtn:            'mal-oauth-btn',
@@ -169,10 +171,6 @@ const IDS = Object.freeze({
   sortMenuBtn:            'sort-menu-btn',
   sortMenuCurrent:        'sort-menu-current',
   sortMenuPopover:        'sort-menu-popover',
-  franchiseSortMenuBtn:       'franchise-sort-menu-btn',
-  franchiseSortMenuCurrent:   'franchise-sort-menu-current',
-  franchiseSortMenuPopover:   'franchise-sort-menu-popover',
-  franchiseSortWrap:          'franchise-sort-wrap',
   sessionSummaryList:     'session-summary-list',
   sessionSummaryModal:    'session-summary-modal',
   sessionSummarySubtitle: 'session-summary-subtitle',
@@ -401,6 +399,7 @@ const IDS = Object.freeze({
   gapsIncludePlanning:    'gaps-include-planning',
   gapsIncludeUpcoming:    'gaps-include-upcoming',
   gapsFormatChips:        'gaps-format-chips',
+  gapsRelationChips:      'gaps-relation-chips', // v1.0.247
   // v1.0.238 — daily streak badge + weekly summary card + For You mood chips
   dailyStreakBadge:       'daily-streak-badge',
   weeklySummaryCard:      'weekly-summary-card',
@@ -858,6 +857,7 @@ const KESSEN_KEYS = {
     // banner for 30 days after the user says "not now".
     installPromptDismissed: 'kessen.ui.installPromptDismissed',
     gapsView:               'kessen.ui.gapsView',   // v1.0.245 — Missing tab grid/list choice
+    gapsHiddenRelations:    'kessen.ui.gapsHiddenRelations', // v1.0.247 — Missing tab relation chips (array of hidden relation types)
     // v1.0.237 — Franchise gaps cache: sequels/prequels/spin-offs of anime
     // in the user's list that they haven't watched yet. Cached per user
     // with a weekly TTL — relations rarely change but new sequels get
@@ -2073,8 +2073,17 @@ let _quotaWarnedThisSession = false;
 // and explicit logout paths so an in-flight debounce never loses progress.
 let _saveStateTimer = null;
 const SAVE_STATE_DEBOUNCE_MS = 400;
+// v1.0.247 — the 50-battle milestone most recently confirmed to have a taste
+// snapshot. Lets the check in saveState() skip the localStorage parse.
+// Reset to -1 whenever the snapshot store is cleared, merged or trimmed.
+let _tasteSnapshotMilestoneOk = -1;
 
 function saveState() {
+  // v1.0.247 — every path that changes battleCount saves, so this is the one
+  // place a 50-battle taste snapshot can never be missed (Tower rounds, trio
+  // picks, guest merges…). Cheap: an integer compare once the current
+  // milestone is known to be saved.
+  _maybeSaveTasteSnapshot();
   if (_saveStateTimer) clearTimeout(_saveStateTimer);
   _saveStateTimer = setTimeout(() => {
     _saveStateTimer = null;
@@ -2247,10 +2256,15 @@ function _formatRelTime(ms) {
   return new Date(ms).toLocaleDateString();
 }
 function _updateCloudSyncTimestamp() {
-  const el = byId(IDS.cloudSyncTimestamp);
-  if (!el) return;
   let ts = 0;
   try { ts = Number(localStorage.getItem(KESSEN_KEYS.ui.lastCloudSaveTs) || 0); } catch {}
+  // v1.0.247 — the avatar dropdowns carry a short version of the same line.
+  // The header dot is deliberately a transient flash; this is the standing
+  // "am I synced?" answer, one tap away. Empty text hides the span (CSS).
+  const short = !_cloudSyncEnabled ? '' : ts ? `☁️ Synced ${_formatRelTime(ts)}` : '☁️ Not synced yet';
+  [IDS.authHdrSync, IDS.malHdrSync].forEach(id => { const s = byId(id); if (s) s.textContent = short; });
+  const el = byId(IDS.cloudSyncTimestamp);
+  if (!el) return;
   if (!_cloudSyncEnabled) { el.style.display = 'none'; return; }
   el.style.display = 'block';
   el.textContent = ts
@@ -3906,7 +3920,7 @@ function pickWinner(side) {
   checkSessionSummary();
   _checkAchievements();
   snap.unlockedNow = _lastUnlocked.slice(); // v1.0.244 — badges this pick earned; undo takes them back
-  _maybeSaveTasteSnapshot();
+  // (v1.0.247 — the taste-snapshot milestone check now lives in saveState.)
   _syncTasteNewBadge();
   _updateDailyStreak();  // v1.0.238 — daily streak counter, mid-session no-op after first decision of the day
   _tickWeeklyStats();    // v1.0.238 — weekly rollover + battle tally
@@ -5290,16 +5304,9 @@ function _buildFranchiseGroups(sorted) {
     case 'score':
       result.sort((a, b) => (a.avgScore - b.avgScore) * dir);
       break;
-    // v1.0.211 — Franchise-only aggregates. The flat list ignores these
-    // (case falls through to default 'elo' sort) — the sort buttons are
-    // hidden when franchiseMode is off so users can't accidentally pick
-    // them in flat mode.
-    case 'peak':
-      result.sort((a, b) => (a.peakElo - b.peakElo) * dir);
-      break;
-    case 'members':
-      result.sort((a, b) => (a.members.length - b.members.length) * dir);
-      break;
+    // v1.0.247 — the franchise-only "Top ELO" / "Members" sorts were removed
+    // (peakElo is still shown on the card as ★ Top). The standard sorts
+    // apply to the group aggregates below.
     case 'confidence':
       result.sort((a, b) => (a.totalBattles - b.totalBattles) * dir);
       break;
@@ -5316,15 +5323,9 @@ function toggleFranchiseMode() {
     btn.classList.toggle('active', franchiseMode);
     btn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
   }
-  // v1.0.211 — gate franchise-only sort buttons via body class. Also reset to
-  // a flat-list-compatible sort when leaving franchise mode so the user
-  // doesn't end up looking at the rankings sorted by a metric whose button
-  // just disappeared.
-  document.body.classList.toggle('franchise-mode-on', franchiseMode);
-  if (!franchiseMode && (currentSort === 'peak' || currentSort === 'members')) {
-    setSort('elo'); // resets the active button + re-renders
-    return;
-  }
+  // v1.0.247 — the franchise-only sort dropdown (and the body.franchise-mode-on
+  // class that revealed it) is gone; the standard Sort menu applies to
+  // franchise groups via their aggregates.
   _applyRankingViewState();
   _saveViewPrefs();
   renderRankingList();
@@ -5839,7 +5840,8 @@ function showResults() {
   // v1.0.242 — the Tier sort was removed (it produced exactly the ELO order,
   // since tiers are derived from ELO rank). Saved states that still carry it
   // fall back to ELO here, which covers both local and cloud loads.
-  if (!currentSort || currentSort === 'tier') { currentSort = 'elo'; sortAsc = false; }
+  // v1.0.247 — the franchise-only sorts (Top ELO / Members) were removed too.
+  if (!currentSort || currentSort === 'tier' || currentSort === 'peak' || currentSort === 'members') { currentSort = 'elo'; sortAsc = false; }
   const ffBtn = byId(IDS.fuzzyFilterBtn);
   if (ffBtn) ffBtn.classList.remove('active');
   // Sync sort buttons and table headers to restored sort state
@@ -5860,11 +5862,6 @@ function showResults() {
     franchiseBtn.classList.toggle('active', franchiseMode);
     franchiseBtn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
   }
-  // v1.0.211 — keep the body class in lockstep with franchiseMode at boot too
-  // (toggleFranchiseMode handles runtime toggling; this handles page-load
-  // restoration so franchise-only sort buttons appear immediately for users
-  // whose saved view was already in franchise mode).
-  document.body.classList.toggle('franchise-mode-on', franchiseMode);
   _applyRankingViewState();
 
   byId(IDS.resultsSubtitle).textContent = battleCount === 0
@@ -7026,6 +7023,27 @@ const FRANCHISE_GAP_FORMATS = [
   { key: 'SPECIAL',  label: 'Special' },
   { key: 'TV_SHORT', label: 'Short' },
 ];
+// v1.0.247 — Relation-type chips, same toggle model as the format chips.
+// Keys match AniList's relationType(version: 2) values that the scan keeps
+// (FRANCHISE_GAP_REL_TYPES). Hidden set persists under kessen.ui so
+// "always hide spin-offs" survives a reload.
+const FRANCHISE_GAP_RELATIONS = [
+  { key: 'SEQUEL',      label: 'Sequel' },
+  { key: 'PREQUEL',     label: 'Prequel' },
+  { key: 'PARENT',      label: 'Parent story' },
+  { key: 'SIDE_STORY',  label: 'Side story' },
+  { key: 'SPIN_OFF',    label: 'Spin-off' },
+  { key: 'ALTERNATIVE', label: 'Alternative' },
+];
+let _franchiseGapsHiddenRelations = null;
+function _gapsHiddenRelations() {
+  if (_franchiseGapsHiddenRelations) return _franchiseGapsHiddenRelations;
+  try {
+    const arr = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.gapsHiddenRelations) || '[]');
+    _franchiseGapsHiddenRelations = new Set(Array.isArray(arr) ? arr : []);
+  } catch { _franchiseGapsHiddenRelations = new Set(); }
+  return _franchiseGapsHiddenRelations;
+}
 
 function _loadFranchiseGapsCache() {
   try {
@@ -7424,21 +7442,35 @@ function _escapeHtml(s) {
 // Paint the format-filter chips. Called once per render so re-toggles
 // don't accumulate listeners.
 function _paintGapFormatChips() {
-  const wrap = byId(IDS.gapsFormatChips);
-  if (!wrap) return;
   // Seed hidden-formats set from Rankings on first paint, so a user who
   // has already hidden MOVIE / SPECIAL in Rankings sees the same defaults
   // here without extra config.
   if (_franchiseGapsHiddenFormats === null) {
     _franchiseGapsHiddenFormats = new Set(hiddenFormatsRanking);
   }
-  // Clear existing chips (keep the "Formats:" label span at index 0)
+  _paintGapChipRow(byId(IDS.gapsFormatChips), FRANCHISE_GAP_FORMATS, _franchiseGapsHiddenFormats);
+}
+
+// v1.0.247 — Relation chips (Sequel / Prequel / …) share the painter. The
+// hidden set is written to localStorage on every toggle.
+function _paintGapRelationChips() {
+  const hidden = _gapsHiddenRelations();
+  _paintGapChipRow(byId(IDS.gapsRelationChips), FRANCHISE_GAP_RELATIONS, hidden, () => {
+    try { localStorage.setItem(KESSEN_KEYS.data.gapsHiddenRelations, JSON.stringify([...hidden])); } catch { /* storage full — session only */ }
+  });
+}
+
+// Shared chip-row painter: one toggle button per option, struck through
+// when its key is in `hiddenSet`. Keeps the label span at index 0.
+function _paintGapChipRow(wrap, options, hiddenSet, onChange) {
+  if (!wrap) return;
   while (wrap.childElementCount > 1) wrap.removeChild(wrap.lastChild);
-  for (const f of FRANCHISE_GAP_FORMATS) {
-    const hidden = _franchiseGapsHiddenFormats.has(f.key);
+  for (const f of options) {
+    const hidden = hiddenSet.has(f.key);
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.textContent = f.label;
+    chip.setAttribute('aria-pressed', hidden ? 'false' : 'true');
     chip.style.cssText =
       `padding:3px 10px;border-radius:12px;font-size:0.72rem;line-height:1;cursor:pointer;` +
       `border:1px solid ${hidden ? '#30363d' : '#3b82f6'};` +
@@ -7446,8 +7478,9 @@ function _paintGapFormatChips() {
       `color:${hidden ? '#6b7280' : '#3b82f6'};` +
       (hidden ? 'text-decoration:line-through' : '');
     chip.addEventListener('click', () => {
-      if (_franchiseGapsHiddenFormats.has(f.key)) _franchiseGapsHiddenFormats.delete(f.key);
-      else _franchiseGapsHiddenFormats.add(f.key);
+      if (hiddenSet.has(f.key)) hiddenSet.delete(f.key);
+      else hiddenSet.add(f.key);
+      if (onChange) onChange();
       renderFranchiseGaps({ skipFetch: true });
     });
     wrap.appendChild(chip);
@@ -7533,6 +7566,7 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   const searchQuery = (byId(IDS.gapsSearchInput)?.value || '').trim().toLowerCase();
   const sortMode    = _franchiseGapsSortMode;
   _paintGapFormatChips();  // ensure chips are painted / reflect current state
+  _paintGapRelationChips(); // v1.0.247
 
   if (!animeList.length) {
     if (loadingEl) loadingEl.style.display = 'none';
@@ -7569,7 +7603,8 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
     const planningIds = await _fetchPlanningIds();
     planningIds.forEach(id => excludeIds.add(id));
   }
-  const hiddenFormats = _franchiseGapsHiddenFormats || new Set();
+  const hiddenFormats   = _franchiseGapsHiddenFormats || new Set();
+  const hiddenRelations = _gapsHiddenRelations(); // v1.0.247
   let visibleGroups = data.groups
     .map(g => ({
       parent: g.parent,
@@ -7580,7 +7615,8 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
         .filter(x => x.format !== 'MUSIC')
         .filter(x => !excludeIds.has(x.id))
         .filter(x => includeUpcoming || !FRANCHISE_GAP_UPCOMING_STATUSES.has(x.status))
-        .filter(x => !x.format || !hiddenFormats.has(x.format)),
+        .filter(x => !x.format || !hiddenFormats.has(x.format))
+        .filter(x => !x.relationType || !hiddenRelations.has(x.relationType)),
     }))
     .filter(g => g.gaps.length > 0);
 
@@ -7721,18 +7757,23 @@ async function fetchRecommendationsForYou() {
   const usedIds = new Set(); // dedup across groups
   const groups = [];
 
+  // v1.0.247 — two pages (50 candidates) per seed in one request, via field
+  // aliases. With 25, a seed whose recommendations you've mostly already
+  // watched ended up with a short group (4 cards next to a full row of 6).
   const query = `
+    fragment recNodes on RecommendationConnection {
+      nodes {
+        rating
+        mediaRecommendation {
+          id idMal title { romaji english } coverImage { large medium }
+          averageScore format status genres
+        }
+      }
+    }
     query ($id: Int) {
       Media(id: $id) {
-        recommendations(perPage: 25, sort: RATING_DESC) {
-          nodes {
-            rating
-            mediaRecommendation {
-              id idMal title { romaji english } coverImage { large medium }
-              averageScore format status genres
-            }
-          }
-        }
+        p1: recommendations(page: 1, perPage: 25, sort: RATING_DESC) { ...recNodes }
+        p2: recommendations(page: 2, perPage: 25, sort: RATING_DESC) { ...recNodes }
       }
     }`;
 
@@ -7741,7 +7782,8 @@ async function fetchRecommendationsForYou() {
     try {
       const res = await _anilistFetch({ query, variables: { id: anime.id } });
       const json = await res.json();
-      const nodes = json?.data?.Media?.recommendations?.nodes ?? [];
+      const media = json?.data?.Media;
+      const nodes = [...(media?.p1?.nodes ?? []), ...(media?.p2?.nodes ?? [])];
       const recs = [];
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
@@ -7804,13 +7846,15 @@ function _getRelationNote(media) {
     const { relationType, node } = matches[0];
     const relTitle = node.title.english || node.title.romaji;
     const rank = eloRankMap.get(node.id);
+    // v1.0.247 — shorter phrasing + full text in the title attribute; the
+    // note is clamped to two lines in CSS.
     if (relationType === 'PREQUEL')
-      return `<div class="rec-relation-note">📺 Sequel to <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
+      return _recRelationNote(`📺 Sequel to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)`);
     if (relationType === 'SEQUEL')
-      return `<div class="rec-relation-note">⏮ Watch this before <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
+      return _recRelationNote(`⏮ Watch before <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)`);
     if (relationType === 'PARENT')
-      return `<div class="rec-relation-note">🔗 Part of <strong>${esc(relTitle)}</strong> — you have it at <strong>#${rank}</strong></div>`;
-    return `<div class="rec-relation-note">🔗 Related to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)</div>`;
+      return _recRelationNote(`🔗 Part of <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)`);
+    return _recRelationNote(`🔗 Related to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)`);
   }
 
   // v1.0.211 — Title-pattern fallback. AniList's RELATIONS graph misses a lot
@@ -7845,7 +7889,14 @@ function _getRelationNote(media) {
   }
   if (!bestMatch) return '';
   const relTitle = displayTitle(bestMatch);
-  return `<div class="rec-relation-note">🔗 Part of <strong>${esc(relTitle)}</strong> — you have it at <strong>#${bestRank}</strong></div>`;
+  return _recRelationNote(`🔗 Part of <strong>${esc(relTitle)}</strong> (your <strong>#${bestRank}</strong>)`);
+}
+
+// v1.0.247 — wraps a relation note; the plain-text version goes in `title`
+// so the two-line CSS clamp never hides the franchise name for good.
+function _recRelationNote(innerHtml) {
+  const plain = innerHtml.replace(/<[^>]+>/g, '');
+  return `<div class="rec-relation-note" title="${plain}">${innerHtml}</div>`;
 }
 
 // ─── REC CARD HTML HELPER ─────────────────────────────────────────────────────
@@ -13455,6 +13506,7 @@ function _mergeTasteSnapshots(incoming) {
     const capped = merged.length > 40 ? merged.slice(merged.length - 40) : merged;
     if (capped.length !== local.length) {
       localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(capped));
+      _tasteSnapshotMilestoneOk = -1; // v1.0.247 — store changed; re-verify on next save
     }
   } catch { /* ignore — sync failure shouldn't break the app */ }
 }
@@ -16840,12 +16892,11 @@ async function renderTasteProfile(forceRefetch = false) {
     // ── Section 2: Drift ─────────────────────────────────────────────────
     _paintTasteDrift(byId(IDS.tasteDrift));
     // ── Section 4: Evolution ─────────────────────────────────────────────
+    // v1.0.247 — belt-and-braces milestone check before the paint (saveState
+    // is the primary trigger), so a snapshot saved here shows immediately.
+    _maybeSaveTasteSnapshot();
     _paintTasteEvolution(byId(IDS.tasteEvolution));
   }
-
-
-  // Save snapshot for drift tracking (keyed by battle count milestone)
-  _maybeSaveTasteSnapshot();
 }
 
 const _MOOD_DEFS = [
@@ -17096,16 +17147,18 @@ async function applyMoodRec(moodKey) {
 // now an explicit clear at every reset surface is the smaller change.
 function _clearTasteSnapshots() {
   try { localStorage.removeItem(KESSEN_KEYS.data.tasteSnapshots); } catch (_e) {}
+  _tasteSnapshotMilestoneOk = -1; // v1.0.247
 }
 
 function _maybeSaveTasteSnapshot() {
   try {
-    const snaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
     // Save a snapshot at each 50-battle milestone, keep up to 40 (2000 battles
     // of history). Each snapshot is ~200 bytes so 40 ≈ 8 KB.
     const milestone = Math.floor(battleCount / 50) * 50;
     if (milestone < 50) return;
-    if (snaps.some(s => s.battleCount === milestone)) return;
+    if (milestone === _tasteSnapshotMilestoneOk) return; // v1.0.247 — already confirmed this session
+    const snaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
+    if (snaps.some(s => s.battleCount === milestone)) { _tasteSnapshotMilestoneOk = milestone; return; }
 
     const genreMap = {};
     animeList.forEach(a => {
@@ -17120,24 +17173,20 @@ function _maybeSaveTasteSnapshot() {
       if (v.count >= 3) genreAvgs[g] = Math.round(v.sum / v.count);
     });
 
-    // Self-healing: if the most recent saved snapshot is more than one
-    // milestone behind the current one, mark this one as having a gap so the
-    // renderer can show the user "you missed some snapshots between here and
-    // the previous entry." This happens when the user wasn't on this version
-    // of the app for some battles, ran tower-only sessions (which don't bump
-    // battleCount), restored from cloud, etc.
-    const lastSaved = snaps.length ? snaps[snaps.length - 1].battleCount : 0;
-    const gappedFromPrev = lastSaved > 0 && (milestone - lastSaved) > 50;
-
+    // v1.0.247 — no more `gapBefore` flag. It was written once at save time
+    // and never revisited, so a milestone later filled in from another
+    // device (cloud merge) still showed as a gap. _paintTasteEvolution now
+    // derives gaps from which milestones are actually present.
     snaps.push({
       battleCount: milestone,
       timestamp: new Date().toISOString(),
       genreAvgs,
       top10: [...animeList].sort((a, b) => b.elo - a.elo).slice(0, 10).map(a => a.id),
-      gapBefore: gappedFromPrev || undefined,
     });
+    snaps.sort((a, b) => (a.battleCount || 0) - (b.battleCount || 0));
     if (snaps.length > 40) snaps.splice(0, snaps.length - 40);
     localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(snaps));
+    _tasteSnapshotMilestoneOk = milestone;
   } catch { /* storage full / corrupt — skip */ }
 }
 
@@ -17227,6 +17276,7 @@ function _paintTasteEvolution(el) {
     // clean baseline.
     if (allSnaps.length !== rawSnaps.length) {
       localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(allSnaps));
+      _tasteSnapshotMilestoneOk = -1; // v1.0.247 — a milestone was dropped; re-verify on next save
     }
     if (!allSnaps.length) {
       const needed = Math.max(0, 50 - battleCount);
@@ -17270,18 +17320,27 @@ function _paintTasteEvolution(el) {
     // underlying allSnaps for every expected 50-battle milestone between the
     // two displayed cards; only a truly missing milestone counts as a gap.
     const savedBattleCounts = new Set(allSnaps.map(s => s.battleCount));
-    const isGap = (snap, prev) => {
-      if (!prev) return false;
-      if (snap.gapBefore) return true;
+    // v1.0.247 — returns the list of 50-battle milestones strictly between
+    // two displayed cards that have no saved snapshot (empty = no gap). Derived
+    // purely from the saved set: the old sticky `gapBefore` flag kept showing
+    // a gap even after another device's snapshot filled it in.
+    const missingBetween = (snap, prev) => {
+      if (!prev) return [];
       const a = prev.battleCount || 0;
       const b = snap.isCurrent ? battleCount : (snap.battleCount || 0);
-      // Walk the expected 50-battle milestones strictly between a and b. If
-      // any one is missing from the saved set, there's a real recording gap.
-      // Subsampling-only "gaps" hit every expected milestone in savedBattleCounts.
+      const missing = [];
       for (let m = a + 50; m < b; m += 50) {
-        if (!savedBattleCounts.has(m)) return true;
+        if (!savedBattleCounts.has(m)) missing.push(m);
       }
-      return false;
+      return missing;
+    };
+    const gapTitle = (missing) => {
+      const names = missing.map(m => `Battle ${m}`);
+      if (names.length === 1) return `${names[0]} wasn't recorded — snapshots are only taken on the device you're battling on at the time`;
+      const list = names.length <= 3
+        ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]
+        : `${names[0]}, ${names[1]} and ${names.length - 2} more`;
+      return `${list} weren't recorded — snapshots are only taken on the device you're battling on at the time`;
     };
 
     const cards = points.map((snap, i) => {
@@ -17307,8 +17366,9 @@ function _paintTasteEvolution(el) {
     // Build the timeline with gap-aware connectors between cards.
     const timeline = cards.map((card, i) => {
       if (i === 0) return card;
-      const arrow = isGap(points[i], points[i - 1])
-        ? `<div class="evo-arrow evo-arrow-gap" title="Some milestones between these snapshots weren't recorded">⋯→</div>`
+      const missing = missingBetween(points[i], points[i - 1]);
+      const arrow = missing.length
+        ? `<div class="evo-arrow evo-arrow-gap" title="${esc(gapTitle(missing))}">⋯→</div>`
         : `<div class="evo-arrow">→</div>`;
       return arrow + card;
     }).join('');
@@ -17574,41 +17634,23 @@ const _sortToTh = { elo: 'th-elo', title: 'th-title', winrate: 'th-wr', battles:
 function _syncSortUI() {
   const ascFirst = _ascFirstSorts.has(currentSort);
   const showUp = ascFirst ? !sortAsc : sortAsc;
-  document.querySelectorAll('.sort-menu-item').forEach(item => {
+  // v1.0.247 — scoped to the Rankings popover. The unscoped selector also hit
+  // the Missing tab's sort menu: it stripped that menu's active state and
+  // overwrote its long item labels with the short data-labels.
+  const rankingsPop = byId(IDS.sortMenuPopover);
+  (rankingsPop ? rankingsPop.querySelectorAll('.sort-menu-item') : []).forEach(item => {
     const active = item.dataset.sort === currentSort;
     item.classList.toggle('active', active);
     item.setAttribute('aria-checked', active ? 'true' : 'false');
     const label = item.dataset.label || item.textContent;
     item.textContent = active ? `${label} ${showUp ? '↑' : '↓'}` : label;
   });
-  // v1.0.212 — Franchise sorts now live in their own visible dropdown next
-  // to the main one when franchise mode is on. The main dropdown label
-  // shows a standard sort (default ELO ↓) when active; the franchise
-  // dropdown label shows the active franchise sort if one is selected,
-  // otherwise reads "—".
-  const isFranchiseSort = currentSort === 'peak' || currentSort === 'members';
+  // v1.0.247 — one Sort menu again; the franchise-only dropdown was removed.
   const currentEl = byId(IDS.sortMenuCurrent);
   if (currentEl) {
-    if (isFranchiseSort) {
-      // The active sort is a franchise sort; leave the main dropdown
-      // showing a stable default (ELO ↓) so users have a clear path back
-      // to standard sorting. The franchise dropdown gets the active label.
-      currentEl.textContent = 'ELO ↓';
-    } else {
-      const activeItem = document.querySelector(`.sort-menu-item[data-sort="${currentSort}"]`);
-      const label = activeItem?.dataset?.label || currentSort;
-      currentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
-    }
-  }
-  const franchiseCurrentEl = byId(IDS.franchiseSortMenuCurrent);
-  if (franchiseCurrentEl) {
-    if (isFranchiseSort) {
-      const activeItem = document.querySelector(`#franchise-sort-menu-popover .sort-menu-item[data-sort="${currentSort}"]`);
-      const label = activeItem?.dataset?.label || currentSort;
-      franchiseCurrentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
-    } else {
-      franchiseCurrentEl.textContent = '—';
-    }
+    const activeItem = rankingsPop?.querySelector(`.sort-menu-item[data-sort="${currentSort}"]`);
+    const label = activeItem?.dataset?.label || currentSort;
+    currentEl.textContent = `${label} ${showUp ? '↑' : '↓'}`;
   }
   // Update table headers
   document.querySelectorAll('#ranking-table thead th[id]').forEach(th => {
@@ -17664,54 +17706,13 @@ function setSortFromMenu(type) {
   setSort(type);
 }
 
-// v1.0.212 — Franchise sort dropdown handlers. Mirrors the main sort menu
-// but anchored to its own button + popover. Visibility is CSS-controlled
-// by body.franchise-mode-on (set/cleared in toggleFranchiseMode + boot).
-function toggleFranchiseSortMenu(event) {
-  event?.stopPropagation();
-  const pop = byId(IDS.franchiseSortMenuPopover);
-  const btn = byId(IDS.franchiseSortMenuBtn);
-  if (!pop || !btn) return;
-  const open = pop.hasAttribute('hidden');
-  if (open) {
-    pop.removeAttribute('hidden');
-    btn.setAttribute('aria-expanded', 'true');
-    const closer = (e) => {
-      if (pop.contains(e.target) || btn.contains(e.target)) return;
-      _closeFranchiseSortMenu();
-      document.removeEventListener('click', closer, true);
-      document.removeEventListener('keydown', escCloser);
-    };
-    const escCloser = (e) => {
-      if (e.key !== 'Escape') return;
-      _closeFranchiseSortMenu();
-      document.removeEventListener('click', closer, true);
-      document.removeEventListener('keydown', escCloser);
-    };
-    setTimeout(() => {
-      document.addEventListener('click', closer, true);
-      document.addEventListener('keydown', escCloser);
-    }, 0);
-  } else {
-    _closeFranchiseSortMenu();
-  }
-}
-function _closeFranchiseSortMenu() {
-  const pop = byId(IDS.franchiseSortMenuPopover);
-  const btn = byId(IDS.franchiseSortMenuBtn);
-  if (pop) pop.setAttribute('hidden', '');
-  if (btn) btn.setAttribute('aria-expanded', 'false');
-}
-function setFranchiseSortFromMenu(type) {
-  _closeFranchiseSortMenu();
-  setSort(type);
-}
+// v1.0.247 — the separate franchise sort dropdown (v1.0.212) was removed.
 
 // Sort types where ascending is the natural first direction
 const _ascFirstSorts = new Set(['title', 'confidence']);
 
 function setSort(type) {
-  if (type === 'tier') type = 'elo'; // v1.0.242 — Tier sort removed; any stale caller gets ELO
+  if (type === 'tier' || type === 'peak' || type === 'members') type = 'elo'; // removed sorts (v1.0.242 Tier, v1.0.247 franchise-only) fall back to ELO
   if (currentSort === type) {
     sortAsc = !sortAsc;
   } else {
@@ -18779,6 +18780,7 @@ function toggleAvatarMenu(event, which) {
   const willOpen = !drop.classList.contains('open');
   closeAvatarMenus();
   if (willOpen) {
+    _updateCloudSyncTimestamp(); // v1.0.247 — fresh "Synced N min ago" on open
     drop.classList.add('open');
     badge?.setAttribute('aria-expanded', 'true');
     // Close when next click lands outside the badge
@@ -19330,7 +19332,6 @@ function applyTrioResult() {
   _updateDailyStreak();
   for (let i = 0; i < 3; i++) _tickWeeklyStats();
   _metric('battle');
-  _maybeSaveTasteSnapshot();
   // v1.0.211 — Battle Within Franchise auto-completion. Records all three
   // implied pairs from the trio result. If this round filled the last
   // remaining pairs, the completion check fires inside the third call and
@@ -19752,11 +19753,9 @@ function finishTower() {
   // called — the tower already has its own summary screen.
   checkMilestone(_towerStartBattleCount, battleCount);
   _checkAchievements();
-  // v1.0.209 — also save a taste snapshot if the tower run crossed a
-  // 50-battle milestone. Without this, a user whose first 50 battles were
-  // all in tower mode never got a baseline snapshot, so the "How you've
-  // changed" timeline rendered empty even after they crossed the threshold.
-  _maybeSaveTasteSnapshot();
+  // (v1.0.247 — the taste-snapshot check moved into saveState, which every
+  // tower round already calls, so a run crossing a 50-battle milestone is
+  // recorded at the round that crosses it.)
   byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
   byId(IDS.battlePromptP).textContent  = 'Click your favourite — or skip if you can\'t decide.';
   byId(IDS.undoBtn).disabled = true;
@@ -21269,18 +21268,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.246 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.247 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '👥 Social has one username box. Type a friend\'s AniList or MAL name once and choose Compare tastes or 🎮 Challenge — there were two look-alike inputs for the two features before. Watch Together and Live Challenge sit underneath as "Play together".',
-    '🎯 Discover cards are the same size as your ranking cards on desktop — six across instead of four oversized posters — so a "Because you loved…" row no longer fills the whole screen.',
-    '🎨 Profile › Taste between 20 and 50 battles shows one line saying what unlocks at 50 (and how many to go) instead of three stacked "come back later" cards; the genre, era, studio and community panels are live underneath.',
-    '⚙️ Manage has a Notifications entry that opens the bell\'s settings, for anyone who looks for them under settings first.',
-    '🧹 Help cards pack without the empty block next to the tall Battle Modes card, and the keyboard hint under the battle buttons hides while the Mode or Filter menu is open instead of peeking out from behind it.',
+    '🧩 Missing can be filtered by relation as well as format — hide spin-offs or side stories with one tap on the new "Relations shown" chips, and the choice sticks between visits.',
+    '⛓ Franchise mode lost its second sort menu. The normal Sort menu already orders franchises by their average ELO, total battles and so on, so the extra "Top ELO / Members" dropdown was just clutter.',
+    '📈 Taste evolution snapshots can no longer be skipped: every mode that counts a battle now records the 50-battle milestone the moment it is crossed. Where an older milestone genuinely wasn\'t saved, the dotted arrow now says which one.',
+    '🎯 "Because you loved…" groups fill out. Each seed now draws from 50 AniList recommendations instead of 25, so a show whose suggestions you have mostly already watched still fills the row. Long "Part of …" notes on cards are clamped to two lines.',
+    '☁️ Tap your avatar to see when your rankings last synced to the cloud. The little status dot in the header stays a brief flash after each save; the standing answer lives in the menu.',
   ],
 };
 
