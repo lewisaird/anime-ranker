@@ -434,7 +434,7 @@
     #filter-popover {
       display: none; position: absolute; top: calc(100% + 6px); right: 0;
       background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px;
-      padding: 12px; z-index: 100; min-width: 240px;
+      padding: 12px; z-index: 100; min-width: 300px; /* v1.0.244 — was 240px: section headings and the toggle subtitles wrapped */
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
       /* v1.0.237 — Bound the popover height and make its content scroll
          internally. On iOS Safari, an absolute-positioned element that
@@ -656,6 +656,8 @@
       text-align: left;
     }
     @media (hover: hover) { .mode-popover-action:hover { background: var(--border-subtle); } }
+    /* v1.0.244 — Tower item reads as "current" during a run, same as a checked radio item */
+    .mode-popover-action.is-current { background: #1f2937; }
     #mode-btn.active-tower { background: var(--hover-amber-bg); border-color: #9e6a03; color: #e3b341; }
 
     .btn-danger {
@@ -687,7 +689,17 @@
       display: grid;
       grid-template-columns: 1fr auto 1fr;
       gap: 16px;
-      align-items: center;
+      /* v1.0.244 — stretch (was center): both cards share the taller card's
+         height, so opening "About" on one no longer re-centres the other. */
+      align-items: stretch;
+    }
+    .battle-arena .vs-divider { align-self: center; }
+    /* v1.0.244 — reserve the episode line and two title lines so a card with
+       no episode count (ONE PIECE) or a one-line title doesn't sit higher
+       than its opponent. */
+    #ep-meta-a, #ep-meta-b, .ep-meta-trio { min-height: 21px; }
+    @media (min-width: 601px) {
+      .anime-card .title { min-height: 2.6em; display: flex; align-items: center; justify-content: center; }
     }
 
     .anime-card {
@@ -1041,6 +1053,23 @@
       max-height: 130px;
       overflow-y: auto;
       width: 100%;
+      /* v1.0.244 — Mac overlay scrollbars are invisible until you scroll, so
+         a long synopsis looked cut off. Always-visible thin scrollbar plus a
+         sticky fade along the bottom edge that says "there's more". */
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-default) transparent;
+    }
+    .synopsis-panel::-webkit-scrollbar { width: 6px; }
+    .synopsis-panel::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+    .synopsis-panel.is-scrollable::after {
+      content: '';
+      display: block;
+      position: sticky;
+      bottom: -10px;
+      height: 26px;
+      margin: -26px -12px -10px;
+      background: linear-gradient(to bottom, transparent, var(--bg-primary));
+      pointer-events: none;
     }
 
     /* ── Tower of Power first-use tip (§5.2.2) ────────────────────────────
@@ -2954,10 +2983,12 @@
       width: 100%; min-height: 44px; font-size: 0.88rem; margin-bottom: 16px;
     }
 
+    /* v1.0.244 — the 3,700-character link is no longer shown as a wall of
+       base64; the textarea stays in the DOM (visually hidden) purely as the
+       select()+execCommand fallback for copyShareLink. */
     #share-url {
-      width: 100%; background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 6px;
-      color: var(--text-bright); font-size: 0.72rem; padding: 8px 10px; box-sizing: border-box;
-      font-family: monospace; resize: none; height: 60px; display: block; margin-bottom: 8px;
+      position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden;
+      pointer-events: none; left: -9999px;
     }
     .share-copy-link { width: 100%; min-height: 40px; margin-bottom: 12px; }
 
@@ -3041,6 +3072,7 @@
     @media (hover: none) and (pointer: coarse) {
       .kb-hints { display: none; }
     }
+    #battle-screen.trio .kb-hints { display: none; } /* v1.0.244 — ←/→ mean nothing with three cards */
     .kb-hints kbd {
       background: var(--border-subtle); border: 1px solid var(--border-default); border-radius: 4px;
       padding: 1px 5px; font-size: 0.7rem; color: var(--text-secondary); font-family: inherit;
@@ -4033,7 +4065,26 @@
       background: linear-gradient(90deg, var(--accent-amber), #f0c040);
       transition: width 0.3s ease;
     }
-    #tower-status { display: none; }
+    /* v1.0.244 — Tower banner: same shape as the other mode banners (text +
+       stop button), amber palette to match the Tower progress bar. Shown via
+       inline display:flex from _setTowerChrome. */
+    #tower-status {
+      display: none;
+      background: linear-gradient(90deg, #2a2008, #241b08);
+      border: 1px solid #9e6a03;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 0.82rem;
+      color: #e3b341;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    body.light-mode #tower-status { background: linear-gradient(90deg, #fdf3d7, #fbe9b8); }
+    body.light-mode #tower-status,
+    body.light-mode #tower-status button { color: #9a6700; border-color: #9a6700; }
 
     /* TOWER SUMMARY */
     #tower-summary-screen { display: none; }
@@ -4293,17 +4344,24 @@
     @media (hover: hover) { #tab-panel-profile .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
 
     /* DISCOVER SUB-TABS (For You / This Season / Predict) */
+    /* v1.0.244 — sub-tabs + Refresh in one centred row; labels never wrap */
+    .discover-tabs-row {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      margin: 0 auto 16px; max-width: 600px;
+    }
     #tab-panel-discover .source-tabs {
       display: flex;
       gap: 0;
       border: 1px solid var(--border-default);
       border-radius: 8px;
       overflow: hidden;
-      margin-bottom: 4px;
+      margin-bottom: 0;
+      flex: 1;
+      min-width: 0;
     }
     #tab-panel-discover .source-tab {
       flex: 1;
-      padding: 9px 20px;
+      padding: 9px 10px;
       background: var(--bg-secondary);
       color: var(--text-secondary);
       font-size: 0.88rem;
@@ -4311,6 +4369,18 @@
       cursor: pointer;
       border: none;
       transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .discover-refresh-btn {
+      flex-shrink: 0; background: none; border: 1px solid var(--border-default); color: var(--text-secondary);
+      border-radius: 6px; padding: 8px 10px; cursor: pointer; font-size: 0.8rem; line-height: 1;
+    }
+    @media (hover: hover) { .discover-refresh-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); } }
+    @media (max-width: 600px) {
+      #tab-panel-discover .source-tab { padding: 8px 4px; font-size: 0.78rem; }
+      #tab-panel-discover .source-tab .st-emoji { display: none; }
+      .discover-refresh-btn { width: 36px; height: 36px; padding: 0; font-size: 1rem; }
+      .discover-refresh-btn .discover-refresh-label { display: none; }
     }
     #tab-panel-discover .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
     @media (hover: hover) { #tab-panel-discover .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
@@ -4489,15 +4559,18 @@
       gap: 3px; padding: 8px 10px;
       border-radius: 8px; border: 1px solid var(--border-default);
       background: var(--bg-primary); min-width: 70px; flex: 1;
-      opacity: 0.4;
+      /* v1.0.244 — locked tiers were opacity 0.4 on top of #484f58 text: the
+         requirement ("10 anime at ELO 1400+") was unreadable. Dim only the
+         icon now; label/requirement use the normal secondary text colour. */
+      opacity: 1;
     }
-    .ach-tier.unlocked { opacity: 1; }
+    .ach-tier:not(.unlocked) .ach-icon { opacity: 0.35; filter: grayscale(1); }
     .ach-tier.unlocked.bronze { border-color: #cd7f32; background: #1a1208; }
     .ach-tier.unlocked.silver { border-color: #a0a0a0; background: #111418; }
     .ach-tier.unlocked.gold   { border-color: #ffd700; background: #181400; }
     .ach-tier .ach-icon  { font-size: 1.3rem; }
-    .ach-tier .ach-label { font-size: 0.68rem; font-weight: 700; color: #484f58; }
-    .ach-tier .ach-req   { font-size: 0.65rem; color: #484f58; text-align: center; }
+    .ach-tier .ach-label { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); }
+    .ach-tier .ach-req   { font-size: 0.65rem; color: var(--text-secondary); text-align: center; }
     .ach-tier.unlocked.bronze .ach-label { color: #cd7f32; }
     .ach-tier.unlocked.silver .ach-label { color: #c0c0c0; }
     .ach-tier.unlocked.gold   .ach-label { color: #ffd700; }

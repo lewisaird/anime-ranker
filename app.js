@@ -232,6 +232,13 @@ const IDS = Object.freeze({
   towerResultsList:       'tower-results-list',
   towerSearch:            'tower-search',
   towerStatus:            'tower-status',
+  towerStatusText:        'tower-status-text',
+  excludedSection:        'excluded-section',
+  filterWatchStatus:      'filter-watch-status',
+  keepRankingBtn:         'keep-ranking-btn',
+  modeTowerItem:          'mode-tower-item',
+  modeExitTower:          'mode-exit-tower',
+  progressBarWrap:        'progress-bar-wrap',
   towerSummaryScreen:     'tower-summary-screen',
   towerSummarySub:        'tower-summary-sub',
   towerSummaryTitle:      'tower-summary-title',
@@ -3822,6 +3829,10 @@ function pickWinner(side) {
       streak:       wsoStreak,
       facedOrder:   wsoFacedOrder.slice(),
     } : null,
+    // v1.0.244 — daily streak + weekly tally as they were before this pick, so
+    // undoing the day's only battle also takes the "🔥 1d" badge back.
+    dailyStreak:   { ..._dailyStreak },
+    weeklyBattles: _weeklyStats.battlesThisWeek || 0,
   };
 
   // Apply ELO changes and record history
@@ -3870,6 +3881,7 @@ function pickWinner(side) {
   checkMilestone(prevCount, battleCount);
   checkSessionSummary();
   _checkAchievements();
+  snap.unlockedNow = _lastUnlocked.slice(); // v1.0.244 — badges this pick earned; undo takes them back
   _maybeSaveTasteSnapshot();
   _syncTasteNewBadge();
   _updateDailyStreak();  // v1.0.238 — daily streak counter, mid-session no-op after first decision of the day
@@ -3939,6 +3951,26 @@ function _updateUndoBtn() {
   btn.title    = undoStack.length > 1 ? `Undo (${undoStack.length} available)` : 'Undo last battle';
 }
 
+// v1.0.244 — Put back the daily streak, the weekly tally and any achievements
+// the undone battle unlocked. Called for both the pair and the trio branches
+// of undoLast; a skip/exclude snapshot carries none of these fields, so it's
+// a no-op there.
+function _undoSideEffects(snap) {
+  if (snap.dailyStreak) {
+    _dailyStreak = { ...snap.dailyStreak };
+    _renderDailyStreakBadge();
+  }
+  if (typeof snap.weeklyBattles === 'number') {
+    _weeklyStats.battlesThisWeek = snap.weeklyBattles;
+  }
+  if (Array.isArray(snap.unlockedNow) && snap.unlockedNow.length) {
+    for (const id of snap.unlockedNow) delete achievements[id];
+    if (byId(IDS.tabPanelProfile)?.style.display !== 'none' && _activeProfileSub === 'achievements') {
+      renderAchievementsTab();
+    }
+  }
+}
+
 function undoLast() {
   if (_inResultBeat()) return; // v1.0.242 — the snapshot for the pick on screen is already pushed; wait for the paint
   _metric('undo');  // v1.0.239 — usage metrics
@@ -4006,6 +4038,7 @@ function undoLast() {
     // Show the same trio again with no picks
     currentTrio = snap.indices.slice();
     trioOrder   = [];
+    _undoSideEffects(snap); // v1.0.244
     _paintTrio();
     updateProgress();
     saveState();
@@ -4039,6 +4072,7 @@ function undoLast() {
     // Show the original pair
     renderPair(pairA, pairB);
     _renderWsoBadge(false); // v1.0.207 — refresh badge after WSO state restore
+    _undoSideEffects(snap); // v1.0.244 — streak / weekly tally / badges from this pick
     updateProgress();
     saveState();
   }
@@ -5792,6 +5826,8 @@ function showResults() {
   byId(IDS.resultsSubtitle).textContent = battleCount === 0
     ? 'No battles yet · Rankings take shape as you battle'
     : `After ${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · Rankings update as you keep going`;
+  const keepBtn = byId(IDS.keepRankingBtn);
+  if (keepBtn) keepBtn.textContent = battleCount === 0 ? '▶ Start Ranking' : '▶ Keep Ranking'; // v1.0.244
 
   syncFormatButtons();
   syncEpRangeButtons();
@@ -6807,12 +6843,13 @@ function refreshDiscover() {
   const btn  = byId(IDS.discoverRefreshBtn);
   grid.innerHTML = '';
   grid.style.display = 'grid';
-  if (btn) { btn.textContent = '↻ Refreshing…'; btn.disabled = true; }
+  // v1.0.244 — label lives in a span so phones can show the icon alone
+  if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refreshing…</span>'; btn.disabled = true; }
   const tabAtLoad = recsTab;
   _loadRecsGrid().then(() => {
     _recsCache[tabAtLoad] = { html: grid.innerHTML, gridDisplay: grid.style.display };
     _recsLoadedTab = tabAtLoad;
-    if (btn) { btn.textContent = '↻ Refresh'; btn.disabled = false; }
+    if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refresh</span>'; btn.disabled = false; }
   });
 }
 
@@ -12783,6 +12820,17 @@ async function fetchGuestPool() {
   });
 }
 
+// v1.0.244 — guest sessions have no list behind them: no watch statuses to
+// filter on and nothing for push notifications to watch. Used to hide those
+// controls rather than show toggles that can't do anything.
+function _isGuestSession() {
+  // startGuestMode sets KESSEN_KEYS.session.guest, but the loadState('guest')
+  // call right after it re-derives the key through the anilist() builder, so
+  // in practice a guest session runs under 'kessen.session.anilist.guest'.
+  // Accept both.
+  return saveKey === KESSEN_KEYS.session.guest || saveKey === KESSEN_KEYS.session.anilist('guest');
+}
+
 async function startGuestMode() {
   const myGen = ++_loadGeneration;
   hide('username-screen');
@@ -12934,6 +12982,10 @@ function toggleExcluded() { switchResultsTab('rankings'); }
 function renderExcluded() {
   const excluded = animeList.filter(a => excludedIds.has(a.id));
   const listEl = byId(IDS.excludedList);
+  // v1.0.244 — the whole section hides when nothing is excluded, instead of
+  // a permanent "No anime excluded yet." card at the foot of 250 rankings.
+  const section = byId(IDS.excludedSection);
+  if (section) section.style.display = excluded.length ? '' : 'none';
   if (excluded.length === 0) {
     listEl.innerHTML = '<p style="text-align:center;color:#8b949e;padding:16px">No anime excluded yet.</p>';
   } else {
@@ -12961,6 +13013,8 @@ function reAddAnime(id) {
   const listEl = byId(IDS.excludedList);
   if (listEl.children.length === 0) {
     listEl.innerHTML = '<p style="text-align:center;color:#8b949e;padding:16px">No anime excluded yet.</p>';
+    const section = byId(IDS.excludedSection);
+    if (section) section.style.display = 'none'; // v1.0.244
   }
 }
 
@@ -13765,7 +13819,7 @@ function shareRankings() {
   const copyBtn = byId(IDS.copyBtn);
   if (copyBtn) copyBtn.textContent = '📋 Copy link';
   const subEl = byId(IDS.shareModal)?.querySelector('.share-subtitle');
-  if (subEl) subEl.textContent = 'Export your tier list as an image — or share a link to your top 20.';
+  if (subEl) subEl.textContent = 'Export your tier list as an image — or copy a link to your top 20.';
   _updateShareModalCapabilities();
   byId(IDS.shareModal).style.display = 'flex';
   pushModalBack('share', closeShare);
@@ -14239,9 +14293,14 @@ const ACHIEVEMENT_DEFS = [
   },
 ];
 
+// v1.0.244 — ids unlocked by the most recent _checkAchievements() pass, so a
+// battle's undo snapshot can revert exactly the badges that battle earned.
+let _lastUnlocked = [];
+
 function _tryUnlock(id, condition, toastName) {
   if (!condition || achievements[id]) return;
   achievements[id] = { unlockedAt: new Date().toISOString() };
+  _lastUnlocked.push(id);
   saveState();
   showToast(`🏆 Achievement unlocked: ${toastName}`, 4000);
   // Refresh achievements panel if Profile → Achievements is currently visible
@@ -14251,6 +14310,7 @@ function _tryUnlock(id, condition, toastName) {
 }
 
 function _checkAchievements() {
+  _lastUnlocked = []; // v1.0.244 — fresh list per pass (see undoLast)
   if (!animeList.length) return;
 
   // v1.0.211 — Achievement rework. Was Battle Hardened (raw battle
@@ -14843,6 +14903,8 @@ function toggleSynopsis(event, side) {
   if (panel.style.display === 'none') {
     panel.style.display = 'block';
     panel.scrollTop = 0;
+    // v1.0.244 — the bottom fade only makes sense when there's more to scroll
+    panel.classList.toggle('is-scrollable', panel.scrollHeight > panel.clientHeight + 2);
   } else {
     panel.style.display = 'none';
   }
@@ -18002,6 +18064,33 @@ function _setFilterBtnTowerLock(locked) {
     : 'Filter formats from battle pool';
 }
 
+// v1.0.244 — One place that shows/hides the Tower chrome: the round progress
+// bar, the Tower banner (text + Exit button), the "Exit Tower" item in the
+// mode menu, the "current" highlight on the Tower item, and the generic
+// confidence bar under the header (hidden during a run so there aren't two
+// bars stacked). Called from startTower, _exitTowerState and finishTower.
+function _setTowerChrome(on) {
+  const disp = on ? 'flex' : 'none';
+  byId(IDS.towerProgressWrap)?.style.setProperty('display', on ? 'block' : 'none');
+  byId(IDS.towerStatus)?.style.setProperty('display', disp);
+  byId(IDS.modeExitTower)?.style.setProperty('display', disp);
+  byId(IDS.modeTowerItem)?.classList.toggle('is-current', on);
+  byId(IDS.progressBarWrap)?.style.setProperty('display', on ? 'none' : '');
+  // Radio items: none is checked during a run; Standard is restored on exit
+  // (setMode re-syncs them properly when another mode is picked).
+  document.querySelectorAll('#mode-popover [role="menuitemradio"]').forEach(el => {
+    el.setAttribute('aria-checked', !on && el.dataset.mode === 'normal' ? 'true' : 'false');
+  });
+}
+
+// v1.0.244 — Mode-menu / banner "Exit Tower". setMode('normal') tears the
+// run down via _exitTowerState and re-picks a standard pair.
+function exitTowerEarly() {
+  if (!towerMode) return;
+  setMode('normal');
+  showToast('Tower run abandoned — back to standard battles.');
+}
+
 function _exitTowerState() {
   if (!towerMode) return;
   towerMode      = false;
@@ -18009,8 +18098,7 @@ function _exitTowerState() {
   towerResults   = [];
   towerChampIdx  = -1;
   towerRound     = 0;
-  byId(IDS.towerProgressWrap)?.style.setProperty('display', 'none');
-  byId(IDS.towerStatus)?.style.setProperty('display', 'none');
+  _setTowerChrome(false);
   byId(IDS.battlePromptH2).textContent = 'Which did you enjoy more?';
   byId(IDS.battlePromptP).textContent  = "Click your favourite — or skip if you can't decide.";
   const undo = byId(IDS.undoBtn);
@@ -18041,7 +18129,7 @@ function _exitNonTowerModes() {
   byId(IDS.trioBanner)?.classList.remove('active');
   byId(IDS.wsoBanner)?.classList.remove('active');
   const screen = byId(IDS.battleScreen);
-  if (screen) screen.classList.remove('blind');
+  if (screen) screen.classList.remove('blind', 'trio');
   const stdArena  = document.querySelector('.battle-arena');
   const trioArena = byId(IDS.trioArena);
   if (stdArena)  stdArena.style.display  = '';
@@ -18060,6 +18148,7 @@ function setMode(name) {
   // If currently in tower, exit cleanly first. Tower is mutually exclusive
   // with the standard modes — keeping its flag set would route every battle
   // pick through pickWinnerTower regardless of the visible UI.
+  const wasTower = towerMode; // v1.0.244 — re-pick below so the champion/opponent pair doesn't linger
   _exitTowerState();
 
   const prevSettle = settleMode;
@@ -18100,6 +18189,7 @@ function setMode(name) {
   // Blind CSS class on the battle screen
   const screen = byId(IDS.battleScreen);
   if (screen) screen.classList.toggle('blind', blindMode);
+  if (screen) screen.classList.toggle('trio', trioMode); // v1.0.244 — hides the ←/→ keyboard hint (three cards, no left/right)
 
   // Toggle between standard battle arena and trio arena
   const stdArena  = document.querySelector('.battle-arena');
@@ -18118,6 +18208,7 @@ function setMode(name) {
   if (settleMode && !prevSettle) { renderBattle(); return; }
   if (trioMode   && !prevTrio)   { renderTrio();   return; }
   if (wsoMode    && !prevWso)    { renderBattle(); return; } // v1.0.207
+  if (wasTower   && !trioMode)   { renderBattle(); return; } // v1.0.244 — fresh standard pair after a Tower exit
   // Exiting trio or wso → back to normal pair
   if (!trioMode  && prevTrio)    { renderBattle(); return; }
   if (!wsoMode   && prevWso)     { renderBattle(); return; } // v1.0.207
@@ -18365,6 +18456,7 @@ function bulkExcludeFranchise(name) {
         if (trioMode) renderTrio(); else renderBattle();
       } else {
         renderRankingList();
+        renderExcluded(); // v1.0.244 — the Excluded section is hidden while empty; show it now
       }
     }
   );
@@ -18441,6 +18533,24 @@ function closeAvatarMenus() {
   });
 }
 
+// v1.0.244 — Desktop popovers open downward by default; on a laptop-height
+// window the Mode menu (six items) started around y=610 and ran past the
+// fold. If there isn't room below the button but there is above, anchor the
+// popover to the button's top edge instead. Mobile is untouched (bottom
+// sheets, positioned by CSS).
+function _flipPopoverIfNoRoom(pop, btn) {
+  pop.style.top = '';
+  pop.style.bottom = '';
+  if (window.matchMedia('(max-width: 600px)').matches) return;
+  const b = btn.getBoundingClientRect();
+  const needed = pop.offsetHeight + 12;
+  const below = window.innerHeight - b.bottom;
+  if (needed > below && b.top > needed) {
+    pop.style.top = 'auto';
+    pop.style.bottom = 'calc(100% + 6px)';
+  }
+}
+
 function toggleModeMenu(event) {
   if (event) event.stopPropagation();
   const pop = byId(IDS.modePopover);
@@ -18458,8 +18568,7 @@ function toggleModeMenu(event) {
     // rules in styles.css. Show the backdrop on mobile so tap-outside
     // works and the page dims behind the sheet.
     pop.style.maxHeight = '';
-    pop.style.top       = '';
-    pop.style.bottom    = '';
+    _flipPopoverIfNoRoom(pop, btn); // v1.0.244
     if (window.matchMedia('(max-width: 600px)').matches && backdrop) {
       backdrop.classList.add('open');
     }
@@ -18510,6 +18619,9 @@ function toggleFilterMenu(event) {
     const isMobile = window.matchMedia('(max-width: 600px)').matches;
     if (isMobile && backdrop) backdrop.classList.add('open');
     syncFormatButtons();
+    const ws = byId(IDS.filterWatchStatus);
+    if (ws) ws.style.display = _isGuestSession() ? 'none' : ''; // v1.0.244 — guests have no watch statuses
+    _flipPopoverIfNoRoom(pop, btn); // v1.0.244 — after syncFormatButtons so the height is final
     setTimeout(() => document.addEventListener('click', _filterOutsideClick), 0);
     document.addEventListener('keydown', _filterMenuEscHandler);
   } else {
@@ -18758,6 +18870,7 @@ function trioToggleSynopsis(event, pos) {
   const panel = document.getElementById(`synopsis-trio-${pos}`);
   if (!panel) return;
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') panel.classList.toggle('is-scrollable', panel.scrollHeight > panel.clientHeight + 2); // v1.0.244
 }
 
 function trioExcludeAnime(event, pos) {
@@ -18837,6 +18950,8 @@ function applyTrioResult() {
     ],
     battleCount,
     matchupData: [],
+    dailyStreak:   { ..._dailyStreak },                 // v1.0.244 — see _undoSideEffects
+    weeklyBattles: _weeklyStats.battlesThisWeek || 0,
   };
 
   // 3 implied battles: 1st>2nd, 1st>3rd, 2nd>3rd
@@ -18905,6 +19020,12 @@ function applyTrioResult() {
   for (let i = 1; i <= 3; i++) checkMilestone(prevCount + i - 1, prevCount + i);
   checkSessionSummary();
   _checkAchievements();
+  snap.unlockedNow = _lastUnlocked.slice(); // v1.0.244
+  // v1.0.244 — trio rounds now count toward the daily streak and the weekly
+  // tally like standard picks do (they were skipped before).
+  _updateDailyStreak();
+  for (let i = 0; i < 3; i++) _tickWeeklyStats();
+  _metric('battle');
   _maybeSaveTasteSnapshot();
   // v1.0.211 — Battle Within Franchise auto-completion. Records all three
   // implied pairs from the trio result. If this round filled the last
@@ -19200,12 +19321,13 @@ function startTower(championIdx) {
   show('battle-screen');
   hide('results-screen');
   hide('tower-summary-screen');
-  byId(IDS.towerProgressWrap).style.display = 'block';
-  byId(IDS.towerStatus).style.display = 'block';
+  _setTowerChrome(true); // v1.0.244 — banner + Exit item + single progress bar
   byId(IDS.undoBtn).disabled  = true;
   byId(IDS.skipBtn).disabled  = true;
   byId(IDS.battlePromptH2).textContent = '⚡ Tower of Power';
-  byId(IDS.battlePromptP).textContent  = `Round ${towerRound + 1} of ${TOWER_ROUNDS}`;
+  // v1.0.244 — the round counter lives in the banner only (it was printed
+  // twice: "Round 1 / 10" in the status line and "Round 1 of 10" here).
+  byId(IDS.battlePromptP).textContent  = `Pick the winner — your champion faces ${TOWER_ROUNDS} opponents in a row.`;
 
   renderTowerRound();
 }
@@ -19270,10 +19392,8 @@ function renderTowerRound() {
 
   const pct = (towerRound / TOWER_ROUNDS) * 100;
   byId(IDS.towerProgressBar).style.width = pct + '%';
-  byId(IDS.towerStatus).textContent =
-    `⚡ ${displayTitle(animeList[towerChampIdx])} — Round ${towerRound + 1} / ${TOWER_ROUNDS}`;
-  byId(IDS.battlePromptP).textContent =
-    `Round ${towerRound + 1} of ${TOWER_ROUNDS}`;
+  byId(IDS.towerStatusText).textContent =
+    `⚡ ${displayTitle(animeList[towerChampIdx])} · Round ${towerRound + 1} of ${TOWER_ROUNDS}`;
 
   // Champion always on left (index A)
   renderPair(towerChampIdx, towerOpponents[towerRound]);
@@ -19318,8 +19438,7 @@ function finishTower() {
   const modeBtn = byId(IDS.modeBtn);
   if (modeBtn) { modeBtn.classList.remove('active-tower'); modeBtn.textContent = '⚙ Mode ▾'; }
   _setFilterBtnTowerLock(false); // v1.0.209
-  byId(IDS.towerProgressWrap).style.display = 'none';
-  byId(IDS.towerStatus).style.display = 'none';
+  _setTowerChrome(false); // v1.0.244
 
   // v1.0.172 — battleCount is now incremented per round inside
   // pickWinnerTower, so by the time we get here it already reflects the
@@ -20846,17 +20965,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.243 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.244 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '📱 All six tabs are visible on phones. Rankings · Battles · Profile on one row, Discover · Social · Manage on the next. Before, the last two were off the right edge of a scrolling strip with nothing to say they existed.',
-    '📱 The Rankings page starts higher on phones. Keep Ranking, Share and Help now sit on one row, the sentence under the button is gone, the "Filters:" label and "Sort:" prefix are dropped, and the sort dropdown, Fuzzy, Franchise and view toggles share a single row — the first anime card is roughly 200px nearer the top.',
-    '📱 Sign in first on phones. The landing page put three explainer cards above the AniList / MAL buttons, which landed below the fold; the buttons and Guest Mode now come straight after the title, with the explainer underneath.',
-    '💡 The "long-press a card" tip on touch screens is a slim bar along the bottom edge instead of a box sitting on top of the Skip / Rankings / Mode buttons, and both first-use tips now clear off when you open Rankings.',
+    '⚡ Tower has a way out. It now shows the same kind of banner as the other modes — "ONE PIECE · Round 3 of 10" with an Exit Tower button — the Mode menu marks Tower as current and offers Exit Tower too, the round count is printed once instead of twice, and the second progress bar is gone. Leaving early gives you a fresh standard pair.',
+    '⚔ Battle cards line up. A card with no episode count (ONE PIECE) or a one-line title no longer sits higher than its opponent; opening "About" doesn\'t shove the other card around; and a long synopsis shows a visible scrollbar and a fade at the bottom instead of looking cut off. On a laptop-height window the Mode and Filter menus open upward when there\'s no room below, the Filter menu is wide enough that its headings don\'t wrap, and "Avoid same franchise" has its own Matchmaking heading.',
+    '🧹 Tidied: Discover\'s sub-tabs stay on one line ("This Season" was wrapping) and the duplicate "Discover" heading is gone; locked achievement requirements are readable; the empty "Excluded from Pool" section is hidden until you exclude something; the Share dialog no longer shows a wall of link text; Trio drops the ←/→ keyboard hint; and Rankings says "Start Ranking" before your first battle.',
+    '🎲 Guest mode hides the watch-status filters and the push-notification toggle, since there\'s no list behind a guest session for either to act on.',
+    '↩ Undo is thorough. Undoing a battle now also takes back any achievement it unlocked, the day\'s streak badge if it was that day\'s first battle, and the weekly tally. Trio rounds count toward your daily streak and weekly total (they didn\'t before).',
   ],
 };
 
@@ -21423,6 +21543,11 @@ function _pushRefreshUI() {
   const cats     = byId(IDS.ncPushCategories);
   const blurb    = byId(IDS.ncPushBlurb);
   if (!section || !masterEl || !cats || !blurb) return;
+
+  // v1.0.244 — nothing to push for a guest (no list to poll, no account to
+  // invite), so the whole section stays hidden.
+  section.style.display = _isGuestSession() ? 'none' : '';
+  if (_isGuestSession()) return;
 
   const supported = _pushIsSupported();
   const vapid     = _pushVapidKey();

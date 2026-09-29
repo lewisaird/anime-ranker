@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.243" />
+  <meta name="version" content="1.0.244" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -823,7 +823,12 @@
   <div id="battle-screen">
     <div id="progress-bar-wrap" title="Ranking confidence — based on how many battles each anime has averaged. Fills faster with a small list, slower with a large one."><div id="progress-bar" style="width:0%"></div></div>
     <div id="tower-progress-wrap"><div id="tower-progress-bar" style="width:0%"></div></div>
-    <div id="tower-status" style="text-align:center;font-size:0.82rem;color:#e3a000;margin-bottom:8px"></div>
+    <!-- v1.0.244 — Tower now has the same banner shape as Settle / Blind / Trio /
+         WSO (text + Stop button) instead of a bare status line with no way out. -->
+    <div id="tower-status">
+      <span id="tower-status-text"></span>
+      <button onclick="exitTowerEarly()" style="background:none;border:1px solid #9e6a03;color:#e3b341;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Exit Tower</button>
+    </div>
 
     <div id="pool-warning-banner">
       <span id="pool-warning-text">⚠️ Almost all anime are filtered out — only a few battles are possible.</span>
@@ -940,9 +945,14 @@
             <span class="mode-text"><span class="mode-name">Winner Stays</span><span class="mode-desc">Champion takes on a new challenger every round</span></span>
           </button>
           <hr class="mode-popover-divider" />
-          <button type="button" class="mode-popover-action" onclick="openTowerModal();_closeModeMenu()">
+          <button type="button" class="mode-popover-action" id="mode-tower-item" onclick="openTowerModal();_closeModeMenu()">
             <span class="mode-icon" aria-hidden="true">⚡</span>
             <span class="mode-text"><span class="mode-name">Tower</span><span class="mode-desc">Pick a champion — face 10 opponents</span></span>
+          </button>
+          <!-- v1.0.244 — only shown while a Tower run is active -->
+          <button type="button" class="mode-popover-action" id="mode-exit-tower" style="display:none" onclick="exitTowerEarly();_closeModeMenu()">
+            <span class="mode-icon" aria-hidden="true">✕</span>
+            <span class="mode-text"><span class="mode-name">Exit Tower</span><span class="mode-desc">Abandon this run and go back to standard battles</span></span>
           </button>
         </div>
       </div>
@@ -968,6 +978,8 @@
                default. Users with active shows often want to keep them out
                of the pool until they're done. Two checkboxes since Completed
                is implicit (excluding it would empty the pool). -->
+          <!-- v1.0.244 — wrapped so guest sessions (no list, no statuses) can hide it -->
+          <div id="filter-watch-status">
           <div class="filter-divider"></div>
           <div class="filter-popover-title" style="margin-top: 4px">Watch statuses to keep in pool</div>
           <label class="filter-toggle-row" for="hide-current-chk">
@@ -984,12 +996,15 @@
               <span class="filter-toggle-sub">Skip shows you're going through again</span>
             </span>
           </label>
+          </div>
           <!-- v1.0.211 — Avoid same franchise. When on, the picker skips pairs
                whose anime share a franchise group (so you don't get AoT S1
                vs AoT S2 repeatedly when ranking sequels you've already
                compared). Applies to Classic / Settle / Blind / Trio / WSO. Tower
                uses a softer down-weight instead so small franchises still play. -->
           <div class="filter-divider"></div>
+          <!-- v1.0.244 — its own heading: this is a matchmaking rule, not a watch status -->
+          <div class="filter-popover-title" style="margin-top: 4px">Matchmaking</div>
           <label class="filter-toggle-row" for="avoid-same-franchise-chk">
             <input type="checkbox" id="avoid-same-franchise-chk" onchange="toggleAvoidSameFranchise()" />
             <span class="filter-toggle-text">
@@ -1031,7 +1046,7 @@
 
     <!-- Hero CTA -->
     <div class="results-hero">
-      <button class="btn-keep-ranking" onclick="resumeBattle()">▶ Keep Ranking</button>
+      <button class="btn-keep-ranking" id="keep-ranking-btn" onclick="resumeBattle()">▶ Keep Ranking</button>
       <p id="results-subtitle"></p>
       <div class="results-util-bar">
         <!-- v1.0.243 — labels hide on phones (icon-only squares next to Keep Ranking) -->
@@ -1246,18 +1261,17 @@
     <!-- ── DISCOVER panel ─────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-discover" style="display:none">
       <div id="recs-section">
-        <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:4px">
-          <h3 style="margin:0">🎯 Discover</h3>
-          <button onclick="refreshDiscover()" id="discover-refresh-btn" title="Refresh recommendations"
-            style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.8rem;line-height:1">
-            ↻ Refresh
-          </button>
-        </div>
-        <div class="source-tabs" style="max-width:450px;width:100%;margin:0 auto 16px">
-          <button class="source-tab active" id="recs-tab-foryou"   onclick="setRecsTab('foryou')">✨ For You</button>
-          <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')">📅 This Season</button>
-          <button class="source-tab"        id="recs-tab-predict"  onclick="setRecsTab('predict')">🔮 Predict</button>
-          <button class="source-tab"        id="recs-tab-gaps"     onclick="setRecsTab('gaps')">🧩 Missing</button>
+        <!-- v1.0.244 — the "🎯 Discover" heading (a repeat of the tab name) is
+             gone; Refresh sits beside the sub-tabs. Emoji in spans so phones
+             can drop them and keep "This Season" on one line. -->
+        <div class="discover-tabs-row">
+          <div class="source-tabs">
+            <button class="source-tab active" id="recs-tab-foryou"   onclick="setRecsTab('foryou')"><span class="st-emoji">✨ </span>For You</button>
+            <button class="source-tab"        id="recs-tab-seasonal" onclick="setRecsTab('seasonal')"><span class="st-emoji">📅 </span>This Season</button>
+            <button class="source-tab"        id="recs-tab-predict"  onclick="setRecsTab('predict')"><span class="st-emoji">🔮 </span>Predict</button>
+            <button class="source-tab"        id="recs-tab-gaps"     onclick="setRecsTab('gaps')"><span class="st-emoji">🧩 </span>Missing</button>
+          </div>
+          <button onclick="refreshDiscover()" id="discover-refresh-btn" class="discover-refresh-btn" title="Refresh recommendations" aria-label="Refresh recommendations">↻<span class="discover-refresh-label"> Refresh</span></button>
         </div>
         <p class="recs-sub" id="recs-sub-text">Based on your top-ranked anime — titles you haven't seen yet that AniList thinks you'll love.</p>
 
@@ -1912,7 +1926,7 @@
   <div class="share-box">
     <button class="share-close" onclick="closeShare()" aria-label="Close">✕</button>
     <h3 id="share-modal-title">📤 Share Your Tier List</h3>
-    <p class="share-subtitle">Export your tier list as an image — or share a link to your top 20.</p>
+    <p class="share-subtitle">Export your tier list as an image — or copy a link to your top 20.</p>
 
     <!-- Primary action: native share sheet (mobile) or download (desktop) -->
     <button class="btn-primary share-primary" id="share-primary-btn" onclick="exportTierListImage()">
