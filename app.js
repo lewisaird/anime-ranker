@@ -7006,7 +7006,7 @@ let _franchiseGapsLoading = false;
 // (previously a <select> and a checkbox) to module-level vars so the UI can
 // use the same custom sort-menu-btn / view-btn pattern as Rankings without
 // keeping a hidden form control alongside for state persistence.
-let _franchiseGapsSortMode = 'rel';   // 'rel' | 'titleAsc' | 'titleDesc' | 'yearDesc' | 'yearAsc'
+let _franchiseGapsSortMode = 'yearDesc';   // 'yearDesc' | 'yearAsc' | 'titleAsc' | 'titleDesc' (v1.0.247 — 'rel' catch-up order removed)
 let _franchiseGapsGroupBy  = true;    // franchise (true) vs individual series (false)
 // v1.0.237 — separate hidden-formats set for the Missing tab. Seeded from
 // hiddenFormatsRanking on first render so behaviour matches Rankings by
@@ -7487,39 +7487,21 @@ function _paintGapChipRow(wrap, options, hiddenSet, onChange) {
   }
 }
 
-// v1.0.237 — Relation-type sort weight. Ordered so a sequel appears above a
-// prequel above a side story above a spin-off, which matches how a franchise
-// binge-catch-up flow feels: "what's the direct continuation first, then
-// the branches". Lower = higher priority.
-const FRANCHISE_GAP_REL_ORDER = {
-  SEQUEL:      0,
-  PREQUEL:     1,
-  PARENT:      2,
-  SIDE_STORY:  3,
-  SPIN_OFF:    4,
-  ALTERNATIVE: 5,
-};
+// v1.0.247 — the relation-type "Catch-up order" sort was removed (the
+// relation chips cover that need); newest release year is the default.
 function _gapSortComparator(mode) {
   switch (mode) {
     case 'titleAsc':
       return (a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
     case 'titleDesc':
       return (a, b) => (b.title || '').localeCompare(a.title || '', undefined, { sensitivity: 'base' });
-    case 'yearDesc':
-      return (a, b) => (b.seasonYear || 0) - (a.seasonYear || 0)
-        || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
     case 'yearAsc':
       return (a, b) => (a.seasonYear || 9999) - (b.seasonYear || 9999)
         || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
-    case 'rel':
+    case 'yearDesc':
     default:
-      return (a, b) => {
-        const ra = FRANCHISE_GAP_REL_ORDER[a.relationType] ?? 99;
-        const rb = FRANCHISE_GAP_REL_ORDER[b.relationType] ?? 99;
-        return ra - rb
-          || (b.seasonYear || 0) - (a.seasonYear || 0)
-          || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
-      };
+      return (a, b) => (b.seasonYear || 0) - (a.seasonYear || 0)
+        || (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
   }
 }
 
@@ -7652,9 +7634,7 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   // was insertion order (animeList order, so Cowboy Bebop appeared first
   // regardless of the sort dropdown), which read as "sort is broken". Now
   // sorting by title also orders the parent titles alphabetically; sorting
-  // by year orders groups by their newest/oldest gap. `rel` leaves the
-  // group order alone because it's a per-gap concept — but we do fall back
-  // to alphabetical parent order for a stable, predictable result.
+  // by year orders groups by their newest/oldest gap.
   const groupSort = (a, b) => {
     switch (sortMode) {
       case 'titleAsc':
@@ -7673,12 +7653,12 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
         return yA - yB
           || (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
       }
-      case 'rel':
-      default:
-        // Group order is meaningless when sort is by gap relation type;
-        // fall back to parent alphabetical so the result is stable rather
-        // than dependent on insertion order.
-        return (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
+      default: { // v1.0.247 — 'rel' removed; anything unknown behaves as yearDesc
+        const yA = Math.max(0, ...a.gaps.map(x => x.seasonYear || 0));
+        const yB = Math.max(0, ...b.gaps.map(x => x.seasonYear || 0));
+        return yB - yA
+          || (a.parent.title || '').localeCompare(b.parent.title || '', undefined, { sensitivity: 'base' });
+      }
     }
   };
   visibleGroups.sort(groupSort);
@@ -17067,25 +17047,31 @@ async function applyMoodRec(moodKey) {
   const ownIds  = new Set(animeList.map(a => a.id));
   const usedIds = new Set();
   const groups  = [];
-  const query = `query ($id: Int) {
-    Media(id: $id) {
-      recommendations(perPage: 25, sort: RATING_DESC) {
-        nodes {
-          rating
-          mediaRecommendation {
-            id idMal title { romaji english } coverImage { large medium }
-            averageScore format status genres
-          }
+  // v1.0.247 — same two-page (50 candidate) query and six-per-row cap as
+  // fetchRecommendationsForYou; the mood path had kept the old 25 / 4.
+  const query = `
+    fragment recNodes on RecommendationConnection {
+      nodes {
+        rating
+        mediaRecommendation {
+          id idMal title { romaji english } coverImage { large medium }
+          averageScore format status genres
         }
       }
     }
-  }`;
+    query ($id: Int) {
+      Media(id: $id) {
+        p1: recommendations(page: 1, perPage: 25, sort: RATING_DESC) { ...recNodes }
+        p2: recommendations(page: 2, perPage: 25, sort: RATING_DESC) { ...recNodes }
+      }
+    }`;
 
   for (const seed of seeds) {
     try {
       const res  = await _anilistFetch({ query, variables: { id: seed.id } });
       const json = await res.json();
-      const nodes = json?.data?.Media?.recommendations?.nodes ?? [];
+      const media = json?.data?.Media;
+      const nodes = [...(media?.p1?.nodes ?? []), ...(media?.p2?.nodes ?? [])];
       const recs  = [];
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
@@ -17093,7 +17079,7 @@ async function applyMoodRec(moodKey) {
         // Prefer recs that also match the mood genres
         recs.push({ media: rec, score: n.rating || 1 });
         usedIds.add(rec.id);
-        if (recs.length >= 4) break;
+        if (recs.length >= 6) break;
       }
       if (recs.length) groups.push({ seed, recs });
     } catch { /* skip */ }
