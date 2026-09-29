@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.244" />
+  <meta name="version" content="1.0.245" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -821,7 +821,8 @@
   </div>
 
   <div id="battle-screen">
-    <div id="progress-bar-wrap" title="Ranking confidence — based on how many battles each anime has averaged. Fills faster with a small list, slower with a large one."><div id="progress-bar" style="width:0%"></div></div>
+    <!-- v1.0.245 — fills toward the next battle milestone (title set by updateProgress) -->
+    <div id="progress-bar-wrap" title="Battles toward your next milestone"><div id="progress-bar" style="width:0%"></div></div>
     <div id="tower-progress-wrap"><div id="tower-progress-bar" style="width:0%"></div></div>
     <!-- v1.0.244 — Tower now has the same banner shape as Settle / Blind / Trio /
          WSO (text + Stop button) instead of a bare status line with no way out. -->
@@ -1878,7 +1879,7 @@
         <div class="modal-rank-line" id="modal-rank-line"></div>
         <div class="modal-meta-line" id="modal-meta-line"></div>
         <div class="modal-genres" id="modal-genres"></div>
-        <div class="modal-stats-row">
+        <div class="modal-stats-row" id="modal-stats-row">
           <div class="modal-stat"><span class="val" id="modal-wins">0</span><label>Wins</label></div>
           <div class="modal-stat"><span class="val" id="modal-losses">0</span><label>Losses</label></div>
           <div class="modal-stat"><span class="val" id="modal-elo-val">–</span><label>ELO</label></div>
@@ -1902,6 +1903,11 @@
                curiosity into the rankings. Hidden for franchise modals (no
                single anime to queue). -->
           <button id="modal-battle-next-btn" class="modal-battle-next-btn" onclick="battleNextFromModal()" style="display:none">⚔ Battle Next</button>
+          <!-- v1.0.245 — Discover / Missing detail: add the title to the user's
+               AniList or MAL Planning list without leaving Kessen. Hidden unless
+               the modal is showing a not-yet-owned title (see showDiscoverDetail). -->
+          <button id="modal-planning-btn" class="modal-battle-next-btn" onclick="addToPlanningFromModal()" style="display:none">＋ Add to Planning</button>
+          <span id="modal-planning-note" style="display:none;font-size:0.78rem;color:#8b949e"></span>
           <!-- v1.0.161 — Legacy small "Remove Fuzzy Flag" button kept hidden
                (display:none persistent). The full-width fuzzy notice above
                carries both the explanation and the remove action now. The

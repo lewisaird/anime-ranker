@@ -236,6 +236,9 @@ const IDS = Object.freeze({
   excludedSection:        'excluded-section',
   filterWatchStatus:      'filter-watch-status',
   keepRankingBtn:         'keep-ranking-btn',
+  modalStatsRow:          'modal-stats-row',
+  modalPlanningBtn:       'modal-planning-btn',
+  modalPlanningNote:      'modal-planning-note',
   modeTowerItem:          'mode-tower-item',
   modeExitTower:          'mode-exit-tower',
   progressBarWrap:        'progress-bar-wrap',
@@ -849,6 +852,7 @@ const KESSEN_KEYS = {
     // v1.0.239 — PWA install-prompt dismissal (timestamp). Suppresses the
     // banner for 30 days after the user says "not now".
     installPromptDismissed: 'kessen.ui.installPromptDismissed',
+    gapsView:               'kessen.ui.gapsView',   // v1.0.245 — Missing tab grid/list choice
     // v1.0.237 — Franchise gaps cache: sequels/prequels/spin-offs of anime
     // in the user's list that they haven't watched yet. Cached per user
     // with a weekly TTL — relations rarely change but new sequels get
@@ -3133,11 +3137,22 @@ function _renderDailyStreakBadge() {
   }
 }
 
+// v1.0.245 — The bar under the header now fills toward the next battle
+// milestone and starts again after each one. It used to show the average
+// per-anime confidence (battles ÷ 10 per anime), which for a 367-anime list
+// needed ~3,700 battles to fill — at 200 battles it sat at 5% and read as a
+// stray line. Early rungs are close together so a first session sees it move.
+const _BATTLE_MILESTONE_LADDER = [10, 25, 50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
+function _nextBattleMilestone(count) {
+  for (let i = 0; i < _BATTLE_MILESTONE_LADDER.length; i++) {
+    const m = _BATTLE_MILESTONE_LADDER[i];
+    if (count < m) return { prev: i > 0 ? _BATTLE_MILESTONE_LADDER[i - 1] : 0, next: m };
+  }
+  const next = Math.floor(count / 200) * 200 + 200;
+  return { prev: next - 200, next };
+}
+
 function updateProgress() {
-  // Confidence = weighted average of per-anime settlement.
-  // Each anime contributes linearly from 0 → 1 as its battle count grows toward
-  // TARGET_BATTLES_PER_ANIME. This means adding unseen anime pulls the bar back down,
-  // and every battle nudges the two participants forward individually.
   const active = animeList.filter(a => !excludedIds.has(a.id));
   const n = active.length;
   if (!n) {
@@ -3145,10 +3160,14 @@ function updateProgress() {
     byId(IDS.progressInfo).textContent = '0 battles';
     return;
   }
-  const totalConf = active.reduce((sum, a) =>
-    sum + Math.min(1, (a.battles || 0) / TARGET_BATTLES_PER_ANIME), 0);
-  const pct = Math.round(totalConf / n * 100);
+  const { prev, next } = _nextBattleMilestone(battleCount);
+  const pct = Math.round(((battleCount - prev) / (next - prev)) * 100);
   byId(IDS.progressBar).style.width = pct + '%';
+  const wrap = byId(IDS.progressBarWrap);
+  if (wrap) {
+    const left = next - battleCount;
+    wrap.title = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${left} more to your next milestone (${next})`;
+  }
   byId(IDS.progressInfo).textContent =
     `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${n} anime`;
   // v1.0.238 — keep the streak badge in sync with the header progress row
@@ -4219,7 +4238,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   card.dataset.conf    = conf.cls;
   card.dataset.animeId = anime.id;
   card.style.cursor = 'pointer';
-  card.title = 'Click for details';
+  card.title = displayTitle(anime); // v1.0.245 — full title (the card clamps it to two lines)
   // v1.0.153 — Click is delegated on #ranking-list (see _installRankingListClickDelegate)
   // instead of being attached per card. At 6500 anime that's 6499 fewer closures +
   // listeners (substantial memory + GC savings on long sessions). The handler
@@ -4229,9 +4248,12 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
     : currentSort === 'battles' ? `<div class="rank-elo">${anime.battles || 0} battles</div>`
     : currentSort === 'score'   ? `<div class="rank-elo">${anime.globalScore ? anime.globalScore+'%' : 'Unscored'}</div>`
     : `<div class="rank-elo">ELO ${anime.elo}</div>`;
+  // v1.0.245 — always emit the episode line (invisible placeholder when there
+  // is nothing to say) so ELO/confidence rows line up across the grid.
   const epBadge = anime.format === 'MOVIE'
     ? `<span class="ep-badge">Movie</span>`
-    : anime.episodes ? `<span class="ep-badge">${anime.episodes} ep</span>` : '';
+    : anime.episodes ? `<span class="ep-badge">${anime.episodes} ep</span>`
+    : `<span class="ep-badge" style="visibility:hidden" aria-hidden="true">–</span>`;
   card.innerHTML = `
     ${isRanked ? `<span class="rank-number ${numClass}">#${displayRank}</span>` : ''}
     ${isRanked
@@ -5456,6 +5478,7 @@ function showFranchiseDetail(groupName, opts) {
   const groups = _buildFranchiseGroups(getSortedList());
   const group  = groups.find(g => g.name === groupName);
   if (!group) return;
+  _resetDiscoverVariant(); // v1.0.245
 
   const tier = _franchiseTier(group); // v1.0.241 — null when the franchise is Unranked
   const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
@@ -5635,8 +5658,24 @@ function showFranchiseDetail(groupName, opts) {
   if (!skipHistoryPush) pushModalBack('detail', closeDetailModal);
 }
 
+// v1.0.245 — undo the "discover" variant's hiding so the next owned-anime or
+// franchise modal renders its stats again. Called at the top of showAnimeDetail
+// and showFranchiseDetail, and on close.
+function _resetDiscoverVariant() {
+  const modal = byId(IDS.detailModal);
+  if (modal) modal.classList.remove('discover');
+  const stats = byId(IDS.modalStatsRow);
+  if (stats) stats.style.display = '';
+  const planBtn = byId(IDS.modalPlanningBtn);
+  if (planBtn) { planBtn.style.display = 'none'; planBtn.disabled = false; planBtn.textContent = '＋ Add to Planning'; }
+  const planNote = byId(IDS.modalPlanningNote);
+  if (planNote) planNote.style.display = 'none';
+  _discoverCurrent = null;
+}
+
 function closeDetailModal() {
   byId(IDS.detailModal).style.display = 'none';
+  _resetDiscoverVariant(); // v1.0.245
   popModalBack('detail');
   // v1.0.211 — Clear any pending "back to franchise" state when the modal is
   // closed via the close button / overlay click / Escape. Without this, a
@@ -6959,7 +6998,7 @@ const FRANCHISE_GAP_REL_TYPES = new Set([
 const FRANCHISE_GAP_UPCOMING_STATUSES = new Set(['NOT_YET_RELEASED']);
 
 let _franchiseGaps       = null;   // { fetchedAt, groups: [{ parent, gaps: [...] }] }
-let _franchiseGapsView   = 'grid'; // 'grid' | 'list'
+let _franchiseGapsView   = (() => { try { return localStorage.getItem('kessen.ui.gapsView') === 'grid' ? 'grid' : 'list'; } catch { return 'list'; } })(); // 'grid' | 'list' — v1.0.245: list by default, persisted
 let _franchiseGapsLoading = false;
 // v1.0.237 — Sort mode + franchise-group toggle promoted from DOM state
 // (previously a <select> and a checkbox) to module-level vars so the UI can
@@ -7208,14 +7247,21 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
 }
 
 // UI: view toggle (grid ↔ list). Mirrors Rankings' view-btn active toggling.
-function setGapsView(view) {
-  _franchiseGapsView = (view === 'list') ? 'list' : 'grid';
+// v1.0.245 — the choice persists, and the default is now the list: most
+// franchises have one or two gaps, and a grid row of poster cards spends
+// ~270px on each of them where a list row spends ~90.
+function _syncGapsViewButtons() {
   const grid = byId(IDS.gapsViewGrid);
   const list = byId(IDS.gapsViewList);
   grid?.classList.toggle('active', _franchiseGapsView === 'grid');
   list?.classList.toggle('active', _franchiseGapsView === 'list');
   grid?.setAttribute('aria-pressed', _franchiseGapsView === 'grid' ? 'true' : 'false');
   list?.setAttribute('aria-pressed', _franchiseGapsView === 'list' ? 'true' : 'false');
+}
+function setGapsView(view) {
+  _franchiseGapsView = (view === 'grid') ? 'grid' : 'list';
+  try { localStorage.setItem(KESSEN_KEYS.ui.gapsView, _franchiseGapsView); } catch {}
+  _syncGapsViewButtons();
   renderFranchiseGaps({ skipFetch: true });
 }
 
@@ -7313,34 +7359,52 @@ function _gapMetaString(gap) {
   return bits.join(' · ');
 }
 
+// v1.0.245 — register a gap for the in-app detail modal; the relation note
+// tells the user what it's a sequel/prequel/side story of.
+function _registerGapItem(gap) {
+  const rel = gap.relationType ? gap.relationType.replace(/_/g, ' ').toLowerCase() : '';
+  const note = gap.parentTitle
+    ? `<div class="rec-relation-note">🔗 ${esc(rel ? rel.charAt(0).toUpperCase() + rel.slice(1) : 'Related')} of <strong>${esc(gap.parentTitle)}</strong>, which is in your list</div>`
+    : '';
+  _registerDiscoverItem({
+    id: gap.id, idMal: null, title: gap.title, cover: gap.cover,
+    format: gap.format, seasonYear: gap.seasonYear, episodes: gap.episodes,
+    averageScore: null, genres: [], relationNote: note,
+  });
+}
+
 function _renderGapCardGrid(gap) {
   const anilistUrl = `https://anilist.co/anime/${gap.id}`;
+  _registerGapItem(gap);
   const cover = gap.cover
     ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
     : `<div style="width:100%;aspect-ratio:2/3;background:#161b22;border-radius:6px 6px 0 0"></div>`;
   return `
     <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-grid"
+       onclick="return openDiscoverDetail(event, ${Number(gap.id) || 0})"
        style="background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column">
       ${cover}
-      <div style="padding:8px 10px;display:flex;flex-direction:column;gap:4px;flex:1">
-        <div style="font-size:0.82rem;font-weight:600;line-height:1.2;color:var(--text-bright);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${_escapeHtml(gap.title)}</div>
-        <div style="font-size:0.7rem;color:#8b949e;line-height:1.3">${_escapeHtml(_gapMetaString(gap))}</div>
+      <div style="padding:6px 8px;display:flex;flex-direction:column;gap:3px;flex:1">
+        <div style="font-size:0.76rem;font-weight:600;line-height:1.2;color:var(--text-bright);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${_escapeHtml(gap.title)}</div>
+        <div style="font-size:0.66rem;color:#8b949e;line-height:1.3">${_escapeHtml(_gapMetaString(gap))}</div>
       </div>
     </a>`;
 }
 
 function _renderGapCardList(gap) {
   const anilistUrl = `https://anilist.co/anime/${gap.id}`;
+  _registerGapItem(gap);
   const cover = gap.cover
-    ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:44px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
-    : `<div style="width:44px;aspect-ratio:2/3;background:#161b22;border-radius:4px;flex-shrink:0"></div>`;
+    ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:34px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
+    : `<div style="width:34px;aspect-ratio:2/3;background:#161b22;border-radius:4px;flex-shrink:0"></div>`;
   return `
     <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-list"
-       style="display:flex;gap:10px;align-items:center;padding:8px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;text-decoration:none;color:inherit;margin-bottom:6px">
+       onclick="return openDiscoverDetail(event, ${Number(gap.id) || 0})"
+       style="display:flex;gap:10px;align-items:center;padding:5px 8px;background:#161b22;border:1px solid #30363d;border-radius:6px;text-decoration:none;color:inherit;margin-bottom:4px">
       ${cover}
       <div style="flex:1;min-width:0">
-        <div style="font-size:0.9rem;font-weight:600;line-height:1.3;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escapeHtml(gap.title)}</div>
-        <div style="font-size:0.75rem;color:#8b949e;line-height:1.3">${_escapeHtml(_gapMetaString(gap))}</div>
+        <div style="font-size:0.84rem;font-weight:600;line-height:1.3;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escapeHtml(gap.title)}</div>
+        <div style="font-size:0.72rem;color:#8b949e;line-height:1.3">${_escapeHtml(_gapMetaString(gap))}</div>
       </div>
     </a>`;
 }
@@ -7607,15 +7671,20 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   if (!resultsEl) return;
 
   const isGrid = _franchiseGapsView === 'grid';
-  const scopeWord = groupByFranchise ? 'franchise' : 'series';
+  _syncGapsViewButtons(); // v1.0.245 — the HTML default marks grid; the persisted/default view may be list
   const groupBlocks = visibleGroups.map(g => {
-    const cards = g.gaps.map(x => isGrid ? _renderGapCardGrid(x) : _renderGapCardList(x)).join('');
+    const cards = g.gaps.map(x => { x.parentTitle = g.parent.title; return isGrid ? _renderGapCardGrid(x) : _renderGapCardList(x); }).join('');
+    // v1.0.245 — compact groups. The old layout spent a full sentence header
+    // plus 24px of margin on every franchise, most of which have one or two
+    // gaps, so 139 franchises ran to thousands of pixels. Now: one short
+    // header line ("Attack on Titan · 2 missing"), smaller cards, tighter gaps.
+    const n = g.gaps.length;
     const inner = isGrid
-      ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">${cards}</div>`
+      ? `<div class="gap-grid">${cards}</div>`
       : `<div>${cards}</div>`;
     return `
-      <div class="gap-group" style="margin-bottom:24px">
-        <div style="font-size:0.85rem;color:#8b949e;margin-bottom:8px">Because you have the <strong style="color:var(--text-bright)">${_escapeHtml(g.parent.title)}</strong> ${scopeWord} in your list</div>
+      <div class="gap-group">
+        <div class="gap-group-head"><strong>${_escapeHtml(g.parent.title)}</strong><span class="gap-group-count">${n} missing</span></div>
         ${inner}
       </div>`;
   }).join('');
@@ -7789,8 +7858,17 @@ function recCardHtml(media, opts = {}) {
   const recUrl = (_isMalCloudSession() && media.idMal)
     ? `https://myanimelist.net/anime/${media.idMal}`
     : `https://anilist.co/anime/${media.id}`;
+  // v1.0.245 — a normal click opens the in-app detail (synopsis, score, Add to
+  // Planning); the href stays for middle-click / long-press "open in new tab".
+  _registerDiscoverItem({
+    id: media.id, idMal: media.idMal || null, title, cover,
+    format: media.format || null, seasonYear: media.seasonYear || null,
+    episodes: media.episodes || null, averageScore: media.averageScore || null,
+    genres: media.genres || [], relationNote,
+  });
   return `
     <a class="rec-card" href="${esc(recUrl)}" target="_blank" rel="noopener noreferrer"
+       onclick="return openDiscoverDetail(event, ${Number(media.id) || 0})"
        style="${watched ? 'opacity:0.45' : ''}">
       <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
       <div class="rec-card-body">
@@ -7802,6 +7880,203 @@ function recCardHtml(media, opts = {}) {
         ${watchedTag}
       </div>
     </a>`;
+}
+
+// ─── DISCOVER DETAIL (v1.0.245) ──────────────────────────────────────────────
+// Every Discover / Missing card used to be a bare external link: tapping one
+// dropped the user on AniList with no way back and nothing to do in Kessen.
+// Now a tap opens the shared detail modal in a "discover" variant — cover,
+// meta, genres, community score, synopsis (fetched on open) and an Add to
+// Planning button that writes to the user's AniList or MAL list. Cards keep
+// their href so middle-click / open-in-new-tab still work.
+const _discoverItems = new Map(); // AniList id → item painted on a card
+let _discoverCurrent = null;      // item currently shown in the modal
+let _discoverFetchGen = 0;        // guards a stale synopsis fetch after a quick re-open
+
+function _registerDiscoverItem(item) {
+  if (item && item.id) _discoverItems.set(item.id, item);
+}
+
+function openDiscoverDetail(event, id) {
+  const item = _discoverItems.get(id);
+  if (!item) return true; // not registered — let the link navigate as before
+  if (event) event.preventDefault();
+  showDiscoverDetail(item);
+  return false;
+}
+
+// Which list can we write to? 'anilist' (OAuth token), 'mal' (MAL token) or null.
+function _planningTarget() {
+  if (_isGuestSession()) return null;
+  if (authToken) return 'anilist';
+  if (malAuthToken) return 'mal';
+  return null;
+}
+
+function showDiscoverDetail(item) {
+  _discoverCurrent = item;
+  const modal = byId(IDS.detailModal);
+  modal.classList.add('discover');
+
+  const coverEl = byId(IDS.modalCover);
+  coverEl.classList.remove('img-broken');
+  coverEl.src = item.cover || '';
+  coverEl.alt = item.title;
+  byId(IDS.modalTitle).textContent = item.title;
+
+  // Rank line → community score + format/year/episodes (no tier, it's not ours)
+  const fmtLabel = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' }[item.format] || item.format || '';
+  const bits = [];
+  if (item.averageScore) bits.push(`Community ${(item.averageScore / 10).toFixed(1)}/10`);
+  if (fmtLabel) bits.push(fmtLabel);
+  if (item.seasonYear) bits.push(String(item.seasonYear));
+  if (item.episodes) bits.push(`${item.episodes} ep`);
+  byId(IDS.modalRankLine).textContent = bits.join(' · ');
+  // Meta line → relation note ("Sequel to X — you have it at #12") when we have one
+  const metaEl = byId(IDS.modalMetaLine);
+  metaEl.innerHTML = item.relationNote || '';
+
+  const genresEl = byId(IDS.modalGenres);
+  const genres = Array.isArray(item.genres) ? item.genres.slice(0, 6) : [];
+  genresEl.innerHTML = genres.map(g => `<span class="modal-genre-tag">${esc(g)}</span>`).join('');
+  genresEl.style.display = genres.length ? 'flex' : 'none';
+
+  // Hide everything that only makes sense for an anime in the user's list
+  byId(IDS.modalStatsRow).style.display = 'none';
+  byId(IDS.modalConfidenceWrap).innerHTML = '';
+  byId(IDS.modalFuzzyNotice).style.display = 'none';
+  byId(IDS.modalSparklineWrap).style.display = 'none';
+  byId(IDS.modalRecent).innerHTML = '';
+  byId(IDS.modalUnfuzzyBtn).style.display = 'none';
+  const battleNextBtn = byId(IDS.modalBattleNextBtn);
+  if (battleNextBtn) battleNextBtn.style.display = 'none';
+  const backBtn = byId(IDS.modalFranchiseBackBtn);
+  if (backBtn) backBtn.style.display = 'none';
+
+  // External link — MAL for MAL sessions when we know the MAL id
+  const linkBtn = byId(IDS.modalAnilistBtn);
+  const useMal = _isMalCloudSession() && item.idMal;
+  linkBtn.href = useMal ? `https://myanimelist.net/anime/${item.idMal}` : `https://anilist.co/anime/${item.id}`;
+  linkBtn.textContent = `View on ${useMal ? 'MAL' : 'AniList'} ↗`;
+  linkBtn.style.display = '';
+
+  // Planning button / note
+  const planBtn  = byId(IDS.modalPlanningBtn);
+  const planNote = byId(IDS.modalPlanningNote);
+  const target = _planningTarget();
+  if (target) {
+    planBtn.style.display = '';
+    planBtn.disabled = false;
+    planBtn.textContent = '＋ Add to Planning';
+    planNote.style.display = 'none';
+    const cached = (_planningIdsCache instanceof Set) && _planningIdsCache.has(item.id);
+    if (cached) _markPlanningDone();
+  } else {
+    planBtn.style.display = 'none';
+    planNote.style.display = '';
+    planNote.textContent = 'Log in with AniList or MAL to add this to your Planning list.';
+  }
+
+  // Synopsis: fetched on open (cards only carry the basics)
+  const descEl = byId(IDS.modalDescription);
+  descEl.textContent = 'Loading synopsis…';
+  descEl.style.display = 'block';
+  descEl.style.opacity = '0.5';
+  descEl.scrollTop = 0;
+
+  modal.style.display = 'block';
+  modal.scrollTop = 0;
+  pushModalBack('detail', closeDetailModal);
+
+  const gen = ++_discoverFetchGen;
+  _fetchDiscoverDetails(item.id).then(d => {
+    if (gen !== _discoverFetchGen || _discoverCurrent !== item) return; // modal moved on
+    if (d) {
+      if (d.idMal && !item.idMal) item.idMal = d.idMal;
+      if (d.episodes && !item.episodes) item.episodes = d.episodes;
+      const desc = stripHtml(d.description || '');
+      descEl.textContent = desc || 'No synopsis available.';
+      descEl.style.opacity = desc ? '1' : '0.4';
+      // Already on the list? (AniList only — needs the viewer's entry)
+      if (target === 'anilist' && d.mediaListEntry?.status) {
+        const st = d.mediaListEntry.status;
+        if (st === 'PLANNING') _markPlanningDone();
+        else {
+          planBtn.style.display = 'none';
+          planNote.style.display = '';
+          planNote.textContent = `Already on your AniList list (${st.toLowerCase()}).`;
+        }
+      }
+    } else {
+      descEl.textContent = 'Couldn\'t load the synopsis — try View on AniList.';
+      descEl.style.opacity = '0.6';
+    }
+  });
+}
+
+function _markPlanningDone() {
+  const planBtn = byId(IDS.modalPlanningBtn);
+  if (!planBtn) return;
+  planBtn.textContent = '✓ On your Planning list';
+  planBtn.disabled = true;
+}
+
+async function _fetchDiscoverDetails(id) {
+  const query = `
+    query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        idMal episodes description(asHtml: false)
+        mediaListEntry { status }
+      }
+    }`;
+  try {
+    const res  = await _anilistFetch({ query, variables: { id } });
+    const json = await res.json();
+    return json?.data?.Media || null;
+  } catch { return null; }
+}
+
+async function addToPlanningFromModal() {
+  const item = _discoverCurrent;
+  const target = _planningTarget();
+  const planBtn = byId(IDS.modalPlanningBtn);
+  if (!item || !target || !planBtn) return;
+  planBtn.disabled = true;
+  planBtn.textContent = 'Adding…';
+  try {
+    if (target === 'anilist') {
+      const mutation = `
+        mutation ($mediaId: Int!) {
+          SaveMediaListEntry(mediaId: $mediaId, status: PLANNING) { id status }
+        }`;
+      const res  = await _anilistFetch({ query: mutation, variables: { mediaId: item.id } });
+      const json = await res.json();
+      if (!res.ok || json?.errors?.length) throw new Error(json?.errors?.[0]?.message || ('HTTP ' + res.status));
+    } else {
+      let malId = item.idMal;
+      if (!malId) {
+        const d = await _fetchDiscoverDetails(item.id);
+        malId = d?.idMal;
+      }
+      if (!malId) throw new Error('This title has no MyAnimeList entry to add.');
+      const res = await fetch('/.netlify/functions/mal-api', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: `/v2/anime/${malId}/my_list_status`, token: malAuthToken, method: 'PATCH', body: 'status=plan_to_watch' }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    }
+    _markPlanningDone();
+    if (_planningIdsCache instanceof Set) _planningIdsCache.add(item.id);
+    _metric('discover.planning.add');
+    showToast(`＋ Added ${item.title} to your ${target === 'mal' ? 'MAL' : 'AniList'} Planning list.`, 3000);
+    // Missing tab: if "hide items on my planning list" is on, the gap should drop out
+    if (recsTab === 'gaps' && byId(IDS.gapsIncludePlanning)?.checked) renderFranchiseGaps({ skipFetch: true });
+  } catch (e) {
+    planBtn.disabled = false;
+    planBtn.textContent = '＋ Add to Planning';
+    showToast('⚠️ Couldn\'t add to Planning: ' + _anilistErrMsg(e), 4500);
+  }
 }
 
 // Fallback: top-rated anime on AniList that the user hasn't seen.
@@ -17086,6 +17361,7 @@ function showAnimeDetail(id, opts) {
   const skipHistoryPush = !!(opts && opts.skipHistoryPush);
   const anime = animeList.find(a => a.id === id);
   if (!anime) return;
+  _resetDiscoverVariant(); // v1.0.245
 
   // v1.0.241 — rank/tier among ranked anime only; Unranked gets a plain label.
   const { rankMap, total: rankedTotal } = _rankedEloOrder();
@@ -17206,6 +17482,7 @@ function showAnimeDetail(id, opts) {
 
 function closeDetail() {
   byId(IDS.detailModal).style.display = 'none';
+  _resetDiscoverVariant(); // v1.0.245
   popModalBack('detail');
 }
 
@@ -20965,18 +21242,17 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.244 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.245 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '⚡ Tower has a way out. It now shows the same kind of banner as the other modes — "ONE PIECE · Round 3 of 10" with an Exit Tower button — the Mode menu marks Tower as current and offers Exit Tower too, the round count is printed once instead of twice, and the second progress bar is gone. Leaving early gives you a fresh standard pair.',
-    '⚔ Battle cards line up. A card with no episode count (ONE PIECE) or a one-line title no longer sits higher than its opponent; opening "About" doesn\'t shove the other card around; and a long synopsis shows a visible scrollbar and a fade at the bottom instead of looking cut off. On a laptop-height window the Mode and Filter menus open upward when there\'s no room below, the Filter menu is wide enough that its headings don\'t wrap, and "Avoid same franchise" has its own Matchmaking heading.',
-    '🧹 Tidied: Discover\'s sub-tabs stay on one line ("This Season" was wrapping) and the duplicate "Discover" heading is gone; locked achievement requirements are readable; the empty "Excluded from Pool" section is hidden until you exclude something; the Share dialog no longer shows a wall of link text; Trio drops the ←/→ keyboard hint; and Rankings says "Start Ranking" before your first battle.',
-    '🎲 Guest mode hides the watch-status filters and the push-notification toggle, since there\'s no list behind a guest session for either to act on.',
-    '↩ Undo is thorough. Undoing a battle now also takes back any achievement it unlocked, the day\'s streak badge if it was that day\'s first battle, and the weekly tally. Trio rounds count toward your daily streak and weekly total (they didn\'t before).',
+    '🎯 Discover and Missing cards open in Kessen now. Tap one and you get the cover, format, year, community score, genres and synopsis in the same panel your own anime use — plus an "Add to Planning" button that puts it straight on your AniList or MyAnimeList Planning list (it says so if it\'s already there). "View on AniList" is still one tap away, and middle-click / open-in-new-tab still work. Before, every card threw you out to AniList with no way back.',
+    '🧩 Missing is much denser. Each franchise is now one short line ("Attack on Titan · 2 missing") over smaller cards, instead of a full sentence plus 24px of air for every franchise — 139 franchises no longer mean thousands of pixels of scrolling.',
+    '📊 The bar under the header means something. It fills toward your next battle milestone (10, 25, 50, 100, then every 50–100) and starts again after each one, with the count in its tooltip. It used to show average per-anime confidence, which for a 367-anime list would have taken ~3,700 battles to fill.',
+    '📋 Rankings cards line up: the title area always reserves two lines, so a one-line title no longer pulls its ELO and confidence rows out of line with the card beside it. Hover a card for the full title.',
   ],
 };
 

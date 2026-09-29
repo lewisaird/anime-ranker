@@ -1680,6 +1680,10 @@
       overflow: hidden;
       text-overflow: ellipsis;
       word-break: break-word;
+      /* v1.0.245 — and reserve the two lines, so a one-line title doesn't
+         pull its ELO / confidence rows up out of line with the card next
+         to it. Full title is on the card's tooltip. */
+      min-height: 2.6em;
     }
 
     .rank-elo {
@@ -4384,6 +4388,15 @@
     }
     #tab-panel-discover .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
     @media (hover: hover) { #tab-panel-discover .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
+
+    /* v1.0.245 — Missing tab groups: compact header line + dense grid */
+    .gap-group { margin-bottom: 14px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+    .gap-group:first-child { border-top: none; padding-top: 0; }
+    .gap-group-head { display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem; color: var(--text-bright); margin-bottom: 6px; }
+    .gap-group-count { font-size: 0.72rem; color: var(--text-muted); }
+    .gap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+    @media (hover: hover) { .gap-card:hover { border-color: var(--accent-blue) !important; } }
+    @media (max-width: 600px) { .gap-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; } }
 
     /* RECOMMENDATIONS SECTION */
     #recs-section { margin: 24px 0; }
