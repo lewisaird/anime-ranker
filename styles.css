@@ -1272,21 +1272,25 @@
       outline-offset: 2px;
       border-radius: 4px;
     }
+    /* v1.0.246 — masonry-style columns (same pattern as the Manage tab) so a
+       short card (Undo) doesn't get stretched to the height of a tall one
+       (Battle Modes) beside it, leaving a block of empty space. */
     .help-sections {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      column-count: 2;
+      column-gap: 12px;
     }
     .help-section {
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
       border-radius: 8px;
       padding: 12px 14px;
+      break-inside: avoid;
+      margin-bottom: 12px;
     }
     .help-section h4 { font-size: 0.85rem; color: var(--accent-blue); margin-bottom: 6px; }
     .help-section p  { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.55; margin: 0; }
     .help-section strong { color: var(--text-primary); }
-    @media (max-width: 560px) { .help-sections { grid-template-columns: 1fr; } }
+    @media (max-width: 560px) { .help-sections { column-count: 1; } }
 
     /* ── Taste Story Modal ─────────────────────────────────────────────────── */
     #taste-story-modal {
@@ -3077,6 +3081,10 @@
       .kb-hints { display: none; }
     }
     #battle-screen.trio .kb-hints { display: none; } /* v1.0.244 — ←/→ mean nothing with three cards */
+    /* v1.0.246 — the hint line sits right under the Mode/Filter buttons, so an
+       open dropdown covered half of it and the rest peeked out from behind.
+       Hide it (keeping its space) while either popover is open. */
+    .battle-actions:has(#mode-popover.open, #filter-popover.open) ~ .kb-hints { visibility: hidden; }
     .kb-hints kbd {
       background: var(--border-subtle); border: 1px solid var(--border-default); border-radius: 4px;
       padding: 1px 5px; font-size: 0.7rem; color: var(--text-secondary); font-family: inherit;
@@ -4402,10 +4410,14 @@
     #recs-section { margin: 24px 0; }
     #recs-section h3 { font-size: 1rem; color: var(--text-secondary); margin-bottom: 6px; text-align: center; }
     #recs-section p.recs-sub { font-size: 0.8rem; color: var(--text-muted); text-align: center; margin-bottom: 16px; }
+    /* v1.0.246 — rec grids were 4 fixed columns: at desktop width that's a
+       240px column with a 360px-tall poster, next to Rankings' 180px cards.
+       auto-fill at 150px gives 6 across at 1000px, posters ~235px tall —
+       the same visual scale as the rankings grid. Phones keep 2 columns. */
     .recs-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
     }
     @media (max-width: 600px) {
       .recs-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -4414,8 +4426,8 @@
     .recs-group-label { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 10px; }
     .recs-row {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
     }
     @media (max-width: 600px) { .recs-row { grid-template-columns: repeat(2, 1fr); } }
 
@@ -4507,8 +4519,8 @@
     .recs-group-heading em { color: var(--accent-blue); font-style: normal; }
     .recs-subgrid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
     }
     .recs-extra-section { margin-top: 32px; }
     .recs-extra-heading { font-size: 0.88rem; color: var(--text-primary); margin: 0 0 4px; font-weight: 600; }
@@ -5123,6 +5135,15 @@
     /* Play cards grid */
     .social-play-grid {
       display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    }
+    /* v1.0.246 — two cards now (Challenge moved up to the shared username row) */
+    .social-play-grid-2 { grid-template-columns: repeat(2, 1fr); max-width: 720px; }
+    .social-friend-row { flex-wrap: wrap; }
+    .social-friend-row input { flex: 1 1 220px; min-width: 0; }
+    .social-friend-row .btn-secondary { white-space: nowrap; }
+    @media (max-width: 600px) {
+      .social-friend-row input { flex-basis: 100%; }
+      .social-friend-row .btn-primary, .social-friend-row .btn-secondary { flex: 1; }
     }
     .social-play-card {
       background: var(--bg-secondary); border-radius: 12px;

@@ -239,6 +239,11 @@ const IDS = Object.freeze({
   modalStatsRow:          'modal-stats-row',
   modalPlanningBtn:       'modal-planning-btn',
   modalPlanningNote:      'modal-planning-note',
+  tasteUnlockNote:        'taste-unlock-note',
+  tasteIdentityTop:       'taste-identity-top',
+  manageNotificationsSection: 'manage-notifications-section',
+  tasteDriftSection:      'taste-drift-section',
+  tasteEvolutionSection:  'taste-evolution-section',
   modeTowerItem:          'mode-tower-item',
   modeExitTower:          'mode-exit-tower',
   progressBarWrap:        'progress-bar-wrap',
@@ -7743,7 +7748,7 @@ async function fetchRecommendationsForYou() {
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
         recs.push({ media: rec, score: n.rating || 1 });
         usedIds.add(rec.id);
-        if (recs.length >= 4) break;
+        if (recs.length >= 6) break; // v1.0.246 — six fills a desktop row at the new card size (was 4)
       }
       if (recs.length >= 2) groups.push({ seed: anime, recs });
     } catch { /* individual seed failure — keep going */ }
@@ -12500,9 +12505,13 @@ async function runSocialCompare() {
 }
 
 function openChallengeFromInput() {
-  const input    = byId(IDS.socialChallengeInput);
+  // v1.0.246 — Challenge shares the single "friend's username" field with
+  // Compare; the old dedicated input is kept hidden for internal callers.
+  const input    = byId(IDS.socialCompareInput) || byId(IDS.socialChallengeInput);
   const username = (input?.value || '').trim();
   if (!username) { input?.focus(); return; }
+  const legacy = byId(IDS.socialChallengeInput);
+  if (legacy) legacy.value = username;
   openChallengeMode(username, _socialPlatform);
 }
 
@@ -14987,6 +14996,8 @@ function renderManageTab() {
   // so the relative time is accurate even if the user just came back to it
   // after an hour. Background ticking handles the per-minute updates.
   _updateCloudSyncTimestamp();
+  const notifSec = byId(IDS.manageNotificationsSection);
+  if (notifSec) notifSec.style.display = _isGuestSession() ? 'none' : ''; // v1.0.246
   // v1.0.242 — the v1.0.239 "Your Kessen stats" panel is gone. It rendered
   // the raw metric keys ("gaps", "compat", "predict · run") to users, which
   // was developer telemetry, not a feature. The counters themselves are
@@ -16780,13 +16791,34 @@ async function renderTasteProfile(forceRefetch = false) {
   // milestone (50 battles). Before that, ELO values are seeded from ratings
   // rather than earned, so the archetype isn't meaningful.
   const identityEl = byId(IDS.tasteIdentityCard);
-  if (battleCount >= TASTE_STORY_MILESTONES[0]) {
-    if (identityEl) identityEl.style.display = '';
+  const unlocked   = battleCount >= TASTE_STORY_MILESTONES[0];
+  // v1.0.246 — everything that keys off the 50-battle milestone (taste type,
+  // drift, evolution) is gated by ONE note in the identity card; the two
+  // milestone sections are hidden outright until then. Previously each of
+  // the three showed its own "battle N more…" card, stacked.
+  const unlockNote = byId(IDS.tasteUnlockNote);
+  const identTop   = byId(IDS.tasteIdentityTop);
+  const insightsEl = byId(IDS.tasteIdentityInsights);
+  const driftSec   = byId(IDS.tasteDriftSection);
+  const evoSec     = byId(IDS.tasteEvolutionSection);
+  if (identityEl) identityEl.style.display = '';
+  if (identTop)   identTop.style.display   = unlocked ? '' : 'none';
+  if (insightsEl) insightsEl.style.display = unlocked ? '' : 'none';
+  if (driftSec)   driftSec.style.display   = unlocked ? '' : 'none';
+  if (evoSec)     evoSec.style.display     = unlocked ? '' : 'none';
+  if (unlockNote) {
+    if (unlocked) {
+      unlockNote.style.display = 'none';
+    } else {
+      const remaining = TASTE_STORY_MILESTONES[0] - battleCount;
+      unlockNote.style.display = '';
+      unlockNote.textContent = `Your taste type, "How you've changed" and your taste evolution unlock at ${TASTE_STORY_MILESTONES[0]} battles — ${remaining} to go. The breakdowns below are live already.`;
+    }
+  }
+  if (unlocked) {
     const insights = _computeTasteInsights(_lastTasteStoryMilestone(battleCount));
     const archetype = insights.find(c => c.type === 'archetype');
     byId(IDS.tasteHeadline).textContent = archetype?.headline || profile.headline;
-
-    const insightsEl = byId(IDS.tasteIdentityInsights);
     if (insightsEl) {
       const cards = insights.filter(c => c.type !== 'share' && c.type !== 'archetype');
       insightsEl.innerHTML = cards.map(c => `
@@ -16796,25 +16828,20 @@ async function renderTasteProfile(forceRefetch = false) {
           <span class="taste-insight-text">${esc(c.sub)}</span>
         </div>`).join('');
     }
-  } else {
-    if (identityEl) {
-      identityEl.style.display = '';
-      const remaining = TASTE_STORY_MILESTONES[0] - battleCount;
-      identityEl.innerHTML = `<p class="taste-drift-placeholder">Battle ${remaining} more anime to unlock your taste type — Kessen needs a few matchups before it can read you properly.</p>`;
-    }
   }
 
   const metaEl = byId(IDS.tasteMeta);
   if (metaEl) {
     metaEl.innerHTML =
-      `<span>${profile.totalRanked} anime ranked</span><span>·</span><span>${battleCount} battles</span>`;
+      `<span>${profile.totalRanked} anime</span><span>·</span><span>${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}</span>`; // v1.0.246 — "ranked" dropped: unbattled anime are shown as Unranked elsewhere
   }
 
-  // ── Section 2: Drift ───────────────────────────────────────────────────
-  _paintTasteDrift(byId(IDS.tasteDrift));
-
-  // ── Section 4: Evolution ───────────────────────────────────────────────
-  _paintTasteEvolution(byId(IDS.tasteEvolution));
+  if (unlocked) {
+    // ── Section 2: Drift ─────────────────────────────────────────────────
+    _paintTasteDrift(byId(IDS.tasteDrift));
+    // ── Section 4: Evolution ─────────────────────────────────────────────
+    _paintTasteEvolution(byId(IDS.tasteEvolution));
+  }
 
 
   // Save snapshot for drift tracking (keyed by battle count milestone)
@@ -21242,17 +21269,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.245 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.246 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🎯 Discover and Missing cards open in Kessen now. Tap one and you get the cover, format, year, community score, genres and synopsis in the same panel your own anime use — plus an "Add to Planning" button that puts it straight on your AniList or MyAnimeList Planning list (it says so if it\'s already there). "View on AniList" is still one tap away, and middle-click / open-in-new-tab still work. Before, every card threw you out to AniList with no way back.',
-    '🧩 Missing is much denser. Each franchise is now one short line ("Attack on Titan · 2 missing") over smaller cards, instead of a full sentence plus 24px of air for every franchise — 139 franchises no longer mean thousands of pixels of scrolling.',
-    '📊 The bar under the header means something. It fills toward your next battle milestone (10, 25, 50, 100, then every 50–100) and starts again after each one, with the count in its tooltip. It used to show average per-anime confidence, which for a 367-anime list would have taken ~3,700 battles to fill.',
-    '📋 Rankings cards line up: the title area always reserves two lines, so a one-line title no longer pulls its ELO and confidence rows out of line with the card beside it. Hover a card for the full title.',
+    '👥 Social has one username box. Type a friend\'s AniList or MAL name once and choose Compare tastes or 🎮 Challenge — there were two look-alike inputs for the two features before. Watch Together and Live Challenge sit underneath as "Play together".',
+    '🎯 Discover cards are the same size as your ranking cards on desktop — six across instead of four oversized posters — so a "Because you loved…" row no longer fills the whole screen.',
+    '🎨 Profile › Taste between 20 and 50 battles shows one line saying what unlocks at 50 (and how many to go) instead of three stacked "come back later" cards; the genre, era, studio and community panels are live underneath.',
+    '⚙️ Manage has a Notifications entry that opens the bell\'s settings, for anyone who looks for them under settings first.',
+    '🧹 Help cards pack without the empty block next to the tall Battle Modes card, and the keyboard hint under the battle buttons hides while the Mode or Filter menu is open instead of peeking out from behind it.',
   ],
 };
 

@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.245" />
+  <meta name="version" content="1.0.246" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1422,7 +1422,13 @@
 
         <!-- ── Section 1: Who you are ───────────────────────────────────── -->
         <section class="taste-identity-card" id="taste-identity-card">
-          <div class="taste-identity-top">
+          <!-- v1.0.246 — one note covers everything that unlocks at 50 battles
+               (taste type, drift, evolution); the three sections used to each
+               show their own "come back later" card. Also: the card's inner
+               elements are hidden rather than replaced, so #taste-headline etc.
+               still exist when the user crosses 50 in the same session. -->
+          <p id="taste-unlock-note" class="taste-drift-placeholder" style="display:none"></p>
+          <div class="taste-identity-top" id="taste-identity-top">
             <div>
               <div class="taste-identity-label">Your taste type</div>
               <h2 class="taste-identity-type" id="taste-headline"></h2>
@@ -1433,13 +1439,13 @@
         </section>
 
         <!-- ── Section 2: How you've changed ───────────────────────────── -->
-        <section class="taste-section">
+        <section class="taste-section" id="taste-drift-section">
           <h3 class="taste-section-title">How you've changed</h3>
           <div id="taste-drift"></div>
         </section>
 
         <!-- ── Section 4: Taste Evolution ──────────────────────────────── -->
-        <section class="taste-section">
+        <section class="taste-section" id="taste-evolution-section">
           <h3 class="taste-section-title">Taste evolution</h3>
           <p class="taste-sub">How your top 10 has shifted as you battle. Snapshots save automatically every 50 battles.</p>
           <div id="taste-evolution"></div>
@@ -1519,10 +1525,39 @@
         <button id="sp-mal"     class="sp-btn"        onclick="setSocialPlatform('mal')">📋 MAL</button>
       </div>
 
-      <!-- ── PLAY WITH FRIENDS ─────────────────────────────────────── -->
+      <!-- ── A FRIEND'S LIST (v1.0.246) ────────────────────────────────
+           One username field for the two things you can do with a friend's
+           public list: compare tastes, or play Challenge Mode against it.
+           There used to be two look-alike inputs on this tab. -->
       <div class="social-group">
-        <h3 class="social-group-title">Play with friends</h3>
-        <div class="social-play-grid">
+        <h3 class="social-group-title">A friend's list</h3>
+        <p class="recs-sub social-group-sub">Enter any AniList or MAL username — they don't need a Kessen account. Compare how your tastes line up (with recommendations from their list), or play Challenge Mode: guess how they ranked their anime.</p>
+
+        <div class="compat-input-row social-friend-row" style="margin-top:10px">
+          <input type="text" id="social-compare-input"
+                 placeholder="Friend's username…"
+                 onkeydown="if(event.key==='Enter')runSocialCompare()" />
+          <button class="btn-primary" onclick="runSocialCompare()">Compare tastes</button>
+          <button class="btn-secondary" onclick="openChallengeFromInput()" title="Solo — guess how this friend ranked their anime">🎮 Challenge</button>
+        </div>
+
+        <!-- Saved comparisons -->
+        <div id="saved-comparisons"></div>
+
+        <!-- Inputs kept for internal functions — visually hidden but readable -->
+        <input type="text" id="social-challenge-input" style="display:none" aria-hidden="true" />
+        <input type="text" id="compat-username-input" style="display:none" aria-hidden="true" />
+        <input type="text" id="friend-recs-input"     style="display:none" aria-hidden="true" />
+
+        <!-- Results: compatibility above, recs below -->
+        <div id="compat-results"></div>
+        <div id="friend-recs-results"></div>
+      </div>
+
+      <!-- ── PLAY TOGETHER ─────────────────────────────────────────── -->
+      <div class="social-group" style="margin-top:28px">
+        <h3 class="social-group-title">Play together</h3>
+        <div class="social-play-grid social-play-grid-2">
 
           <!-- Watch Together -->
           <div class="social-play-card" id="collab-section">
@@ -1536,63 +1571,19 @@
             <button class="btn-primary social-play-action-btn" onclick="openCollabMode()">Start a session →</button>
           </div>
 
-          <!-- Challenge Mode (static) -->
-          <div class="social-play-card" id="challenge-section">
-            <div class="social-play-card-top">
-              <span class="social-play-icon">🎮</span>
-              <div class="social-play-text">
-                <strong>Challenge Mode</strong>
-                <span><b>Solo</b> — guess how a friend ranked their anime. Works with any AniList or MAL user, no signup needed.</span>
-              </div>
-            </div>
-            <div class="social-challenge-row">
-              <input id="social-challenge-input" class="social-challenge-input"
-                     placeholder="Friend's username…"
-                     onkeydown="if(event.key==='Enter')openChallengeFromInput()" />
-              <button class="btn-primary" onclick="openChallengeFromInput()">Go →</button>
-            </div>
-          </div>
-
           <!-- Live Challenge -->
           <div class="social-play-card" id="live-challenge-section">
             <div class="social-play-card-top">
               <span class="social-play-icon">🌐</span>
               <div class="social-play-text">
                 <strong>Live Challenge</strong>
-                <span><b>Together</b> — real-time head-to-head with a prediction round. Both players need to be online.</span>
+                <span>Real-time head-to-head with a prediction round. Both players need to be online.</span>
               </div>
             </div>
-            <div class="social-challenge-row">
-              <button class="btn-primary" style="width:100%" onclick="openLiveChallengeMode()">Create or join →</button>
-            </div>
+            <button class="btn-primary social-play-action-btn" onclick="openLiveChallengeMode()">Create or join →</button>
           </div>
 
         </div>
-      </div>
-
-      <!-- ── COMPARE WITH FRIENDS ──────────────────────────────────── -->
-      <div class="social-group" style="margin-top:28px">
-        <h3 class="social-group-title">Compare with friends</h3>
-        <p class="recs-sub social-group-sub">See how your taste stacks up and get recommendations from their list — all in one lookup.</p>
-
-        <!-- Saved comparisons -->
-        <div id="saved-comparisons"></div>
-
-        <!-- Unified input -->
-        <div class="compat-input-row" style="margin-top:10px">
-          <input type="text" id="social-compare-input"
-                 placeholder="Enter a friend's username…"
-                 onkeydown="if(event.key==='Enter')runSocialCompare()" />
-          <button class="btn-primary" onclick="runSocialCompare()">Look up</button>
-        </div>
-
-        <!-- Inputs kept for internal functions — visually hidden but readable -->
-        <input type="text" id="compat-username-input" style="display:none" aria-hidden="true" />
-        <input type="text" id="friend-recs-input"     style="display:none" aria-hidden="true" />
-
-        <!-- Results: compatibility above, recs below -->
-        <div id="compat-results"></div>
-        <div id="friend-recs-results"></div>
       </div>
 
     </div>
@@ -1648,6 +1639,15 @@
           <p id="backup-import-msg" style="font-size:0.8rem;margin-top:8px;display:none"></p>
           <button class="manage-btn" onclick="exportRankings()">📋 Copy rankings as text</button>
           <button class="manage-btn" onclick="exportCSV()">⬇ Download CSV</button>
+        </div>
+
+        <!-- v1.0.246 — Notifications live in the bell, but "settings" is where
+             people look for them. Shortcut here; hidden for guest sessions
+             (renderManageTab), which have nothing to be notified about. -->
+        <div class="manage-section" id="manage-notifications-section">
+          <div class="manage-section-title">Notifications</div>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">Alerts for new or removed anime on your list, "you just finished X — Tower it?" prompts, and phone push notifications all live under the 🔔 bell in the header.</p>
+          <button type="button" class="manage-btn" onclick="openNotifCentre()">🔔 Open notification settings</button>
         </div>
 
         <div class="manage-section manage-feedback-section">
@@ -1803,7 +1803,7 @@
           <strong>Profile</strong> — two sub-tabs: <em>Taste</em> (your archetype, genre &amp; era breakdowns, studio affinity, taste vs the community, score distribution) and <em>Achievements</em> (milestones and badges earned through ranking).<br>
           <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime, with mood chips at the top for one-tap Comforting / Devastating / Intense / Thought-provoking / Beautiful filters), <em>This Season</em> (airing now + next), <em>Predict</em> (tier guess for any anime you haven't ranked), and <em>Missing</em> (sequels, prequels, spin-offs and side stories you have in your list but haven't watched yet). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
           <strong>Social</strong> — multiplayer modes and taste comparison (see below).<br>
-          <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, and reset.</p>
+          <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, notification settings, and reset.</p>
         </div>
 
         <div class="help-section">
