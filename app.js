@@ -176,6 +176,8 @@ const IDS = Object.freeze({
   sessionSummarySubtitle: 'session-summary-subtitle',
   settleBanner:           'settle-banner',
   shareCopyImageBtn:      'share-copy-image-btn',
+  shareImageKind:         'share-image-kind', // v1.0.248
+  shareImageNote:         'share-image-note', // v1.0.248
   sharedList:             'shared-list',
   sharedSubtitle:         'shared-subtitle',
   sharedTitle:            'shared-title',
@@ -808,6 +810,8 @@ const KESSEN_KEYS = {
     // cross-device sync is actually working (the v1.0.209 sync work was
     // invisible without this).
     lastCloudSaveTs:     'kessen.ui.lastCloudSaveTs',
+    // v1.0.248 — share-image format last picked in the share modal ('top10' | 'grid3').
+    shareImageKind:      'kessen.ui.shareImageKind',
     // v1.0.210 — version string of the last release the user has seen the
     // "What's new" notification for. Compared at boot with the current
     // APP_VERSION; mismatch pushes an entry into the notification centre.
@@ -6183,154 +6187,216 @@ async function _loadCoverForCanvas(url, timeoutMs = 4000) {
   });
 }
 
-// ─── TIER LIST IMAGE GENERATION (§5.2.5) ─────────────────────────────────────
-// Builds a PNG blob of the current tier list. Shared by the download button
-// (exportTierListImage) and the share modal's native-share / copy / download
-// flows (shareTierListImage, copyTierListImageToClipboard).
-async function _buildTierListBlob() {
-  const COVER_W = 65, COVER_H = 92;
-  const LABEL_W = 58, GAP = 4, H_PAD = 10, V_PAD = 8;
-  const CANVAS_W = 900;
-  const PER_ROW = Math.floor((CANVAS_W - LABEL_W - H_PAD * 2 + GAP) / (COVER_W + GAP));
+// ─── SHARE IMAGE GENERATION ──────────────────────────────────────────────────
+// v1.0.248 — replaces the full tier-list poster wall (every ranked cover at
+// 65px, no titles, thousands of pixels tall for a big list, D tier included).
+// Two formats, picked in the share modal and remembered:
+//   top10 — 1200×720 card: five covers per row, rank badge, title, ELO.
+//   grid3 — the r/anime "3×3": nine covers, no text, a thin kessen.co.uk strip.
+// Shared by the modal's native-share / copy / download flows.
+const SHARE_IMAGE_KINDS = ['top10', 'grid3'];
+let _shareImageKind = (() => {
+  try { return SHARE_IMAGE_KINDS.includes(localStorage.getItem(KESSEN_KEYS.ui.shareImageKind)) ? localStorage.getItem(KESSEN_KEYS.ui.shareImageKind) : 'top10'; }
+  catch { return 'top10'; }
+})();
 
-  // v1.0.241 — ranked anime only; Unranked entries have no tier to sit in.
-  // shareRankings() refuses to open the modal when nothing is ranked yet.
-  const sorted = _rankedEloOrder().ranked;
-  const TIER_ORDER  = ['S', 'A', 'B', 'C', 'D'];
-  const TIER_COLORS = { S: '#ff9b00', A: '#3fb950', B: '#58a6ff', C: '#d29922', D: '#f85149' };
-  const TIER_BG     = { S: '#2d1f00', A: '#0d2016', B: '#0d1b2e', C: '#1e1600', D: '#200d0d' };
+function setShareImageKind(kind) {
+  if (!SHARE_IMAGE_KINDS.includes(kind)) return;
+  _shareImageKind = kind;
+  try { localStorage.setItem(KESSEN_KEYS.ui.shareImageKind, kind); } catch { /* session only */ }
+  _syncShareImageKindUI();
+}
 
-  // Group by tier
-  const groups = {};
-  TIER_ORDER.forEach(t => groups[t] = []);
-  sorted.forEach((a, i) => groups[getTier(i, sorted.length)].push(a));
+function _syncShareImageKindUI() {
+  (byId(IDS.shareImageKind)?.querySelectorAll('[data-kind]') || []).forEach(b => {
+    const on = b.dataset.kind === _shareImageKind;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const need = _shareImageKind === 'grid3' ? 9 : 10;
+  const have = Math.min(need, _rankedEloOrder().ranked.length);
+  const note = byId(IDS.shareImageNote);
+  if (note) {
+    note.textContent = have < need
+      ? `Only ${have} ranked so far — the image fills in as you battle.`
+      : '';
+    note.style.display = have < need ? '' : 'none';
+  }
+}
 
-  // Row height for a tier (covers + padding)
-  const tierH = t => {
-    const n = groups[t].length;
-    if (!n) return 0;
-    const rows = Math.ceil(n / PER_ROW);
-    return V_PAD + rows * COVER_H + (rows - 1) * GAP + V_PAD;
-  };
+const _SHARE_FONT = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
 
-  const HEADER_H = 72, FOOTER_H = 32, DIVIDER = 1;
-  const totalH = HEADER_H + TIER_ORDER.reduce((s, t) => s + (groups[t].length ? tierH(t) + DIVIDER : 0), 0) + FOOTER_H;
+// Word-wrap `text` into at most `maxLines` lines that fit `maxW`; the last
+// line gets an ellipsis if anything was cut.
+function _canvasWrap(ctx, text, maxW, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width <= maxW || !cur) { cur = test; continue; }
+    lines.push(cur); cur = w;
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines && cur) lines.push(cur);
+  const cut = lines.length === maxLines && (words.join(' ') !== lines.join(' '));
+  if (cut) {
+    let last = lines[maxLines - 1];
+    while (last.length > 1 && ctx.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+    lines[maxLines - 1] = last.replace(/[\s.,:;-]+$/, '') + '…';
+  }
+  // A single word wider than maxW: hard-trim it too.
+  return lines.map(l => {
+    if (ctx.measureText(l).width <= maxW) return l;
+    let t = l;
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    return t + '…';
+  });
+}
 
-  // Load all covers fresh via fetch → blob URL so canvas is never tainted.
-  // Works for AniList, MAL, and guest mode — no crossOrigin cache conflicts.
-  const imgCache = new Map();
-  await Promise.all(sorted.map(async a => {
-    if (!a.cover) return;
-    const img = await _loadCoverForCanvas(a.cover);
-    if (img) imgCache.set(a.cover, img);
-  }));
+function _roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 
-  const canvas = document.createElement('canvas');
-  canvas.width  = CANVAS_W;
-  canvas.height = totalH;
-  const ctx = canvas.getContext('2d');
-
-  // ── Background ──────────────────────────────────────────────────────────
-  ctx.fillStyle = '#0d1117';
-  ctx.fillRect(0, 0, CANVAS_W, totalH);
-
-  // ── Header ───────────────────────────────────────────────────────────────
-  const user = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
-  ctx.fillStyle = '#e6edf3';
-  ctx.font = 'bold 26px ui-sans-serif, system-ui, Arial, sans-serif';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  ctx.fillText('⚔️  Kessen Tier List', 20, 30);
-  ctx.fillStyle = '#8b949e';
-  ctx.font = '14px ui-sans-serif, system-ui, Arial, sans-serif';
-  ctx.fillText(`${user}  ·  ${sorted.length} anime  ·  ${battleCount} battles`, 22, 56);
-
-  // ── Tiers ────────────────────────────────────────────────────────────────
-  let y = HEADER_H;
-  for (const t of TIER_ORDER) {
-    const anime = groups[t];
-    if (!anime.length) continue;
-    const rh = tierH(t);
-
-    // Tier tinted background
-    ctx.fillStyle = TIER_BG[t];
-    ctx.fillRect(0, y, CANVAS_W, rh);
-
-    // Tier colour strip on the left
-    ctx.fillStyle = TIER_COLORS[t];
-    ctx.fillRect(0, y, LABEL_W, rh);
-
-    // Tier letter
-    ctx.fillStyle = '#000';
-    ctx.font = 'bold 30px ui-sans-serif, system-ui, Arial, sans-serif';
+// Draw a cover into a rounded slot, cropped to fill (object-fit: cover).
+function _drawCoverSlot(ctx, img, x, y, w, h, r, fallbackTitle) {
+  ctx.save();
+  _roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+  if (img) {
+    const scale = Math.max(w / img.width, h / img.height);
+    const dw = img.width * scale, dh = img.height * scale;
+    ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  } else {
+    ctx.fillStyle = '#21262d';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `${Math.round(w / 9)}px ${_SHARE_FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(t, LABEL_W / 2, y + rh / 2);
-    ctx.textAlign = 'left';
+    _canvasWrap(ctx, fallbackTitle || '', w - 16, 4).forEach((line, i, arr) => {
+      ctx.fillText(line, x + w / 2, y + h / 2 + (i - (arr.length - 1) / 2) * (w / 8));
+    });
+  }
+  ctx.restore();
+}
 
-    // Covers
-    anime.forEach((a, idx) => {
-      const row = Math.floor(idx / PER_ROW);
-      const col = idx % PER_ROW;
-      const cx  = LABEL_W + H_PAD + col * (COVER_W + GAP);
-      const cy  = y + V_PAD + row * (COVER_H + GAP);
-      const img = imgCache.get(a.cover);
-      if (img) {
-        ctx.drawImage(img, cx, cy, COVER_W, COVER_H);
-      } else {
-        // Placeholder: tinted block + title initials
-        ctx.fillStyle = '#21262d';
-        ctx.fillRect(cx, cy, COVER_W, COVER_H);
-        ctx.fillStyle = TIER_COLORS[t] + '88';
-        ctx.font = '9px ui-sans-serif, system-ui, Arial, sans-serif';
-        ctx.textBaseline = 'top';
-        const words = (a.title || '').replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean).slice(0, 5);
-        words.forEach((w, wi) => ctx.fillText(w.slice(0, 10), cx + 3, cy + 4 + wi * 13));
-        ctx.textBaseline = 'middle';
-      }
+async function _buildShareImageBlob(kind = _shareImageKind) {
+  const ranked = _rankedEloOrder().ranked;
+  const rawUser = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
+  const user   = rawUser && rawUser !== 'guest' ? rawUser : ''; // guests get "My …"
+  const picks  = ranked.slice(0, kind === 'grid3' ? 9 : 10);
+  if (!picks.length) throw new Error('Nothing ranked yet');
+
+  // Load covers via fetch → blob URL so the canvas is never tainted.
+  const imgs = await Promise.all(picks.map(a => a.cover ? _loadCoverForCanvas(a.cover) : Promise.resolve(null)));
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  if (kind === 'grid3') {
+    // ── 3×3: nine 300×450 covers, 6px gutters, thin footer strip ──────────
+    const CW = 300, CH = 450, GAP = 6, FOOT = 34;
+    canvas.width  = CW * 3 + GAP * 2;
+    canvas.height = CH * 3 + GAP * 2 + FOOT;
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    picks.forEach((a, i) => {
+      const col = i % 3, row = Math.floor(i / 3);
+      _drawCoverSlot(ctx, imgs[i], col * (CW + GAP), row * (CH + GAP), CW, CH, 0, displayTitle(a));
+    });
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `600 15px ${_SHARE_FONT}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(user ? `${user}'s 3×3` : 'My 3×3', 12, canvas.height - FOOT / 2);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#6e7681';
+    ctx.fillText('kessen.co.uk', canvas.width - 12, canvas.height - FOOT / 2);
+  } else {
+    // ── Top 10 card: 1200×720, two rows of five ────────────────────────────
+    // TEXT_H fits two 17px title lines + the ELO line with room to spare;
+    // 150×225 covers keep the whole grid inside the header/footer budget.
+    const W = 1200, H = 720, HEAD = 92, FOOT = 34;
+    const CW = 150, CH = 225, COLS = 5, GAPX = 22, GAPY = 16, TEXT_H = 62;
+    canvas.width = W; canvas.height = H;
+    // Background with a faint vertical gradient so it doesn't read as flat black
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#0d1117'); bg.addColorStop(1, '#10161f');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Header
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = `700 30px ${_SHARE_FONT}`;
+    ctx.fillText(user ? `${user}'s Top 10` : 'My Top 10', 40, 42);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `15px ${_SHARE_FONT}`;
+    ctx.fillText(`Ranked battle by battle · ${animeList.length} anime · ${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}`, 40, 70);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#58a6ff';
+    ctx.font = `700 22px ${_SHARE_FONT}`;
+    ctx.fillText('⚔️ Kessen', W - 40, 42);
+    ctx.fillStyle = '#6e7681';
+    ctx.font = `14px ${_SHARE_FONT}`;
+    ctx.fillText('kessen.co.uk', W - 40, 70);
+
+    // Grid
+    const gridW = COLS * CW + (COLS - 1) * GAPX;
+    const x0 = Math.round((W - gridW) / 2);
+    const rowH = CH + TEXT_H;
+    const gridH = 2 * rowH + GAPY;
+    const y0 = HEAD + Math.round((H - HEAD - FOOT - gridH) / 2);
+    picks.forEach((a, i) => {
+      const col = i % COLS, row = Math.floor(i / COLS);
+      const x = x0 + col * (CW + GAPX);
+      const y = y0 + row * (rowH + GAPY);
+      _drawCoverSlot(ctx, imgs[i], x, y, CW, CH, 8, displayTitle(a));
+      // Rank badge
+      const badgeR = 16;
+      ctx.fillStyle = i === 0 ? '#f0c040' : i === 1 ? '#c9d1d9' : i === 2 ? '#d29922' : '#161b22';
+      ctx.beginPath(); ctx.arc(x + badgeR + 6, y + badgeR + 6, badgeR, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = i < 3 ? '#0d1117' : '#e6edf3';
+      ctx.font = `700 ${i >= 9 ? 14 : 16}px ${_SHARE_FONT}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), x + badgeR + 6, y + badgeR + 7);
+      // Title (two lines) + ELO
+      ctx.fillStyle = '#e6edf3';
+      ctx.font = `600 14px ${_SHARE_FONT}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      const lines = _canvasWrap(ctx, displayTitle(a), CW - 4, 2);
+      lines.forEach((line, li) => ctx.fillText(line, x + CW / 2, y + CH + 8 + li * 17));
+      ctx.fillStyle = '#8b949e';
+      ctx.font = `12px ${_SHARE_FONT}`;
+      ctx.fillText(`${Math.round(a.elo)} ELO`, x + CW / 2, y + CH + 8 + lines.length * 17 + 1);
     });
 
-    // Divider
-    y += rh;
-    ctx.fillStyle = '#21262d';
-    ctx.fillRect(0, y, CANVAS_W, DIVIDER);
-    y += DIVIDER;
+    // Footer
+    ctx.fillStyle = '#30363d';
+    ctx.fillRect(40, H - FOOT, W - 80, 1);
+    ctx.fillStyle = '#6e7681';
+    ctx.font = `13px ${_SHARE_FONT}`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('Make your own — rank your AniList or MAL list head-to-head at kessen.co.uk', 40, H - FOOT / 2 + 2);
   }
-
-  // ── Footer ───────────────────────────────────────────────────────────────
-  ctx.fillStyle = '#30363d';
-  ctx.font = '12px ui-sans-serif, system-ui, Arial, sans-serif';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'right';
-  ctx.fillText('kessen.co.uk', CANVAS_W - 16, y + FOOTER_H / 2);
 
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('Canvas.toBlob returned null');
-  const filename = `kessen-tierlist${user ? '-' + user : ''}.png`;
-  return { blob, filename, canvas };
+  const filename = `kessen-${kind === 'grid3' ? '3x3' : 'top10'}${user ? '-' + user : ''}.png`;
+  return { blob, filename, canvas, kind };
 }
 
-async function exportTierListImage() {
-  const btns = [
-    byId(IDS.sharePrimaryBtn),
-  ].filter(Boolean);
-  const origText = new Map(btns.map(b => [b, b.textContent]));
-  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ Generating…'; });
-
-  try {
-    const { blob, filename } = await _buildTierListBlob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  } catch (e) {
-    showToast('⚠️ Image export failed: ' + e.message);
-  } finally {
-    btns.forEach(b => { b.disabled = false; b.textContent = origText.get(b); });
-  }
-}
+// (v1.0.248 — exportTierListImage removed: it was a download-only duplicate of
+// shareImageFromModal's fallback, and the modal button pointed at it.)
 
 // ─── BACKUP / RESTORE ────────────────────────────────────────────────────────
 function downloadBackup() {
@@ -6989,11 +7055,23 @@ const FRANCHISE_GAPS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 // We EXCLUDE:
 //   ADAPTATION / SOURCE — cross-media (manga, LN, VN); not the same watch
 //   CHARACTER          — just shares a character (Fate\Stay Night etc.)
-//   SUMMARY            — recap movies are usually the same content
 //   OTHER              — anything AniList didn't classify
+// v1.0.248 — SUMMARY / COMPILATION (AniList's own recap types) are scanned
+// again but flagged `recap`, so the Missing tab's "Recap" chip — hidden by
+// default — controls them together with the title-heuristic recaps that
+// AniList files under SIDE_STORY / ALTERNATIVE.
 const FRANCHISE_GAP_REL_TYPES = new Set([
   'SEQUEL', 'PREQUEL', 'SIDE_STORY', 'SPIN_OFF', 'PARENT', 'ALTERNATIVE',
+  'SUMMARY', 'COMPILATION',
 ]);
+const FRANCHISE_GAP_RECAP_REL_TYPES = new Set(['SUMMARY', 'COMPILATION']);
+// Conservative title heuristic for recaps AniList has mis-filed. Whole
+// words only (no fuzzy matching) so a real sequel isn't swept up.
+const _GAP_RECAP_TITLE_RE = /\b(recaps?|compilation|digest|summary)\b|s[oō]+sh[uū]+hen|総集編/i;
+function _gapLooksLikeRecap(relationType, ...titles) {
+  if (FRANCHISE_GAP_RECAP_REL_TYPES.has(relationType)) return true;
+  return titles.some(t => t && _GAP_RECAP_TITLE_RE.test(t));
+}
 // Status values counted as "announced/upcoming" (not aired yet, or the
 // broadcast date is unknown). Filtered out unless the include-upcoming
 // toggle is checked. AniList uses NOT_YET_RELEASED for both.
@@ -7034,15 +7112,25 @@ const FRANCHISE_GAP_RELATIONS = [
   { key: 'SIDE_STORY',  label: 'Side story' },
   { key: 'SPIN_OFF',    label: 'Spin-off' },
   { key: 'ALTERNATIVE', label: 'Alternative' },
+  // v1.0.248 — not a relation type: a flag (see _gapLooksLikeRecap). Hidden
+  // by default — recaps are noise for a catch-up list.
+  { key: 'RECAP',       label: 'Recap' },
 ];
+const _GAPS_HIDDEN_RELATIONS_DEFAULT = ['RECAP'];
 let _franchiseGapsHiddenRelations = null;
 function _gapsHiddenRelations() {
   if (_franchiseGapsHiddenRelations) return _franchiseGapsHiddenRelations;
   try {
-    const arr = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.gapsHiddenRelations) || '[]');
-    _franchiseGapsHiddenRelations = new Set(Array.isArray(arr) ? arr : []);
-  } catch { _franchiseGapsHiddenRelations = new Set(); }
+    const raw = localStorage.getItem(KESSEN_KEYS.data.gapsHiddenRelations);
+    const arr = raw === null ? _GAPS_HIDDEN_RELATIONS_DEFAULT : JSON.parse(raw);
+    _franchiseGapsHiddenRelations = new Set(Array.isArray(arr) ? arr : _GAPS_HIDDEN_RELATIONS_DEFAULT);
+  } catch { _franchiseGapsHiddenRelations = new Set(_GAPS_HIDDEN_RELATIONS_DEFAULT); }
   return _franchiseGapsHiddenRelations;
+}
+// Cached scans from before v1.0.248 carry no `recap` flag; fall back to the
+// stored display title until the user rescans.
+function _gapIsRecap(gap) {
+  return gap.recap === true || (gap.recap === undefined && _gapLooksLikeRecap(gap.relationType, gap.title));
 }
 
 function _loadFranchiseGapsCache() {
@@ -7215,6 +7303,9 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
         episodes:     e.node.episodes || null,
         seasonYear:   e.node.seasonYear || null,
         relationType: e.relationType,
+        // v1.0.248 — recap flag from AniList's own SUMMARY/COMPILATION types or
+        // a whole-word title match across all three titles.
+        recap:        _gapLooksLikeRecap(e.relationType, e.node.title?.english, e.node.title?.romaji, e.node.title?.native) || undefined,
       }));
     if (gaps.length === 0) continue;
     gaps.forEach(g => seenGapIds.add(g.id));
@@ -7375,8 +7466,14 @@ function _gapMetaString(gap) {
   if (gap.format) bits.push(gap.format.replace(/_/g, ' '));
   if (gap.episodes) bits.push(`${gap.episodes} ep`);
   if (gap.seasonYear) bits.push(gap.seasonYear);
-  const relLabel = gap.relationType?.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  // v1.0.248 — AniList's SUMMARY / COMPILATION read as "Recap"; a heuristic
+  // recap under another relation type gets "Recap" appended.
+  const isRecap = _gapIsRecap(gap);
+  const relLabel = FRANCHISE_GAP_RECAP_REL_TYPES.has(gap.relationType)
+    ? 'Recap'
+    : gap.relationType?.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
   if (relLabel) bits.push(relLabel);
+  if (isRecap && relLabel !== 'Recap') bits.push('Recap');
   if (gap.status === 'NOT_YET_RELEASED') bits.push('Upcoming');
   else if (gap.status === 'RELEASING')   bits.push('Airing');
   return bits.join(' · ');
@@ -7385,7 +7482,8 @@ function _gapMetaString(gap) {
 // v1.0.245 — register a gap for the in-app detail modal; the relation note
 // tells the user what it's a sequel/prequel/side story of.
 function _registerGapItem(gap) {
-  const rel = gap.relationType ? gap.relationType.replace(/_/g, ' ').toLowerCase() : '';
+  const rel = FRANCHISE_GAP_RECAP_REL_TYPES.has(gap.relationType) ? 'recap' // v1.0.248
+    : gap.relationType ? gap.relationType.replace(/_/g, ' ').toLowerCase() : '';
   const note = gap.parentTitle
     ? `<div class="rec-relation-note">🔗 ${esc(rel ? rel.charAt(0).toUpperCase() + rel.slice(1) : 'Related')} of <strong>${esc(gap.parentTitle)}</strong>, which is in your list</div>`
     : '';
@@ -7598,7 +7696,8 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
         .filter(x => !excludeIds.has(x.id))
         .filter(x => includeUpcoming || !FRANCHISE_GAP_UPCOMING_STATUSES.has(x.status))
         .filter(x => !x.format || !hiddenFormats.has(x.format))
-        .filter(x => !x.relationType || !hiddenRelations.has(x.relationType)),
+        .filter(x => !x.relationType || !hiddenRelations.has(x.relationType))
+        .filter(x => !hiddenRelations.has('RECAP') || !_gapIsRecap(x)), // v1.0.248
     }))
     .filter(g => g.gaps.length > 0);
 
@@ -8925,38 +9024,46 @@ function _renderSavedComparisons() {
   if (!container) return;
   const savedComps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.savedComparisons) || '[]');
   if (!savedComps.length) { container.innerHTML = ''; return; }
+  // v1.0.248 — compact chips: click re-runs, × removes; label / date / trend
+  // in the tooltip. Data attributes + one delegated handler instead of
+  // inlined usernames (apostrophes broke the old onclick quoting).
   container.innerHTML = `
-    <p style="font-size:0.8rem;color:#8b949e;margin:0 0 8px">Recent comparisons</p>
-    <div class="saved-comp-cards">
+    <div class="saved-comp-chips">
+      <span class="saved-comp-label">Recent:</span>
       ${savedComps.map(c => {
         const platform   = c.platform || 'anilist';
         const displayName = platform === 'mal'
           ? c.username.replace(/ \[MAL\]$/i, '')  // strip suffix for display
           : c.username;
-        const platBadge = platform === 'mal'
-          ? `<span style="font-size:0.68rem;background:#2a4a6e;color:#79c0ff;border-radius:4px;padding:1px 5px;margin-left:4px">MAL</span>`
-          : '';
-        const escapedUsername = c.username.replace(/'/g, "\\'");
         const hist      = c.history || [];
         const prevScore = hist.length >= 2 ? hist[1].score : null;
         const delta     = prevScore !== null ? c.score - prevScore : null;
         const dLabel    = _compatDeltaLabel(delta);
-        const deltaHtml = dLabel
-          ? `<div class="scc-delta" style="color:${dLabel.color}">${dLabel.arrow} ${delta > 0 ? '+' : ''}${delta}% · ${dLabel.text}</div>`
-          : '';
+        const trend     = dLabel ? `<span class="scc-trend" style="color:${dLabel.color}">${dLabel.arrow}</span>` : '';
+        const tip       = `${c.label} · ${c.date}${dLabel ? ` · ${delta > 0 ? '+' : ''}${delta}% — ${dLabel.text}` : ''} · click to re-run`;
         return `
-        <div class="saved-comp-card">
-          <span style="font-size:1.2rem">${c.emoji}</span>
-          <div style="min-width:0;flex:1">
-            <div class="scc-name">${displayName}${platBadge}</div>
-            <div class="scc-meta">${c.score}% · ${c.label} · ${c.date}</div>
-            ${deltaHtml}
-          </div>
-          <button class="btn-small" onclick="_rerunComparison('${escapedUsername}','${platform}')">Re-run</button>
-          <button class="btn-small" onclick="_deleteComparison('${escapedUsername}')" aria-label="Remove saved comparison">×</button>
-        </div>`;
+        <span class="saved-comp-chip" role="button" tabindex="0" data-username="${esc(c.username)}" data-platform="${esc(platform)}" title="${esc(tip)}">
+          <span>${c.emoji || ''}</span>
+          <span class="scc-name">${esc(displayName)}</span>
+          ${platform === 'mal' ? '<span class="scc-plat">MAL</span>' : ''}
+          <span class="scc-score">${c.score}%</span>${trend}
+          <button type="button" class="scc-x" data-remove="1" aria-label="Remove saved comparison">×</button>
+        </span>`;
       }).join('')}
     </div>`;
+  container.onclick = (ev) => {
+    const chip = ev.target?.closest('.saved-comp-chip');
+    if (!chip) return;
+    if (ev.target.closest('[data-remove="1"]')) { _deleteComparison(chip.dataset.username); return; }
+    _rerunComparison(chip.dataset.username, chip.dataset.platform);
+  };
+  container.onkeydown = (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const chip = ev.target?.closest('.saved-comp-chip');
+    if (!chip) return;
+    ev.preventDefault();
+    _rerunComparison(chip.dataset.username, chip.dataset.platform);
+  };
 }
 
 // ─── CHALLENGE MODE ───────────────────────────────────────────────────────────
@@ -14135,7 +14242,7 @@ function shareRankings() {
   const copyBtn = byId(IDS.copyBtn);
   if (copyBtn) copyBtn.textContent = '📋 Copy link';
   const subEl = byId(IDS.shareModal)?.querySelector('.share-subtitle');
-  if (subEl) subEl.textContent = 'Export your tier list as an image — or copy a link to your top 20.';
+  if (subEl) subEl.textContent = 'Share an image of your top 10 (or a 3×3) — or copy a link to your top 20.';
   _updateShareModalCapabilities();
   byId(IDS.shareModal).style.display = 'flex';
   pushModalBack('share', closeShare);
@@ -14158,20 +14265,24 @@ function copyShareLink() {
 
 // ─── NATIVE SHARE SHEET (§5.2.5) ──────────────────────────────────────────────
 // On mobile (and any browser where navigator.canShare({ files }) returns true),
-// open the OS share sheet with the tier list image attached. Users can then pick
+// open the OS share sheet with the image attached. Users can then pick
 // Messages, WhatsApp, Instagram, etc. Falls back to direct download on desktop.
-async function shareTierListImage() {
+// v1.0.248 — this is now what the modal's primary button calls. It used to
+// call a download-only function, so the "📤 Share image" label on phones
+// downloaded instead of opening the share sheet.
+async function shareImageFromModal() {
   const btn = byId(IDS.sharePrimaryBtn);
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating image…'; }
   try {
-    const { blob, filename } = await _buildTierListBlob();
+    const { blob, filename, kind } = await _buildShareImageBlob();
     const file = new File([blob], filename, { type: 'image/png' });
     const shareUrl = byId(IDS.shareUrl)?.value || location.href.split('#')[0];
+    const what = kind === 'grid3' ? 'My anime 3×3' : 'My top 10 anime';
     const shareData = {
       files: [file],
-      title: 'My Kessen tier list',
-      text:  `My anime tier list — built on kessen.co.uk\n${shareUrl}`,
+      title: `${what} — Kessen`,
+      text:  `${what} — ranked battle by battle on kessen.co.uk\n${shareUrl}`,
     };
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
@@ -14200,10 +14311,10 @@ async function shareTierListImage() {
   }
 }
 
-// Copy the tier list image to the clipboard (desktop-friendly — lets users
+// Copy the share image to the clipboard (desktop-friendly — lets users
 // paste straight into Discord / Twitter / Slack compose boxes). Uses the
 // ClipboardItem API where available.
-async function copyTierListImageToClipboard() {
+async function copyShareImageToClipboard() {
   const btn = byId(IDS.shareCopyImageBtn);
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Copying…'; }
@@ -14211,7 +14322,7 @@ async function copyTierListImageToClipboard() {
     if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
       throw new Error('Clipboard image copy not supported in this browser');
     }
-    const { blob } = await _buildTierListBlob();
+    const { blob } = await _buildShareImageBlob();
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
     if (btn) {
       btn.textContent = '✓ Image copied — paste anywhere!';
@@ -14274,10 +14385,11 @@ function _updateShareModalCapabilities() {
       }
     } catch { canNativeShare = false; }
     primary.textContent = canNativeShare
-      ? '📤 Share tier list image'
-      : '⬇️ Download tier list image';
+      ? '📤 Share image'
+      : '⬇️ Download image';
     primary.dataset.nativeShare = canNativeShare ? '1' : '0';
   }
+  _syncShareImageKindUI(); // v1.0.248 — Top 10 / 3×3 toggle state + short-list note
   // Wire Escape-to-close. Safe to call repeatedly — removeEventListener is a
   // no-op if the handler isn't attached, and the browser deduplicates identical
   // (handler, phase) pairs.
@@ -15472,7 +15584,7 @@ const _SEARCH_FORMAT_SYNONYMS = {
   short: 'TV_SHORT', tv_short: 'TV_SHORT', special: 'SPECIAL',
 };
 function _parseSearchQuery(raw) {
-  const out = { text: '', genres: [], studios: [], formats: [], years: [], lengths: [], yearRange: null };
+  const out = { text: '', genres: [], studios: [], formats: [], years: [], lengths: [], statuses: [], yearRange: null };
   const lower = (raw || '').toLowerCase().trim();
   if (!lower) return out;
   // Split on whitespace but preserve quoted runs ("slice of life"). Keeps the
@@ -15489,12 +15601,15 @@ function _parseSearchQuery(raw) {
   };
   for (let p of parts) {
     if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
-    const m = p.match(/^(genre|studio|year|format|length):(.+)$/);
+    const m = p.match(/^(genre|studio|year|format|length|status):(.+)$/);
     if (!m) { free.push(p); continue; }
     const [, key, val] = m;
     if (!val) continue;
     if (key === 'genre')  out.genres.push(val);
     else if (key === 'studio') out.studios.push(val);
+    else if (key === 'status') { // v1.0.248 — status:ranked / status:unranked
+      if (val === 'ranked' || val === 'unranked') out.statuses.push(val);
+    }
     else if (key === 'format') {
       const fmt = _SEARCH_FORMAT_SYNONYMS[val] || val.toUpperCase();
       out.formats.push(fmt);
@@ -15544,6 +15659,11 @@ function _animeMatchesSearchTokens(a, q) {
     const [lo, hi] = q.yearRange;
     if (!a.seasonYear || a.seasonYear < lo || a.seasonYear > hi) return false;
   }
+  // v1.0.248 — Ranked / Unranked (see _isRanked). Covers grid, list and
+  // franchise views since all three route through this predicate.
+  if (q.statuses && q.statuses.length) {
+    if (!q.statuses.includes(_isRanked(a) ? 'ranked' : 'unranked')) return false;
+  }
   return true;
 }
 
@@ -15568,7 +15688,13 @@ let _searchChips = {
   // unknown. The standalone row's subtractive semantics are migrated into
   // these additive chips on first load by _migrateLegacyFiltersToChips.
   lengths: new Set(),
+  // v1.0.248 — 'ranked' / 'unranked' (see _isRanked). Picking both = all.
+  statuses: new Set(),
 };
+const _SEARCH_STATUS_VALUES = [
+  { value: 'ranked',   label: 'Ranked' },
+  { value: 'unranked', label: 'Unranked' },
+];
 const _SEARCH_LENGTH_BUCKETS = [
   { value: 'short',   label: '≤12 ep (or Movie)' },
   { value: 'medium',  label: '13–24 ep' },
@@ -15583,6 +15709,14 @@ const _SEARCH_LENGTH_BUCKETS = [
 // canonicalised to lowercase for matching but rendered with original
 // casing for the popover.
 function _searchPickerValues(category) {
+  if (category === 'status') {
+    // v1.0.248 — Ranked · N / Unranked · M, counted the same way the
+    // Rankings list splits them.
+    let ranked = 0;
+    animeList.forEach(a => { if (_isRanked(a)) ranked++; });
+    const counts = { ranked, unranked: animeList.length - ranked };
+    return _SEARCH_STATUS_VALUES.map(s => ({ value: s.value, label: `${s.label}  ·  ${counts[s.value]}` }));
+  }
   if (category === 'format') {
     // v1.0.211 — count per format so the popover reads at-a-glance the same
     // way Genre / Studio / Length do (`Movie  ·  47`, `OVA  ·  3`).
@@ -15695,11 +15829,12 @@ async function openSearchPicker(category, btn) {
     if (category === 'format') return _searchChips.formats.has(val);
     if (category === 'length') return _searchChips.lengths.has(val);
     if (category === 'year')   return _searchChips.years.has(Number(val));
+    if (category === 'status') return _searchChips.statuses.has(val); // v1.0.248
     return false;
   };
   const heading = {
     genre: 'Pick genres', studio: 'Pick studios', year: 'Pick years',
-    format: 'Pick formats', length: 'Pick episode lengths',
+    format: 'Pick formats', length: 'Pick episode lengths', status: 'Ranked or unranked',
   }[category];
   const empty = values.length === 0
     ? `<p class="search-picker-empty">Nothing to pick yet — your list doesn't have ${category} data populated.</p>`
@@ -15797,6 +15932,8 @@ function _toggleSearchChip(category, value, on) {
   } else if (category === 'year') {
     const n = Number(value);
     if (on) _searchChips.years.add(n); else _searchChips.years.delete(n);
+  } else if (category === 'status') { // v1.0.248
+    if (on) _searchChips.statuses.add(value); else _searchChips.statuses.delete(value);
   }
   _persistSearchChips();
   _renderSearchChips();
@@ -15843,9 +15980,10 @@ function _renderSearchChips() {
     if (category === 'format') {
       return ({ TV: 'TV', MOVIE: 'Movie', OVA: 'OVA', ONA: 'ONA', TV_SHORT: 'Short', SPECIAL: 'Special' })[value] || value;
     }
+    if (category === 'status') return value === 'ranked' ? 'Ranked' : 'Unranked'; // v1.0.248
     return String(value);
   };
-  const pillIcon = { genre: '🎭', studio: '🎬', year: '📅', format: '📺', length: '📏', yearRange: '📅' };
+  const pillIcon = { genre: '🎭', studio: '🎬', year: '📅', format: '📺', length: '📏', yearRange: '📅', status: '⚔️' };
   const lengthLabel = (v) => (_SEARCH_LENGTH_BUCKETS.find(b => b.value === v)?.label) || v;
   // v1.0.211 — group chips by category so we can render OR between same-
   // category chips and AND between different categories. The picker logic
@@ -15857,6 +15995,7 @@ function _renderSearchChips() {
     year:   [...(_searchChips.years   || new Set())].map(v => ({ category: 'year',   raw: String(v), label: String(v) })),
     format: [...(_searchChips.formats || new Set())].map(v => ({ category: 'format', raw: v, label: labelFor('format', v) })),
     length: [...(_searchChips.lengths || new Set())].map(v => ({ category: 'length', raw: v, label: lengthLabel(v) })),
+    status: [...(_searchChips.statuses || new Set())].map(v => ({ category: 'status', raw: v, label: labelFor('status', v) })), // v1.0.248
   };
   if (_searchChips.yearRange) {
     const [lo, hi] = _searchChips.yearRange;
@@ -15875,7 +16014,7 @@ function _renderSearchChips() {
       <button type="button" class="search-chip-remove" aria-label="Remove filter" data-chip-remove="1">×</button>
     </span>`;
   // Order categories visually in a predictable left-to-right reading order.
-  const categoryOrder = ['genre', 'studio', 'year', 'format', 'length'];
+  const categoryOrder = ['genre', 'studio', 'year', 'format', 'length', 'status'];
   const groupBlocks = [];
   for (const cat of categoryOrder) {
     const items = grouped[cat];
@@ -15928,6 +16067,7 @@ function _removeSearchChip(category, value) {
   else if (category === 'format') _searchChips.formats.delete(value);
   else if (category === 'length') _searchChips.lengths.delete(value);
   else if (category === 'year')   _searchChips.years.delete(Number(value));
+  else if (category === 'status') _searchChips.statuses.delete(value); // v1.0.248
   _persistSearchChips();
   _renderSearchChips();
   filterRankings();
@@ -15936,7 +16076,7 @@ function _removeSearchChip(category, value) {
 function clearSearchChips() {
   _searchChips = {
     genres: new Set(), studios: new Set(), years: new Set(),
-    yearRange: null, formats: new Set(), lengths: new Set(),
+    yearRange: null, formats: new Set(), lengths: new Set(), statuses: new Set(),
   };
   // Also clear the text input so "Clear filters" really means "show everything".
   const input = byId(IDS.searchInput);
@@ -15966,6 +16106,7 @@ function _effectiveSearchQuery(parsed) {
     formats: [...new Set([...parsed.formats, ..._searchChips.formats])],
     years:   [...new Set([...parsed.years,   ..._searchChips.years])],
     lengths: [...new Set([...(parsed.lengths || []), ..._searchChips.lengths])],
+    statuses: [...new Set([...(parsed.statuses || []), ..._searchChips.statuses])], // v1.0.248
     yearRange: _searchChips.yearRange || parsed.yearRange,
   };
   // Legacy alias so any caller still reading `q.studios` continues to work
@@ -19823,6 +19964,7 @@ function _serialiseSearchChips() {
     years:     [..._searchChips.years],
     formats:   [..._searchChips.formats],
     lengths:   [..._searchChips.lengths],
+    statuses:  [..._searchChips.statuses], // v1.0.248
     yearRange: _searchChips.yearRange,
   };
 }
@@ -19831,6 +19973,7 @@ function _deserialiseSearchChips(p) {
   _searchChips.genres  = new Set(Array.isArray(p.genres)  ? p.genres  : []);
   _searchChips.studios = new Set(Array.isArray(p.studios) ? p.studios : []);
   _searchChips.years   = new Set(Array.isArray(p.years)   ? p.years.map(Number) : []);
+  _searchChips.statuses = new Set(Array.isArray(p.statuses) ? p.statuses.filter(v => v === 'ranked' || v === 'unranked') : []); // v1.0.248
   _searchChips.formats = new Set(Array.isArray(p.formats) ? p.formats : []);
   _searchChips.lengths = new Set(Array.isArray(p.lengths) ? p.lengths : []);
   _searchChips.yearRange = Array.isArray(p.yearRange) && p.yearRange.length === 2
@@ -21254,18 +21397,20 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.247 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.248 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
+// (1.0.247 and 1.0.248 shipped back-to-back, so this list covers both.)
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🧩 Missing can be filtered by relation as well as format — hide spin-offs or side stories with one tap on the new "Relations shown" chips, and the choice sticks between visits.',
-    '⛓ Franchise mode lost its second sort menu. The normal Sort menu already orders franchises by their average ELO, total battles and so on, so the extra "Top ELO / Members" dropdown was just clutter.',
-    '📈 Taste evolution snapshots can no longer be skipped: every mode that counts a battle now records the 50-battle milestone the moment it is crossed. Where an older milestone genuinely wasn\'t saved, the dotted arrow now says which one.',
-    '🎯 "Because you loved…" groups fill out. Each seed now draws from 50 AniList recommendations instead of 25, so a show whose suggestions you have mostly already watched still fills the row. Long "Part of …" notes on cards are clamped to two lines.',
-    '☁️ Tap your avatar to see when your rankings last synced to the cloud. The little status dot in the header stays a brief flash after each save; the standing answer lives in the menu.',
+    '🔗 Share makes a proper image now: a Top 10 card (rank, title, ELO) or a 3×3 grid of your top nine, the format r/anime uses. The old full tier-list poster — every cover at thumbnail size, D tier included — is gone. On phones the image goes to the share sheet; it used to download even when the button said "Share".',
+    '⚔️ Rankings has a + Status filter: pick Ranked to hide everything you haven\'t battled yet, or Unranked to see only what still needs a battle. Works in grid, list and franchise views. Franchise mode lost its second sort menu — the normal Sort already orders franchises by average ELO, total battles and so on.',
+    '🧩 Missing can be filtered by relation (sequel, prequel, spin-off…) as well as format, and recap films are hidden by default — flip the Recap chip to see them. Choices stick between visits. The tab opens on newest release year; the old Catch-up order sort is gone.',
+    '🎯 "Because you loved…" and mood rows fill out: each seed now draws from 50 AniList recommendations instead of 25, so a show whose suggestions you\'ve mostly already watched still fills the row.',
+    '👥 Social is three matching cards: Compare & Challenge with the username box and your recent comparisons as chips (tap to re-run), then Watch Together and Live Challenge underneath.',
+    '📈 Taste-evolution snapshots can no longer be skipped — every mode that counts a battle records the 50-battle milestone as it is crossed, and where an old one is missing the dotted arrow now says which. Tap your avatar to see when your rankings last synced.',
   ],
 };
 

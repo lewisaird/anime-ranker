@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.247" />
+  <meta name="version" content="1.0.248" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1084,8 +1084,8 @@
         <div id="search-help-popover" class="search-help-popover" hidden>
           <strong>Search tips</strong>
           <ul>
-            <li>Pick filters from the <strong>+ Genre / + Studio / + Year / + Format</strong> row below.</li>
-            <li>Or type tokens directly: <code>genre:action</code> <code>studio:bones</code> <code>year:2024</code> <code>year:2010-2019</code> <code>format:movie</code></li>
+            <li>Pick filters from the <strong>+ Genre / + Studio / + Year / + Format / + Length / + Status</strong> row below.</li>
+            <li>Or type tokens directly: <code>genre:action</code> <code>studio:bones</code> <code>year:2024</code> <code>year:2010-2019</code> <code>format:movie</code> <code>status:unranked</code></li>
             <li>Combine freely: <code>genre:romance year:2020-2024 your</code></li>
             <li>Multi-word: <code>"slice of life"</code></li>
           </ul>
@@ -1106,11 +1106,13 @@
       <div id="search-picker-row" class="search-picker-row">
         <span class="search-picker-label" aria-hidden="true">Filters:</span>
         <!-- v1.0.243 — emoji in a span so phones can drop it and fit all five chips on one row -->
-        <button type="button" class="search-pick-btn" data-category="genre"  onclick="openSearchPicker('genre',  this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">🎭 </span>+ Genre</button>
-        <button type="button" class="search-pick-btn" data-category="studio" onclick="openSearchPicker('studio', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">🎬 </span>+ Studio</button>
-        <button type="button" class="search-pick-btn" data-category="year"   onclick="openSearchPicker('year',   this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📅 </span>+ Year</button>
-        <button type="button" class="search-pick-btn" data-category="format" onclick="openSearchPicker('format', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📺 </span>+ Format</button>
-        <button type="button" class="search-pick-btn" data-category="length" onclick="openSearchPicker('length', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📏 </span>+ Length</button>
+        <button type="button" class="search-pick-btn" data-category="genre"  onclick="openSearchPicker('genre',  this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">🎭 </span><span class="pick-plus">+ </span>Genre</button>
+        <button type="button" class="search-pick-btn" data-category="studio" onclick="openSearchPicker('studio', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">🎬 </span><span class="pick-plus">+ </span>Studio</button>
+        <button type="button" class="search-pick-btn" data-category="year"   onclick="openSearchPicker('year',   this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📅 </span><span class="pick-plus">+ </span>Year</button>
+        <button type="button" class="search-pick-btn" data-category="format" onclick="openSearchPicker('format', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📺 </span><span class="pick-plus">+ </span>Format</button>
+        <button type="button" class="search-pick-btn" data-category="length" onclick="openSearchPicker('length', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">📏 </span><span class="pick-plus">+ </span>Length</button>
+        <!-- v1.0.248 — Ranked / Unranked (anime with no battles yet) -->
+        <button type="button" class="search-pick-btn" data-category="status" onclick="openSearchPicker('status', this)" aria-haspopup="menu" aria-expanded="false"><span class="pick-emoji">⚔️ </span><span class="pick-plus">+ </span>Status</button>
         <button type="button" class="search-clear-btn" id="search-clear-btn" onclick="clearSearchChips()" style="display:none">⤫ Clear filters</button>
         <div id="search-picker-popover" class="search-picker-popover" hidden></div>
       </div>
@@ -1510,21 +1512,22 @@
     <!-- ── SOCIAL panel ───────────────────────────────────────────────── -->
     <div class="tab-panel" id="tab-panel-social" style="display:none">
 
-      <!-- Platform selector — hidden for AniList-only users (no MAL token) -->
-      <div class="social-platform-row" id="social-platform-row" style="display:none">
-        <button id="sp-anilist" class="sp-btn active" onclick="setSocialPlatform('anilist')">🔵 AniList</button>
-        <button id="sp-mal"     class="sp-btn"        onclick="setSocialPlatform('mal')">📋 MAL</button>
-      </div>
+      <!-- v1.0.248 — Social is three cards in the Manage card style: one
+           full-width "Compare & Challenge" card (username field, platform
+           toggle when MAL is linked, recent comparisons as chips), then
+           Watch Together and Live Challenge two-up at the same width.
+           Compare results render full-width between the two. -->
+      <div class="social-card" id="social-friend-card">
+        <div class="manage-section-title">Compare &amp; Challenge</div>
+        <p class="social-card-sub">Any AniList or MAL username works — they don't need a Kessen account. Compare tastes, or guess how they ranked their anime.</p>
 
-      <!-- ── A FRIEND'S LIST (v1.0.246) ────────────────────────────────
-           One username field for the two things you can do with a friend's
-           public list: compare tastes, or play Challenge Mode against it.
-           There used to be two look-alike inputs on this tab. -->
-      <div class="social-group">
-        <h3 class="social-group-title">A friend's list</h3>
-        <p class="recs-sub social-group-sub">Enter any AniList or MAL username — they don't need a Kessen account. Compare how your tastes line up (with recommendations from their list), or play Challenge Mode: guess how they ranked their anime.</p>
+        <!-- Platform selector — hidden for AniList-only users (no MAL token) -->
+        <div class="social-platform-row" id="social-platform-row" style="display:none">
+          <button id="sp-anilist" class="sp-btn active" onclick="setSocialPlatform('anilist')">🔵 AniList</button>
+          <button id="sp-mal"     class="sp-btn"        onclick="setSocialPlatform('mal')">📋 MAL</button>
+        </div>
 
-        <div class="compat-input-row social-friend-row" style="margin-top:10px">
+        <div class="compat-input-row social-friend-row">
           <input type="text" id="social-compare-input"
                  placeholder="Friend's username…"
                  onkeydown="if(event.key==='Enter')runSocialCompare()" />
@@ -1532,49 +1535,45 @@
           <button class="btn-secondary" onclick="openChallengeFromInput()" title="Solo — guess how this friend ranked their anime">🎮 Challenge</button>
         </div>
 
-        <!-- Saved comparisons -->
+        <!-- Recent comparisons (chips) -->
         <div id="saved-comparisons"></div>
 
         <!-- Inputs kept for internal functions — visually hidden but readable -->
         <input type="text" id="social-challenge-input" style="display:none" aria-hidden="true" />
         <input type="text" id="compat-username-input" style="display:none" aria-hidden="true" />
         <input type="text" id="friend-recs-input"     style="display:none" aria-hidden="true" />
-
-        <!-- Results: compatibility above, recs below -->
-        <div id="compat-results"></div>
-        <div id="friend-recs-results"></div>
       </div>
 
-      <!-- ── PLAY TOGETHER ─────────────────────────────────────────── -->
-      <div class="social-group" style="margin-top:28px">
-        <h3 class="social-group-title">Play together</h3>
-        <div class="social-play-grid social-play-grid-2">
+      <!-- Results: compatibility above, recs below -->
+      <div id="compat-results"></div>
+      <div id="friend-recs-results"></div>
 
-          <!-- Watch Together -->
-          <div class="social-play-card" id="collab-section">
-            <div class="social-play-card-top">
-              <span class="social-play-icon">🤝</span>
-              <div class="social-play-text">
-                <strong>Watch Together</strong>
-                <span>Nominate shows, battle head-to-head, and let the votes decide what to watch.</span>
-              </div>
+      <div class="social-play-grid social-play-grid-2">
+
+        <!-- Watch Together -->
+        <div class="social-card social-play-card" id="collab-section">
+          <div class="social-play-card-top">
+            <span class="social-play-icon">🤝</span>
+            <div class="social-play-text">
+              <strong>Watch Together</strong>
+              <span>Nominate shows, battle head-to-head, and let the votes decide what to watch.</span>
             </div>
-            <button class="btn-primary social-play-action-btn" onclick="openCollabMode()">Start a session →</button>
           </div>
-
-          <!-- Live Challenge -->
-          <div class="social-play-card" id="live-challenge-section">
-            <div class="social-play-card-top">
-              <span class="social-play-icon">🌐</span>
-              <div class="social-play-text">
-                <strong>Live Challenge</strong>
-                <span>Real-time head-to-head with a prediction round. Both players need to be online.</span>
-              </div>
-            </div>
-            <button class="btn-primary social-play-action-btn" onclick="openLiveChallengeMode()">Create or join →</button>
-          </div>
-
+          <button class="btn-primary social-play-action-btn" onclick="openCollabMode()">Start a session →</button>
         </div>
+
+        <!-- Live Challenge -->
+        <div class="social-card social-play-card" id="live-challenge-section">
+          <div class="social-play-card-top">
+            <span class="social-play-icon">🌐</span>
+            <div class="social-play-text">
+              <strong>Live Challenge</strong>
+              <span>Real-time head-to-head with a prediction round. Both players need to be online.</span>
+            </div>
+          </div>
+          <button class="btn-primary social-play-action-btn" onclick="openLiveChallengeMode()">Create or join →</button>
+        </div>
+
       </div>
 
     </div>
@@ -1777,7 +1776,7 @@
 
         <div class="help-section">
           <h4>📋 Rankings</h4>
-          <p>Title search at the top, then a row of filter chips: <strong>+ Genre</strong>, <strong>+ Studio</strong>, <strong>+ Year</strong>, <strong>+ Format</strong>, <strong>+ Length</strong>. Each opens a popover listing the actual values from your list with counts, so you can see at a glance what's worth filtering by. Picks become removable chips — combine across categories (AND) or pick multiple values in one category (OR). One <strong>⤫ Clear filters</strong> button wipes everything. Sort by ELO, Title, Win Rate, Battles, AniList Avg, or Confidence. Toggle grid or list view. Fuzzy-only and Franchise mode live in the row below.</p>
+          <p>Title search at the top, then a row of filter chips: <strong>+ Genre</strong>, <strong>+ Studio</strong>, <strong>+ Year</strong>, <strong>+ Format</strong>, <strong>+ Length</strong>, <strong>+ Status</strong> (ranked or unranked). Each opens a popover listing the actual values from your list with counts, so you can see at a glance what's worth filtering by. Picks become removable chips — combine across categories (AND) or pick multiple values in one category (OR). One <strong>⤫ Clear filters</strong> button wipes everything. Sort by ELO, Title, Win Rate, Battles, AniList Avg, or Confidence. Toggle grid or list view. Fuzzy-only and Franchise mode live in the row below.</p>
         </div>
 
         <div class="help-section">
@@ -1792,7 +1791,7 @@
           <h4>📊 Tabs</h4>
           <p><strong>Battles</strong> — stats, biggest upsets, rivalries, and full battle history. Total Battles + Fuzzy Flagged tiles are clickable shortcuts.<br>
           <strong>Profile</strong> — two sub-tabs: <em>Taste</em> (your archetype, genre &amp; era breakdowns, studio affinity, taste vs the community, score distribution) and <em>Achievements</em> (milestones and badges earned through ranking).<br>
-          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime, with mood chips at the top for one-tap Comforting / Devastating / Intense / Thought-provoking / Beautiful filters), <em>This Season</em> (airing now + next), <em>Predict</em> (tier guess for any anime you haven't ranked), and <em>Missing</em> (sequels, prequels, spin-offs and side stories you have in your list but haven't watched yet — filter them by format and by relation type). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
+          <strong>Discover</strong> — four sub-tabs: <em>For You</em> (recs based on your top-rated anime, with mood chips at the top for one-tap Comforting / Devastating / Intense / Thought-provoking / Beautiful filters), <em>This Season</em> (airing now + next), <em>Predict</em> (tier guess for any anime you haven't ranked), and <em>Missing</em> (sequels, prequels, spin-offs and side stories you have in your list but haven't watched yet — filter them by format and by relation type; recap films are hidden unless you switch the <em>Recap</em> chip on). Cards that strongly match your taste get a 🎯 <strong>Strong match</strong> badge.<br>
           <strong>Social</strong> — multiplayer modes and taste comparison (see below).<br>
           <strong>Manage</strong> — backup, export, sync to AniList or MAL, appearance, notification settings, and reset.</p>
         </div>
@@ -1802,7 +1801,12 @@
           <p><strong>🤝 Watch Together</strong> — co-op picker for what to watch tonight. Nominate shows (or pull from this season), then vote head-to-head until one wins.<br>
           <strong>🎮 Challenge Mode</strong> — <b>solo</b> guessing game. Type any AniList or MAL username and guess which of two of their anime they ranked higher. No signup or invite needed for your friend.<br>
           <strong>🌐 Live Challenge</strong> — <b>together</b>, real-time. Each round you both pick a winner and predict each other's pick — bonus points for reading them right.<br>
-          <strong>Taste Compare</strong> — enter any AniList username to see how your rankings overlap, where you disagree, and get cross-taste recommendations.</p>
+          <strong>Taste Compare</strong> — enter any AniList or MAL username to see how your rankings overlap, where you disagree, and get cross-taste recommendations. Recent comparisons sit under the box as chips — tap one to re-run it.</p>
+        </div>
+
+        <div class="help-section">
+          <h4>🔗 Share</h4>
+          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) or a <strong>3×3</strong> grid of your top nine — the format r/anime uses — plus a link that opens your top 20 in a browser. On phones the image goes straight to the share sheet; on desktop it downloads or copies to the clipboard.</p>
         </div>
 
         <div class="help-section">
@@ -1922,16 +1926,25 @@
 <div id="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onclick="closeShareOnOverlay(event)">
   <div class="share-box">
     <button class="share-close" onclick="closeShare()" aria-label="Close">✕</button>
-    <h3 id="share-modal-title">📤 Share Your Tier List</h3>
-    <p class="share-subtitle">Export your tier list as an image — or copy a link to your top 20.</p>
+    <h3 id="share-modal-title">📤 Share Your Rankings</h3>
+    <p class="share-subtitle">Share an image of your top 10 (or a 3×3) — or copy a link to your top 20.</p>
+
+    <!-- v1.0.248 — image format: Top 10 card or the r/anime-style 3×3. The
+         full tier-list poster wall was retired (unreadable at any real list
+         size, and it showed the D tier). Choice is remembered. -->
+    <div class="share-kind-row" id="share-image-kind" role="group" aria-label="Image format">
+      <button type="button" class="share-kind-btn" data-kind="top10" onclick="setShareImageKind('top10')" aria-pressed="true">🏆 Top 10 card</button>
+      <button type="button" class="share-kind-btn" data-kind="grid3" onclick="setShareImageKind('grid3')" aria-pressed="false">▦ 3×3 grid</button>
+    </div>
+    <p class="share-image-note" id="share-image-note" style="display:none"></p>
 
     <!-- Primary action: native share sheet (mobile) or download (desktop) -->
-    <button class="btn-primary share-primary" id="share-primary-btn" onclick="exportTierListImage()">
-      ⬇️ Download tier list image
+    <button class="btn-primary share-primary" id="share-primary-btn" onclick="shareImageFromModal()">
+      ⬇️ Download image
     </button>
 
     <!-- Desktop-only: copy image to clipboard -->
-    <button class="btn-secondary share-copy-image" id="share-copy-image-btn" onclick="copyTierListImageToClipboard()" style="display:none">
+    <button class="btn-secondary share-copy-image" id="share-copy-image-btn" onclick="copyShareImageToClipboard()" style="display:none">
       📋 Copy image to clipboard
     </button>
 

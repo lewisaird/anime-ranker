@@ -2983,6 +2983,21 @@
     .share-box h3 { font-size: 1.15rem; color: var(--accent-blue); margin-bottom: 6px; text-align: center; }
     .share-box p.share-subtitle { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 18px; text-align: center; }
 
+    /* v1.0.248 — image format toggle (Top 10 card / 3×3 grid) */
+    .share-kind-row { display: flex; gap: 8px; justify-content: center; margin: -6px 0 12px; }
+    .share-kind-btn {
+      flex: 1; max-width: 190px; padding: 8px 12px; border-radius: 999px;
+      border: 1px solid var(--border-default); background: var(--bg-primary);
+      color: var(--text-secondary); font-size: 0.85rem; cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .share-kind-btn.active {
+      border-color: var(--accent-blue); color: var(--accent-blue);
+      background: var(--hover-blue-bg); font-weight: 600;
+    }
+    @media (hover: hover) { .share-kind-btn:hover:not(.active) { border-color: var(--accent-blue); } }
+    .share-image-note { color: var(--text-secondary); font-size: 0.78rem; text-align: center; margin: -4px 0 10px; }
+
     .share-primary {
       width: 100%; font-size: 1rem; padding: 14px 20px;
       margin-bottom: 10px; min-height: 48px;
@@ -4629,20 +4644,27 @@
     }
 
     /* SAVED COMPARISONS */
-    .saved-comp-cards { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    .saved-comp-card {
-      display: flex; align-items: center; gap: 10px;
-      background: var(--bg-secondary); border: 1px solid var(--border-default);
-      border-radius: 8px; padding: 8px 12px;
-      transition: border-color 0.15s ease; /* v1.0.211 */
+    /* v1.0.248 — recent comparisons are compact chips inside the Compare card
+       (were full mini-cards with their own Re-run button). Click = re-run;
+       the × removes. Label, date and trend live in the tooltip. */
+    .saved-comp-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+    .saved-comp-label { font-size: 0.75rem; color: var(--text-secondary); margin-right: 2px; }
+    .saved-comp-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 6px 4px 10px; border-radius: 999px;
+      background: var(--bg-primary); border: 1px solid var(--border-default);
+      color: var(--text-primary); font-size: 0.78rem; cursor: pointer;
+      transition: border-color 0.15s ease;
     }
-    @media (hover: hover) {
-      .saved-comp-card:hover { border-color: rgba(88,166,255,0.30); }
+    @media (hover: hover) { .saved-comp-chip:hover { border-color: var(--accent-blue); } }
+    .saved-comp-chip .scc-score { font-weight: 700; color: var(--accent-blue); }
+    .saved-comp-chip .scc-trend { font-size: 0.72rem; }
+    .saved-comp-chip .scc-plat { font-size: 0.62rem; background: #2a4a6e; color: #79c0ff; border-radius: 4px; padding: 1px 4px; }
+    .saved-comp-chip .scc-x {
+      background: none; border: none; color: var(--text-secondary); cursor: pointer;
+      font-size: 0.95rem; line-height: 1; padding: 0 3px; border-radius: 50%;
     }
-    .saved-comp-card .scc-name  { font-size: 0.85rem; color: var(--text-primary); font-weight: 600; }
-    .saved-comp-card .scc-meta  { font-size: 0.72rem; color: var(--text-secondary); }
-    .saved-comp-card .scc-delta { font-size: 0.72rem; margin-top: 2px; }
-    .saved-comp-card { align-items: flex-start; }
+    @media (hover: hover) { .saved-comp-chip .scc-x:hover { color: var(--accent-red); } }
     .challenge-pill-btn { font-size: 1rem; padding: 2px 8px; }
 
     /* ── WATCH TOGETHER / COLLABORATIVE MODE ── */
@@ -5116,20 +5138,33 @@
     }
 
     /* ── SOCIAL TAB LAYOUT ── */
-    .social-group { margin-bottom: 8px; }
-    .social-group-title {
-      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
-      text-transform: uppercase; color: var(--text-secondary);
+    /* v1.0.248 — Social tab: every block is a card with the Manage card
+       chrome (same background, border, radius, padding, small-caps title),
+       so the friend section, the play cards and Manage all read as one
+       family. The old bare heading + paragraph + floating "Recent
+       comparisons" cards were three visual languages on one page. */
+    .social-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .social-card-sub {
+      font-size: 0.82rem; color: var(--text-secondary); line-height: 1.45;
       margin: 0 0 12px;
     }
-    .social-group-sub { margin-top: -6px; margin-bottom: 14px; }
+    #social-friend-card .social-platform-row { justify-content: flex-start; margin-bottom: 12px; }
+    #social-friend-card .compat-input-row { justify-content: flex-start; margin-bottom: 0; }
+    #compat-results:not(:empty), #friend-recs-results:not(:empty) { margin-top: 12px; }
 
     /* Play cards grid */
     .social-play-grid {
       display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
     }
-    /* v1.0.246 — two cards now (Challenge moved up to the shared username row) */
-    .social-play-grid-2 { grid-template-columns: repeat(2, 1fr); max-width: 720px; }
+    /* v1.0.246 — two cards (Challenge lives in the username row above).
+       v1.0.248 — same width as the card above; no max-width cap. */
+    .social-play-grid-2 { grid-template-columns: repeat(2, 1fr); margin-top: 12px; }
+    @media (max-width: 600px) { .social-play-grid-2 { grid-template-columns: 1fr; } }
     .social-friend-row { flex-wrap: wrap; }
     .social-friend-row input { flex: 1 1 220px; min-width: 0; }
     .social-friend-row .btn-secondary { white-space: nowrap; }
@@ -5138,9 +5173,7 @@
       .social-friend-row .btn-primary, .social-friend-row .btn-secondary { flex: 1; }
     }
     .social-play-card {
-      background: var(--bg-secondary); border-radius: 12px;
-      padding: 16px; display: flex; flex-direction: column; gap: 14px;
-      border: 1px solid var(--border-color, #21262d);
+      display: flex; flex-direction: column; gap: 14px;
     }
     .social-play-card-top { display: flex; gap: 12px; align-items: flex-start; }
     .social-play-icon { font-size: 1.6rem; flex-shrink: 0; line-height: 1; margin-top: 2px; }
@@ -5405,8 +5438,10 @@
          chips so all five fit on one line at 375px. */
       .search-picker-label { display: none; }
       .search-picker-row { gap: 5px; }
-      .search-pick-btn { font-size: 0.72rem; padding: 5px 8px; }
-      .search-pick-btn .pick-emoji { display: none; }
+      /* v1.0.248 — six pickers now (+ Status): drop the "+ " too and tighten
+         the padding so all six still sit on one row at 375px. */
+      .search-pick-btn { font-size: 0.72rem; padding: 5px 7px; }
+      .search-pick-btn .pick-emoji, .search-pick-btn .pick-plus { display: none; }
       /* v1.0.243 — Sort row: the sort dropdown drops its "Sort:" prefix and
          takes whatever width is left (flex: 1), so the label changing from
          "ELO" to "AniList Avg" never reflows the toggles beside it, and the
