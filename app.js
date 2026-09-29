@@ -854,8 +854,9 @@ const KESSEN_KEYS = {
     notifTombstones: (key) => `kessen.data.notifTombstones.${key || 'guest'}`,
     // v1.0.239 — Lightweight usage metrics. Counters only (no timestamps per
     // event, no PII) — "which tabs / modes / features get used". Local per
-    // user; also rides along in the cloud save so aggregate usage is
-    // visible in Firebase for keep/cut decisions on low-use features.
+    // user; also rides along in the cloud save (Netlify session blobs, not
+    // Firebase) so tools/metrics-report.mjs can aggregate usage for keep/cut
+    // decisions on low-use features.
     metrics: (key) => `kessen.data.metrics.${key || 'guest'}`,
     // v1.0.239 — PWA install-prompt dismissal (timestamp). Suppresses the
     // banner for 30 days after the user says "not now".
@@ -2461,8 +2462,9 @@ async function _doCloudSave() {
       dailyStreak: { ..._dailyStreak },  // v1.0.238 — cross-device streak sync
       weeklyStats: { ..._weeklyStats,     // v1.0.238 — cross-device weekly stats
         lastCompletedWeek: _weeklyStats.lastCompletedWeek ? { ..._weeklyStats.lastCompletedWeek } : null },
-      // v1.0.239 — usage metrics ride along so aggregate feature usage is
-      // visible in Firebase. Counters only, no PII. See _metrics definition.
+      // v1.0.239 — usage metrics ride along so aggregate feature usage can be
+      // read out of the session blobs (tools/metrics-report.mjs). Counters
+      // only, no PII. See _metrics definition.
       metrics: { counts: { ..._metrics.counts }, firstSeen: _metrics.firstSeen, lastSeen: _metrics.lastSeen, sessions: _metrics.sessions },
       savedAt: new Date().toISOString(),
     };
@@ -7068,9 +7070,29 @@ const FRANCHISE_GAP_RECAP_REL_TYPES = new Set(['SUMMARY', 'COMPILATION']);
 // Conservative title heuristic for recaps AniList has mis-filed. Whole
 // words only (no fuzzy matching) so a real sequel isn't swept up.
 const _GAP_RECAP_TITLE_RE = /\b(recaps?|compilation|digest|summary)\b|s[oō]+sh[uū]+hen|総集編/i;
-function _gapLooksLikeRecap(relationType, ...titles) {
+// v1.0.248 — the AniList synopsis is where most mis-filed recaps give
+// themselves away (Madoka "a recap of the first eight episodes", AoT "A
+// recompilation of the anime series", Code Geass "theatrical film remake",
+// Gintama "Movie version of the … arc (episodes 101-105)"). Two tiers:
+//   strong  — unambiguous words, any format.
+//   weaker  — "retelling / summary / remake / movie version / episodes 1-13"
+//             only for non-TV entries. A TV entry described as a remake or
+//             retelling is a new adaptation (Fruits Basket 2019, Brotherhood),
+//             not a recap, and must never be hidden.
+const _GAP_RECAP_DESC_STRONG_RE = /\b(recaps?|recapping|recapitulat\w*)\b|compil(ation|ations|es|ed|ing)\b|\bdigest\b|s[oō]+sh[uū]+hen|総集編/i;
+const _GAP_RECAP_DESC_WEAK_RE = new RegExp([
+  String.raw`\b(theatrical|film|movie|theatre|theater)\s+(remake|version|re-?edit|re-?cut|adaptation of the (?:tv|television|anime)\s+series)\b`,
+  String.raw`\b(remake|retelling|retells|retold|summar(?:y|ies|ise[sd]?|ize[sd]?)|re-?edit(?:ed|s)?|re-?cut|condens(?:ed|es)|abridged)\b[^.]{0,80}\b(episodes?|series|season|arc|television|tv anime|the anime)\b`,
+  String.raw`\bepisodes?\s+\d+\s*(?:-|–|—|to|through)\s*\d+\b`,
+  String.raw`\b(new|additional)\s+(footage|scenes)\b`,
+].join('|'), 'i');
+function _gapLooksLikeRecap(relationType, format, titles, description) {
   if (FRANCHISE_GAP_RECAP_REL_TYPES.has(relationType)) return true;
-  return titles.some(t => t && _GAP_RECAP_TITLE_RE.test(t));
+  if ((titles || []).some(t => t && _GAP_RECAP_TITLE_RE.test(t))) return true;
+  const desc = (description || '').replace(/<[^>]+>/g, ' ');
+  if (!desc) return false;
+  if (_GAP_RECAP_DESC_STRONG_RE.test(desc)) return true;
+  return format !== 'TV' && _GAP_RECAP_DESC_WEAK_RE.test(desc);
 }
 // Status values counted as "announced/upcoming" (not aired yet, or the
 // broadcast date is unknown). Filtered out unless the include-upcoming
@@ -7128,9 +7150,9 @@ function _gapsHiddenRelations() {
   return _franchiseGapsHiddenRelations;
 }
 // Cached scans from before v1.0.248 carry no `recap` flag; fall back to the
-// stored display title until the user rescans.
+// stored display title until the user rescans (no synopsis in the cache).
 function _gapIsRecap(gap) {
-  return gap.recap === true || (gap.recap === undefined && _gapLooksLikeRecap(gap.relationType, gap.title));
+  return gap.recap === true || (gap.recap === undefined && _gapLooksLikeRecap(gap.relationType, gap.format, [gap.title], null));
 }
 
 function _loadFranchiseGapsCache() {
@@ -7304,8 +7326,10 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
         seasonYear:   e.node.seasonYear || null,
         relationType: e.relationType,
         // v1.0.248 — recap flag from AniList's own SUMMARY/COMPILATION types or
-        // a whole-word title match across all three titles.
-        recap:        _gapLooksLikeRecap(e.relationType, e.node.title?.english, e.node.title?.romaji, e.node.title?.native) || undefined,
+        // a whole-word title match across all three titles. The synopsis
+        // check runs in a second pass (fetchFranchiseGaps) so the relation
+        // query stays light.
+        recap:        _gapLooksLikeRecap(e.relationType, e.node.format, [e.node.title?.english, e.node.title?.romaji, e.node.title?.native], null) || undefined,
       }));
     if (gaps.length === 0) continue;
     gaps.forEach(g => seenGapIds.add(g.id));
@@ -7319,6 +7343,43 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
     });
   }
   return groups;
+}
+
+// v1.0.248 — fetch AniList synopses for the unflagged gaps (50 per request,
+// same spacing as the relation scan) and set `recap` where the description
+// says so. Mutates the gap objects in place; failures leave them unflagged.
+async function _flagRecapsFromDescriptions(groups, onProgress) {
+  const pending = new Map(); // id → [gap, …] (a gap id can sit under one parent only, but be safe)
+  for (const g of groups) for (const gap of g.gaps) {
+    if (gap.recap) continue;
+    if (!pending.has(gap.id)) pending.set(gap.id, []);
+    pending.get(gap.id).push(gap);
+  }
+  const ids = [...pending.keys()];
+  const BATCH = 50;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH);
+    const query = `
+      query ($ids: [Int]) {
+        Page(perPage: 50) {
+          media(id_in: $ids, type: ANIME) { id description(asHtml: false) }
+        }
+      }`;
+    try {
+      const res = await _anilistFetch({ query, variables: { ids: chunk } });
+      const j   = await res.json();
+      for (const m of j?.data?.Page?.media ?? []) {
+        const gaps = pending.get(m.id) || [];
+        for (const gap of gaps) {
+          if (_gapLooksLikeRecap(gap.relationType, gap.format, [gap.title], m.description)) gap.recap = true;
+        }
+      }
+    } catch (e) {
+      console.warn('[_flagRecapsFromDescriptions] batch failed:', e?.message);
+    }
+    if (onProgress) onProgress(Math.min(ids.length, i + BATCH), ids.length);
+    if (i + BATCH < ids.length) await new Promise(r => setTimeout(r, 400));
+  }
 }
 
 async function fetchFranchiseGaps({ force = false, includePlanning = false } = {}) {
@@ -7350,6 +7411,13 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
       if (progressEl) progressEl.textContent = `${done} / ${total} anime scanned`;
     });
     const groups = _buildFranchiseGapGroups(media, excludeIds);
+    // v1.0.248 — second pass: synopses for the gaps not already flagged, so
+    // mis-filed recaps (Madoka's films are ALTERNATIVE with "a recap of the
+    // first eight episodes" in the description) get caught. Only the gap
+    // candidates are fetched — a few hundred at most — not every relation.
+    await _flagRecapsFromDescriptions(groups, (done, total) => {
+      if (progressEl) progressEl.textContent = `Checking ${done} / ${total} for recaps…`;
+    });
     const data = { fetchedAt: Date.now(), groups };
     _saveFranchiseGapsCache(data);
     _franchiseGaps = data;
@@ -7980,7 +8048,10 @@ function _recRelationNote(innerHtml) {
 
 // ─── REC CARD HTML HELPER ─────────────────────────────────────────────────────
 function recCardHtml(media, opts = {}) {
-  const { seasonLabel = '', watched = false, tasteScore = null } = opts;
+  // v1.0.248 — `friendBadge` ("Nat: 9.0") overlays the friend's score; the
+  // Social tab's friend recommendations now use this card too, so they open
+  // the in-app detail like every other Discover card instead of leaving the app.
+  const { seasonLabel = '', watched = false, tasteScore = null, friendBadge = '' } = opts;
   const title        = media.title.english || media.title.romaji;
   const cover        = media.coverImage?.large || media.coverImage?.medium;
   const avg          = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
@@ -7990,7 +8061,9 @@ function recCardHtml(media, opts = {}) {
   const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
     ? '<span class="rec-badge-strong-match" title="Closely matches your top-rated genres">🎯 Strong match</span>'
     : '';
-  const recUrl = (_isMalCloudSession() && media.idMal)
+  // v1.0.248 — an entry with no AniList id (a MAL-only friend pick AniList
+  // couldn't match) links to MAL regardless of session type.
+  const recUrl = ((_isMalCloudSession() || !media.id) && media.idMal)
     ? `https://myanimelist.net/anime/${media.idMal}`
     : `https://anilist.co/anime/${media.id}`;
   // v1.0.245 — a normal click opens the in-app detail (synopsis, score, Add to
@@ -8002,10 +8075,11 @@ function recCardHtml(media, opts = {}) {
     genres: media.genres || [], relationNote,
   });
   return `
-    <a class="rec-card" href="${esc(recUrl)}" target="_blank" rel="noopener noreferrer"
+    <a class="rec-card${friendBadge ? ' friend-rec-card' : ''}" href="${esc(recUrl)}" target="_blank" rel="noopener noreferrer"
        onclick="return openDiscoverDetail(event, ${Number(media.id) || 0})"
        style="${watched ? 'opacity:0.45' : ''}">
       <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
+      ${friendBadge ? `<div class="friend-score-badge">${esc(friendBadge)}</div>` : ''}
       <div class="rec-card-body">
         <div class="rec-card-title">${esc(title)}</div>
         <div class="rec-card-meta">${esc(media.format || '')}${seasonLabel ? ' · ' + esc(seasonLabel) : ''}</div>
@@ -9752,10 +9826,7 @@ function _towerCheckDeepLink(urlOverride) {
     if (pendingIdx >= 0) {
       try {
         const newAnime = _pendingNewAnime[pendingIdx];
-        const { elo } = _calcSmartElo(newAnime);
-        newAnime.elo = elo;
-        newAnime.eloHistory = [elo];
-        newAnime.seedElo = elo;
+        _seedNewAnime(newAnime); // v1.0.249
         animeList.push(newAnime);
         _pendingNewAnime.splice(pendingIdx, 1);
         saveState();
@@ -12876,34 +12947,31 @@ async function runFriendRecs() {
       .filter(e => !e.hasGenreData || (e.avgGenreElo >= globalAvgElo - DISLIKE_THRESHOLD));
 
     scored.sort((a, b) => b.totalScore - a.totalScore);
-    const top = scored.slice(0, 8);
-
-    resultsEl.innerHTML = `
-      <p style="font-size:0.78rem;color:#6e7681;text-align:center;margin-bottom:14px">
-        ${candidates.length} unwatched titles ${esc(username)} rated 6+ · sorted by match to your taste profile
-      </p>
-      <div class="recs-subgrid">
-        ${top.map(({ media, friendScore }) => {
-          const title = media.title.english || media.title.romaji;
-          const cover = media.coverImage?.large || media.coverImage?.medium;
-          const avg   = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
-          const mediaId = Number(media.id) || 0;
-          return `
-            <a class="rec-card friend-rec-card" href="https://anilist.co/anime/${mediaId}" target="_blank" rel="noopener noreferrer">
-              <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
-              <div class="friend-score-badge">${esc(username.slice(0,8))}: ${esc(friendScore)}</div>
-              <div class="rec-card-body">
-                <div class="rec-card-title">${esc(title)}</div>
-                <div class="rec-card-meta">${esc(media.format || '')}</div>
-                <span class="rec-score-pill">⭐ ${esc(avg)}</span>
-              </div>
-            </a>`;
-        }).join('')}
-      </div>`;
+    // v1.0.248 — twelve picks (two full desktop rows; divides evenly at 2/3/4
+    // across) in a card with a proper heading. Was a bare centred caption
+    // over eight cards — a ragged 6 + 2 — that read as "471 titles" while
+    // showing eight.
+    const top = scored.slice(0, 12);
+    resultsEl.innerHTML = _friendRecsSectionHtml(username, top.length, candidates.length, '6+',
+      top.map(({ media, friendScore }) => recCardHtml(media, { friendBadge: `${username.slice(0, 8)}: ${friendScore}` })).join(''));
 
   } catch (err) {
     renderErrorInto(resultsEl, _anilistErrMsg(err), 'padding:16px 0');
   }
+}
+
+// v1.0.248 — shared wrapper for the friend-recommendation results (AniList and
+// MAL paths): a Social card with a small-caps title and one honest sub line.
+function _friendRecsSectionHtml(username, shown, total, ratedLabel, cardsHtml) {
+  const sub = shown < total
+    ? `${shown} picks from the ${total} titles ${esc(username)} rated ${ratedLabel} that you haven't watched, sorted by match to your taste.`
+    : `${total === 1 ? 'The one title' : `All ${total} titles`} ${esc(username)} rated ${ratedLabel} that you haven't watched, sorted by match to your taste.`;
+  return `
+    <div class="social-card friend-recs-card">
+      <div class="manage-section-title">From ${esc(username)}'s list</div>
+      <p class="social-card-sub">${sub}</p>
+      <div class="recs-subgrid">${cardsHtml}</div>
+    </div>`;
 }
 
 async function _runFriendRecsMal(username) {
@@ -12954,38 +13022,17 @@ async function _runFriendRecsMal(username) {
       const affs    = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
       const avgGenreElo = affs.length ? affs.reduce((s, v) => s + v, 0) / affs.length : globalAvgElo;
       const genreBonus  = (avgGenreElo - globalAvgElo) / 400;
-      return {
-        malId:       e.malId,
-        title:       meta?.title?.english || meta?.title?.romaji || e.title,
-        cover:       meta?.coverImage?.large || meta?.coverImage?.medium || e.cover,
-        format:      meta?.format || '',
-        avg:         meta?.averageScore ? (meta.averageScore / 10).toFixed(1) : '–',
-        friendScore: e.score.toFixed(1),
-        totalScore:  (e.score / 10) * 0.6 + genreBonus * 0.4,
-      };
+      // v1.0.248 — a media object in the shape recCardHtml expects. Entries
+      // AniList couldn't match keep the MAL title/cover and link to MAL.
+      const media = meta
+        ? { ...meta, idMal: e.malId }
+        : { id: 0, idMal: e.malId, title: { english: e.title, romaji: e.title }, coverImage: { large: e.cover }, format: '', averageScore: null, genres: [] };
+      return { media, friendScore: e.score.toFixed(1), totalScore: (e.score / 10) * 0.6 + genreBonus * 0.4 };
     });
     scored.sort((a, b) => b.totalScore - a.totalScore);
-    const topRecs = scored.slice(0, 8);
-
-    resultsEl.innerHTML = `
-      <p style="font-size:0.78rem;color:#6e7681;text-align:center;margin-bottom:14px">
-        ${candidates.length} unwatched titles ${esc(username)} rated 7+ on MAL · sorted by match to your taste profile
-      </p>
-      <div class="recs-subgrid">
-        ${topRecs.map(({ malId, title, cover, format, avg, friendScore }) => {
-          const safeId = Number(malId) || 0;
-          return `
-          <a class="rec-card friend-rec-card" href="https://myanimelist.net/anime/${safeId}" target="_blank" rel="noopener noreferrer">
-            <img${coverCors(cover)} src="${safeUrl(cover)}" alt="Cover art for ${esc(title)}" loading="lazy" />
-            <div class="friend-score-badge">${esc(username.slice(0,8))}: ${esc(friendScore)}</div>
-            <div class="rec-card-body">
-              <div class="rec-card-title">${esc(title)}</div>
-              <div class="rec-card-meta">${esc(format || '')}</div>
-              <span class="rec-score-pill">⭐ ${esc(avg)}</span>
-            </div>
-          </a>`;
-        }).join('')}
-      </div>`;
+    const topRecs = scored.slice(0, 12);
+    resultsEl.innerHTML = _friendRecsSectionHtml(username, topRecs.length, candidates.length, '7+ on MAL',
+      topRecs.map(({ media, friendScore }) => recCardHtml(media, { friendBadge: `${username.slice(0, 8)}: ${friendScore}` })).join(''));
 
   } catch (err) {
     renderErrorInto(resultsEl, err.message, 'padding:16px 0');
@@ -14237,15 +14284,49 @@ function shareRankings() {
     top: top20.map((a, i) => ({ r: i + 1, t: a.title, e: a.elo, c: a.cover }))
   };
   const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  const url = location.href.split('#')[0] + '#r=' + encoded;
+  const url = location.origin + '/#r=' + encoded;
   byId(IDS.shareUrl).value = url;
   const copyBtn = byId(IDS.copyBtn);
   if (copyBtn) copyBtn.textContent = '📋 Copy link';
+  // v1.0.249 — ask the share function for a short id and swap the link in
+  // when it arrives. The long link is already in place, so a slow or failed
+  // request just leaves the old behaviour.
+  _requestShortShareLink(payload);
   const subEl = byId(IDS.shareModal)?.querySelector('.share-subtitle');
   if (subEl) subEl.textContent = 'Share an image of your top 10 (or a 3×3) — or copy a link to your top 20.';
   _updateShareModalCapabilities();
   byId(IDS.shareModal).style.display = 'flex';
   pushModalBack('share', closeShare);
+}
+
+// v1.0.249 — short share links. One short id per distinct payload for the
+// session (re-opening the modal with the same rankings reuses it), a 6 s
+// timeout, and the long #r= link stays if anything goes wrong.
+const _shortShareIds = new Map(); // payload JSON → id
+let _shortShareGen = 0;
+async function _requestShortShareLink(payload) {
+  const urlEl = byId(IDS.shareUrl);
+  if (!urlEl || typeof fetch !== 'function') return;
+  const key = JSON.stringify(payload);
+  const apply = (id) => { if (urlEl.value.startsWith(location.origin + '/#r=')) urlEl.value = `${location.origin}/s/${id}`; };
+  if (_shortShareIds.has(key)) { apply(_shortShareIds.get(key)); return; }
+  const gen = ++_shortShareGen;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch('/.netlify/functions/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return;
+    const { id } = await res.json();
+    if (!id || !/^[A-Za-z0-9]{6,16}$/.test(id)) return;
+    _shortShareIds.set(key, id);
+    if (gen === _shortShareGen) apply(id); // a newer share replaced this one — leave it
+  } catch { /* offline, blocked, or timed out — long link stays */ }
+  finally { clearTimeout(timer); }
 }
 
 function copyShareLink() {
@@ -14316,6 +14397,9 @@ async function shareImageFromModal() {
 // ClipboardItem API where available.
 async function copyShareImageToClipboard() {
   const btn = byId(IDS.shareCopyImageBtn);
+  // v1.0.249 — on phones this button is "Save image" (see
+  // _updateShareModalCapabilities): plain download, no clipboard.
+  if (btn?.dataset.action === 'save') return _downloadShareImage(btn);
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Copying…'; }
   try {
@@ -14331,6 +14415,26 @@ async function copyShareImageToClipboard() {
   } catch (e) {
     if (btn) btn.textContent = orig;
     showToast('⚠️ Copy failed: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// v1.0.249 — plain download of the current share image (the phone "Save
+// image" button; also the desktop fallback path inside shareImageFromModal).
+async function _downloadShareImage(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving…'; }
+  try {
+    const { blob, filename } = await _buildShareImageBlob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = orig; }, 1500); }
+  } catch (e) {
+    if (btn) btn.textContent = orig;
+    showToast('⚠️ Save failed: ' + e.message);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -14368,26 +14472,40 @@ function shareToSocial(platform) {
 // Show/hide the "Copy image to clipboard" button depending on browser support.
 // ClipboardItem is absent on Firefox + many mobile browsers.
 function _updateShareModalCapabilities() {
-  const imgCopyBtn = byId(IDS.shareCopyImageBtn);
-  if (imgCopyBtn) {
-    const supported = typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write;
-    imgCopyBtn.style.display = supported ? '' : 'none';
-  }
   // The primary button label changes with native-share availability so it's
   // honest about what will happen.
+  let canNativeShare = false;
+  try {
+    if (typeof File === 'function' && navigator.canShare) {
+      const dummy = new File([new Blob()], 'x.png', { type: 'image/png' });
+      canNativeShare = !!navigator.canShare({ files: [dummy] });
+    }
+  } catch { canNativeShare = false; }
   const primary = byId(IDS.sharePrimaryBtn);
   if (primary) {
-    let canNativeShare = false;
-    try {
-      if (typeof File === 'function' && navigator.canShare) {
-        const dummy = new File([new Blob()], 'x.png', { type: 'image/png' });
-        canNativeShare = !!navigator.canShare({ files: [dummy] });
-      }
-    } catch { canNativeShare = false; }
     primary.textContent = canNativeShare
       ? '📤 Share image'
       : '⬇️ Download image';
     primary.dataset.nativeShare = canNativeShare ? '1' : '0';
+  }
+  // v1.0.249 — the secondary action depends on the device. With a share
+  // sheet (phones) the useful second option is "Save image" — copying an
+  // image to a phone clipboard is rarely what anyone wants and works
+  // unevenly. Without one (desktop) the primary already downloads, so the
+  // secondary is "Copy image" for pasting into Discord / Twitter, shown only
+  // where ClipboardItem exists (not Firefox).
+  const secondary = byId(IDS.shareCopyImageBtn);
+  if (secondary) {
+    const canCopy = typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write;
+    if (canNativeShare) {
+      secondary.textContent = '💾 Save image';
+      secondary.dataset.action = 'save';
+      secondary.style.display = '';
+    } else {
+      secondary.textContent = '📋 Copy image to clipboard';
+      secondary.dataset.action = 'copy';
+      secondary.style.display = canCopy ? '' : 'none';
+    }
   }
   _syncShareImageKindUI(); // v1.0.248 — Top 10 / 3×3 toggle state + short-list note
   // Wire Escape-to-close. Safe to call repeatedly — removeEventListener is a
@@ -15461,15 +15579,45 @@ function closeSessionSummary(e) {
   }
 }
 
-// Show a shared rankings view when URL has #r= hash.
-// SECURITY: every field in the payload is attacker-controlled (the whole JSON
-// comes from the URL hash) so NOTHING from the payload is allowed into innerHTML.
-// All user-visible strings go via textContent; the cover-image URL is scheme-
-// and host-allowlisted before it ever touches <img src>.
+// Show a shared rankings view when the URL is a share link: either the long
+// form (#r=<base64 payload>) or, since v1.0.249, the short form (/s/<id>) whose
+// payload is fetched from the share function. Returns true when the shared
+// screen takes over the boot.
+// SECURITY: every field in the payload is attacker-controlled (URL hash or a
+// record anyone could have created) so NOTHING from the payload is allowed
+// into innerHTML. All user-visible strings go via textContent; the cover-image
+// URL is scheme- and host-allowlisted before it ever touches <img src>.
+const _SHORT_SHARE_PATH_RE = /^\/s\/([A-Za-z0-9]{6,16})\/?$/;
 function tryLoadSharedView() {
   const hash = location.hash;
-  if (!hash.startsWith('#r=')) return false;
+  if (hash.startsWith('#r=')) {
+    try {
+      const payload = JSON.parse(decodeURIComponent(escape(atob(hash.slice(3)))));
+      return _renderSharedPayload(payload);
+    } catch { return false; }
+  }
+  const m = location.pathname.match(_SHORT_SHARE_PATH_RE);
+  if (!m) return false;
+  // Short link: take the screen over now, fill it in when the payload lands.
+  byId(IDS.sharedTitle).textContent = 'Loading shared rankings…';
+  byId(IDS.sharedSubtitle).textContent = '';
+  byId(IDS.sharedList).textContent = '';
+  show('shared-screen');
+  (async () => {
+    let ok = false;
+    try {
+      const res = await fetch(`/.netlify/functions/share?id=${encodeURIComponent(m[1])}`, { cache: 'no-store' });
+      if (res.ok) ok = _renderSharedPayload(await res.json());
+    } catch { ok = false; }
+    if (!ok) {
+      byId(IDS.sharedTitle).textContent = 'This share link isn\'t available';
+      byId(IDS.sharedSubtitle).textContent = 'It may have been mistyped, or it was never created. Ask for a fresh link — or make your own rankings below.';
+    }
+  })();
+  return true;
+}
 
+function _renderSharedPayload(payload) {
   // Only https:// URLs on known anime-cover CDNs can populate <img src>.
   // Anything else (javascript:, data:, an attacker's host) → blank placeholder.
   const _ALLOWED_IMG_HOSTS = new Set([
@@ -15487,7 +15635,6 @@ function tryLoadSharedView() {
   };
 
   try {
-    const payload = JSON.parse(decodeURIComponent(escape(atob(hash.slice(3)))));
     if (!payload || !Array.isArray(payload.top)) return false;
 
     // Coerce / clamp every payload field before it reaches the DOM.
@@ -21397,20 +21544,16 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.248 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.249 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
-// (1.0.247 and 1.0.248 shipped back-to-back, so this list covers both.)
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔗 Share makes a proper image now: a Top 10 card (rank, title, ELO) or a 3×3 grid of your top nine, the format r/anime uses. The old full tier-list poster — every cover at thumbnail size, D tier included — is gone. On phones the image goes to the share sheet; it used to download even when the button said "Share".',
-    '⚔️ Rankings has a + Status filter: pick Ranked to hide everything you haven\'t battled yet, or Unranked to see only what still needs a battle. Works in grid, list and franchise views. Franchise mode lost its second sort menu — the normal Sort already orders franchises by average ELO, total battles and so on.',
-    '🧩 Missing can be filtered by relation (sequel, prequel, spin-off…) as well as format, and recap films are hidden by default — flip the Recap chip to see them. Choices stick between visits. The tab opens on newest release year; the old Catch-up order sort is gone.',
-    '🎯 "Because you loved…" and mood rows fill out: each seed now draws from 50 AniList recommendations instead of 25, so a show whose suggestions you\'ve mostly already watched still fills the row.',
-    '👥 Social is three matching cards: Compare & Challenge with the username box and your recent comparisons as chips (tap to re-run), then Watch Together and Live Challenge underneath.',
-    '📈 Taste-evolution snapshots can no longer be skipped — every mode that counts a battle records the 50-battle milestone as it is crossed, and where an old one is missing the dotted arrow now says which. Tap your avatar to see when your rankings last synced.',
+    '🔗 Share links are short now — kessen.co.uk/s/abc123 instead of a 3,700-character address that some chat apps cut off. The link opens your top 20 as before; the old long links keep working.',
+    '↩ Archived anime come back with their history. Add a show back to your AniList or MAL list after archiving it from Kessen and it returns with the ELO, battles and record it had — the add prompt says so — instead of starting again at 1200.',
+    '📤 On phones the share modal offers Share image and Save image; on desktop it is Download image and Copy image (for pasting straight into Discord or Twitter).',
   ],
 };
 
@@ -21608,10 +21751,7 @@ function ncActionAddAndTower(id) {
   if (existingIdx >= 0) {
     championIdx = existingIdx;
   } else {
-    const { elo } = _calcSmartElo(newAnime);
-    newAnime.elo = elo;
-    newAnime.eloHistory = [elo];
-    newAnime.seedElo = elo; // v1.0.211 — capture smart-seeded starting ELO
+    _seedNewAnime(newAnime); // v1.0.249 — smart ELO, or archived history if it was archived before
     animeList.push(newAnime);
     _pendingNewAnime = _pendingNewAnime.filter(a => a.id !== newAnime.id);
     championIdx = animeList.length - 1;
@@ -22290,12 +22430,17 @@ function archivePendingRemovedAnime() {
     const entries = _pendingRemovedAnime.map(a => ({
       id: a.id, title: a.title, cover: a.cover, elo: a.elo,
       battles: a.battles || 0, wins: a.wins || 0, losses: a.losses || 0,
+      // v1.0.249 — enough to put the anime back exactly as it was if it is
+      // re-added later (see _seedNewAnime). eloHistory capped so a heavy
+      // battler's archive can't bloat localStorage.
+      comparisons: a.comparisons || 0, fuzzy: !!a.fuzzy, seedElo: a.seedElo ?? null,
+      eloHistory: Array.isArray(a.eloHistory) ? a.eloHistory.slice(-50) : [a.elo],
       archivedAt,
     }));
     // Dedup by id — if the same anime is archived twice, keep the newer entry.
-    const byId = new Map(existing.map(e => [e.id, e]));
-    entries.forEach(e => byId.set(e.id, e));
-    localStorage.setItem(archiveKey, JSON.stringify([...byId.values()]));
+    const entriesById = new Map(existing.map(e => [e.id, e]));
+    entries.forEach(e => entriesById.set(e.id, e));
+    localStorage.setItem(archiveKey, JSON.stringify([...entriesById.values()]));
   } catch (e) {
     console.warn('[archivePendingRemovedAnime] storage failed:', e?.message);
   }
@@ -22337,6 +22482,49 @@ function keepPendingRemovedAnime() {
 function dismissNewAnimeBanner() {
   byId(IDS.newAnimeBanner)?.classList.remove('active');
   _pendingNewAnime = [];
+}
+
+// ─── ARCHIVE RESTORE (v1.0.249) ──────────────────────────────────────────────
+// An anime archived from the removed-anime banner and later added back used
+// to come in as a fresh 1200 with no battles — its history was in the archive
+// but nothing read it. Every add path now goes through _seedNewAnime, which
+// restores the archived ELO / battles / history and drops the archive entry.
+function _readArchive() {
+  try { return JSON.parse(localStorage.getItem(KESSEN_KEYS.data.archive(saveKey)) || '[]'); }
+  catch { return []; }
+}
+function _archivedEntryFor(id) {
+  return _readArchive().find(e => e && e.id === id) || null;
+}
+function _removeFromArchive(id) {
+  try {
+    const key = KESSEN_KEYS.data.archive(saveKey);
+    const rest = _readArchive().filter(e => e && e.id !== id);
+    if (rest.length) localStorage.setItem(key, JSON.stringify(rest));
+    else localStorage.removeItem(key);
+  } catch { /* storage — ignore */ }
+}
+// Seeds a pending anime for insertion into animeList. Archived history wins
+// over the smart-ELO guess; otherwise behaves exactly as before.
+function _seedNewAnime(a) {
+  const arch = _archivedEntryFor(a.id);
+  if (arch && Number.isFinite(arch.elo)) {
+    a.elo         = arch.elo;
+    a.battles     = arch.battles || 0;
+    a.wins        = arch.wins || 0;
+    a.losses      = arch.losses || 0;
+    a.comparisons = arch.comparisons || 0;
+    a.fuzzy       = !!arch.fuzzy;
+    a.eloHistory  = Array.isArray(arch.eloHistory) && arch.eloHistory.length ? arch.eloHistory.slice() : [arch.elo];
+    a.seedElo     = Number.isFinite(arch.seedElo) ? arch.seedElo : a.eloHistory[0];
+    _removeFromArchive(a.id);
+    return { restored: true, elo: arch.elo, battles: a.battles };
+  }
+  const { elo } = _calcSmartElo(a);
+  a.elo        = elo;
+  a.eloHistory = [elo];
+  a.seedElo    = elo; // v1.0.211 — capture starting ELO for Comeback Kid
+  return { restored: false, elo, battles: 0 };
 }
 
 // ─── SMART STARTING ELO ───────────────────────────────────────────────────────
@@ -22429,6 +22617,7 @@ function openNewAnimeConfirm() {
     while (list.firstChild) list.removeChild(list.firstChild);
     _pendingNewAnime.forEach(a => {
       const { elo, reason } = _calcSmartElo(a);
+      const arch = _archivedEntryFor(a.id); // v1.0.249 — peek only; _seedNewAnime restores on confirm
       const li    = document.createElement('li');
       const title = document.createElement('span');
       title.textContent = displayTitle(a) || a.title || '(untitled)';
@@ -22440,9 +22629,11 @@ function openNewAnimeConfirm() {
         a.seasonYear || null,
       ].filter(Boolean).join(' · ');
       // Show smart ELO if it differs meaningfully from 1200
-      const eloPart = reason
-        ? `Starting ELO: ${elo} · ${reason}`
-        : `Starting ELO: 1200`;
+      const eloPart = arch
+        ? `↩ Back from your archive: ELO ${Math.round(arch.elo)} · ${arch.battles || 0} ${arch.battles === 1 ? 'battle' : 'battles'} restored`
+        : reason
+          ? `Starting ELO: ${elo} · ${reason}`
+          : `Starting ELO: 1200`;
       meta.textContent = `${metaParts} · ${eloPart}`;
       li.appendChild(title);
       li.appendChild(meta);
@@ -22465,11 +22656,9 @@ function closeNewAnimeConfirmOverlay(e) {
 function confirmAddNewAnime() {
   if (!_pendingNewAnime.length) { closeNewAnimeConfirm(); return; }
   const n = _pendingNewAnime.length;
+  let restored = 0;
   _pendingNewAnime.forEach(a => {
-    const { elo } = _calcSmartElo(a);
-    a.elo         = elo;
-    a.eloHistory  = [elo];
-    a.seedElo     = elo; // v1.0.211 — capture starting ELO for Comeback Kid
+    if (_seedNewAnime(a).restored) restored++; // v1.0.249 — archive history comes back
     animeList.push(a);
   });
   _pendingNewAnime = [];
@@ -22478,7 +22667,9 @@ function confirmAddNewAnime() {
   saveState();
   renderRankingList();
   filterRankings();
-  showToast(`✓ Added ${n} anime to your rankings.`);
+  showToast(restored
+    ? `✓ Added ${n} anime — ${restored} back with ${restored === 1 ? 'its' : 'their'} archived rankings.`
+    : `✓ Added ${n} anime to your rankings.`);
 }
 
 function dismissNewAnimeConfirm() {

@@ -5196,7 +5196,12 @@
 
     /* Compare section */
     #compat-results { margin-top: 16px; }
-    #friend-recs-results:not(:empty) { margin-top: 24px; padding-top: 24px; border-top: 1px solid #21262d; }
+    /* v1.0.248 — the friend recommendations are a card of their own now
+       (.friend-recs-card); the old rule-line divider above them is gone. */
+    /* Inside the card's padding, 140px minimum gives six across on desktop,
+       four on tablets, two on phones — all of which divide the twelve picks
+       into full rows. */
+    .friend-recs-card .recs-subgrid { margin-top: 4px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 
     /* SOCIAL PLATFORM TOGGLE */
     .social-platform-row {
