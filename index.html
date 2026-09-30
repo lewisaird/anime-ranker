@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.249" />
+  <meta name="version" content="1.0.250" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1651,7 +1651,8 @@
           <div class="manage-danger-box">
             <p style="color:#8b949e;font-size:0.85rem;margin-bottom:10px">Permanently deletes your entire battle history and ELO rankings. This cannot be undone.</p>
             <button class="manage-btn manage-btn-danger" onclick="resetAll()">🔄 Reset everything</button>
-            <p style="color:#8b949e;font-size:0.85rem;margin:12px 0 10px">Deletes all your data from this device and from cloud storage, and logs you out. For privacy removal requests.</p>
+            <!-- v1.0.250 — id so renderManageTab can swap in device-only copy for guest sessions -->
+            <p id="manage-delete-all-note" style="color:#8b949e;font-size:0.85rem;margin:12px 0 10px">Deletes all your data from this device and from cloud storage, and logs you out. For privacy removal requests.</p>
             <button class="manage-btn manage-btn-danger" onclick="deleteAllData()">🗑️ Delete all my data</button>
           </div>
         </div>
@@ -1950,6 +1951,8 @@
 
     <!-- Share link -->
     <textarea id="share-url" readonly aria-label="Share link"></textarea>
+    <!-- v1.0.250 — readable link line (host + path once the short id lands); clicking it copies via copyShareLink -->
+    <p class="share-link-text" id="share-link-text" onclick="copyShareLink()" title="Click to copy the link"></p>
     <button class="btn-secondary share-copy-link" onclick="copyShareLink()" id="copy-btn">📋 Copy link</button>
 
     <button class="share-close-bottom" onclick="closeShare()">Close</button>

@@ -3013,6 +3013,17 @@
       position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden;
       pointer-events: none; left: -9999px;
     }
+    /* v1.0.250 — readable link line above "Copy link": host + path for the
+       short link, host + caveat while the #r= link is still the long one.
+       Click copies (copyShareLink); user-select: all makes the short form a
+       one-click selection. The long-form text is a placeholder, not the url,
+       so it is not selectable. */
+    .share-link-text {
+      color: var(--text-muted); font-size: 0.8rem; text-align: center;
+      margin: 0 0 8px; line-height: 1.4; word-break: break-word;
+      cursor: pointer; -webkit-user-select: all; user-select: all;
+    }
+    .share-link-text.share-link-long { -webkit-user-select: none; user-select: none; }
     .share-copy-link { width: 100%; min-height: 40px; margin-bottom: 12px; }
 
     .share-close-bottom {
@@ -3100,6 +3111,10 @@
        open dropdown covered half of it and the rest peeked out from behind.
        Hide it (keeping its space) while either popover is open. */
     .battle-actions:has(#mode-popover.open, #filter-popover.open) ~ .kb-hints { visibility: hidden; }
+    /* v1.0.250 — the first-run keyboard tip (position:fixed, z-index 500) sat on
+       top of an open Mode/Filter dropdown and of the phone bottom sheets. Same
+       trigger as above; visibility, not display, because JS sets display inline. */
+    body:has(#mode-popover.open, #filter-popover.open) #kb-first-tip { visibility: hidden; }
     .kb-hints kbd {
       background: var(--border-subtle); border: 1px solid var(--border-default); border-radius: 4px;
       padding: 1px 5px; font-size: 0.7rem; color: var(--text-secondary); font-family: inherit;
@@ -4141,7 +4156,10 @@
     .ranking-table th:nth-child(4), .ranking-table td:nth-child(4) { width: 70px; }   /* ELO */
     .ranking-table th:nth-child(5), .ranking-table td:nth-child(5) { width: 80px; }   /* Win Rate */
     .ranking-table th:nth-child(6), .ranking-table td:nth-child(6) { width: 70px; }   /* Battles */
-    .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 90px; }   /* AniList Avg */
+    /* v1.0.250 — was 90px: the bold "AniList Avg ▾" header needs ~103px
+       (text + 20px padding) and the overflow was painted over by the sticky
+       Tier header. The ≤640px rule below keeps its own 72px. */
+    .ranking-table th:nth-child(7), .ranking-table td:nth-child(7) { width: 110px; }  /* AniList Avg */
     .ranking-table th:nth-child(8), .ranking-table td:nth-child(8) { width: 56px; }   /* Tier */
     .ranking-table th:nth-child(9), .ranking-table td:nth-child(9) { width: 130px; }  /* Confidence */
     /* v1.0.217 — Mobile list view, horizontal-scroll restored properly.
@@ -4334,6 +4352,11 @@
        stray 360px rule above the Manage columns. */
 
     /* PROFILE SUB-TABS (Taste / Achievements) */
+    /* v1.0.250 — "🏆 Achievements" wrapped onto two lines: a 300px bar split
+       into two flex:1 tabs minus 40px padding left ~109px for a ~114px label.
+       Labels never wrap; bar widened to 340px and side padding trimmed to
+       14px so each tab (169px) still exceeds the widest label and the two
+       tabs stay equal width. */
     #tab-panel-profile .source-tabs {
       display: flex;
       gap: 0;
@@ -4341,11 +4364,11 @@
       border-radius: 8px;
       overflow: hidden;
       margin: 0 auto 24px;
-      max-width: 300px;
+      max-width: 340px;
     }
     #tab-panel-profile .source-tab {
       flex: 1;
-      padding: 9px 20px;
+      padding: 9px 14px;
       background: var(--bg-secondary);
       color: var(--text-secondary);
       font-size: 0.88rem;
@@ -4353,6 +4376,7 @@
       cursor: pointer;
       border: none;
       transition: all 0.15s;
+      white-space: nowrap;
     }
     #tab-panel-profile .source-tab.active { background: var(--border-subtle); color: var(--text-bright); }
     @media (hover: hover) { #tab-panel-profile .source-tab:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); } }
@@ -5544,6 +5568,11 @@
          phone still can't fit it, the base rule's ellipsis truncates the
          text rather than squashing anything else. */
       #progress-info { font-size: 0.75rem; }
+      /* v1.0.250 — drop the "· N anime" segment on phones. When the row was
+         tight the ellipsis cut inside a word ("16 battle…"); hiding the whole
+         segment leaves "16 battles" intact, with the ellipsis only for the
+         rare case where even that does not fit. */
+      #progress-info .progress-anime-count { display: none; }
 
       /* ── Manage tab ── */
       /* v1.0.209 — center the button text on mobile. Desktop keeps the

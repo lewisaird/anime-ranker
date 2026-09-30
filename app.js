@@ -178,6 +178,7 @@ const IDS = Object.freeze({
   shareCopyImageBtn:      'share-copy-image-btn',
   shareImageKind:         'share-image-kind', // v1.0.248
   shareImageNote:         'share-image-note', // v1.0.248
+  shareLinkText:          'share-link-text', // v1.0.250
   sharedList:             'shared-list',
   sharedSubtitle:         'shared-subtitle',
   sharedTitle:            'shared-title',
@@ -242,6 +243,7 @@ const IDS = Object.freeze({
   tasteUnlockNote:        'taste-unlock-note',
   tasteIdentityTop:       'taste-identity-top',
   manageNotificationsSection: 'manage-notifications-section',
+  manageDeleteAllNote:    'manage-delete-all-note', // v1.0.250 — guest-aware Danger Zone copy
   tasteDriftSection:      'taste-drift-section',
   tasteEvolutionSection:  'taste-evolution-section',
   modeTowerItem:          'mode-tower-item',
@@ -671,6 +673,12 @@ function safeUrl(u) {
   return '';
 }
 
+// v1.0.250 — "1 battles" fix: one place for count + noun, matching the header.
+function _nBattles(n) {
+  n = n || 0;
+  return `${n} ${n === 1 ? 'battle' : 'battles'}`;
+}
+
 // v1.0.199 — Emits ` crossorigin="anonymous"` for cover URLs on CDNs verified
 // to send Access-Control-Allow-Origin (s4/*.anilist.co reflects the origin;
 // cdn.myanimelist.net sends *). Without the attribute, <img> requests are
@@ -733,6 +741,20 @@ document.addEventListener('error', e => {
   img.removeAttribute('src');
   img.src = src;
 }, true);
+
+// v1.0.250 — for reused cover <img>s whose .src is set directly (battle cards,
+// detail modal): same crossorigin mode as coverCors() surfaces, set BEFORE src,
+// and re-arm the v1.0.201 one-shot retry. Same URL already retried → stay
+// no-cors so a re-render doesn't re-fail against the stale cache entry.
+function _setCoverSrc(img, url) {
+  if (!img) return;
+  const src = url || '';
+  if (img.dataset.corsRetried && img.getAttribute('src') === src) { img.src = src; return; }
+  delete img.dataset.corsRetried;
+  if (coverCors(src)) img.crossOrigin = 'anonymous';
+  else img.removeAttribute('crossorigin');
+  img.src = src;
+}
 
 // ─── ANILIST AUTH ────────────────────────────────────────────────────────────
 let authToken = null;
@@ -2675,11 +2697,12 @@ async function checkAndApplyCloudSave(localSaveKey) {
   // local copy, and the next battle's debounced cloud save overwrote the
   // newer cloud copy with it — the other device's progress was gone.
   const hasLocal = localBattles !== null;
+  // v1.0.250 — singular "battle" when a count is 1
   const body = hasLocal
-    ? `Cloud: ${cloudBattles} battles across ${cloudCount} anime, saved ${dateStr}.\nThis device: ${localBattles} battles.\n\n`
+    ? `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime, saved ${dateStr}.\nThis device: ${_nBattles(localBattles)}.\n\n`
       + "Load the cloud save? This device's copy will be replaced.\n\n"
       + "If you keep this device's copy instead, it will replace the cloud save the next time you battle."
-    : `Cloud: ${cloudBattles} battles across ${cloudCount} anime, saved ${dateStr}.\nThis device has no saved rankings yet.\n\n`
+    : `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime, saved ${dateStr}.\nThis device has no saved rankings yet.\n\n`
       + 'Load the cloud save?\n\n'
       + 'If you start fresh instead, the cloud save will be replaced the next time you battle.';
   const ok = await _confirmAsync(
@@ -2721,7 +2744,7 @@ async function manualCloudPull() {
 
   const ok = await _confirmAsync(
     '☁️ Load cloud save?',
-    `Cloud: ${cloudBattles} battles across ${cloudCount} anime (saved ${cloudDate})\nLocal: ${localBattles} battles\n\nThis will replace your local rankings.`,
+    `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime (saved ${cloudDate})\nLocal: ${_nBattles(localBattles)}\n\nThis will replace your local rankings.`, // v1.0.250 — singular at 1
     'Load cloud save'
   );
   if (!ok) return;
@@ -3193,8 +3216,16 @@ function updateProgress() {
     const left = next - battleCount;
     wrap.title = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${left} more to your next milestone (${next})`;
   }
-  byId(IDS.progressInfo).textContent =
-    `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${n} anime`;
+  // v1.0.250 — anime count in its own span so the phone breakpoint can drop
+  // it whole; before, the ellipsis cut mid-word ("16 battle…"). Built with
+  // textContent, not innerHTML: battleCount can come from an imported backup
+  // file unchecked, so it must stay inert.
+  const info = byId(IDS.progressInfo);
+  info.textContent = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}`;
+  const animeCount = document.createElement('span');
+  animeCount.className = 'progress-anime-count';
+  animeCount.textContent = ` · ${n} anime`;
+  info.appendChild(animeCount);
   // v1.0.238 — keep the streak badge in sync with the header progress row
   _renderDailyStreakBadge();
 }
@@ -3487,7 +3518,7 @@ function renderPair(ia, ib) {
   const imgB = byId(IDS.imgB);
   imgA.classList.remove('img-broken');
   imgB.classList.remove('img-broken');
-  imgA.src = _coverForBattle(a.cover);
+  _setCoverSrc(imgA, _coverForBattle(a.cover)); // v1.0.250 — crossorigin per URL, set before src
   imgA.alt = displayTitle(a);
   byId(IDS.titleA).textContent = displayTitle(a);
   byId(IDS.eloA).textContent   = `ELO ${a.elo}`;
@@ -3495,7 +3526,7 @@ function renderPair(ia, ib) {
     (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
       : a.episodes ? `<span class="ep-badge">${a.episodes} ep</span>` : '') +
     _statusBadge(a.status);
-  imgB.src = _coverForBattle(b.cover);
+  _setCoverSrc(imgB, _coverForBattle(b.cover)); // v1.0.250 — crossorigin per URL, set before src
   imgB.alt = displayTitle(b);
   byId(IDS.titleB).textContent = displayTitle(b);
   byId(IDS.eloB).textContent   = `ELO ${b.elo}`;
@@ -3663,8 +3694,9 @@ function _coverForBattle(url) {
 }
 
 // Trio modes pick their own pairs through different code paths — no preload
-// there. The Image() requests use the same plain no-cors mode as the battle
-// <img> elements, so the render is a guaranteed warm-cache hit.
+// there. v1.0.250 — the Image() requests use the same crossorigin mode as
+// renderPair (via coverCors), so the render is a guaranteed warm-cache hit;
+// a mode mismatch would miss the warm cache and fetch the cover twice.
 function _preloadNextBattlePair() {
   if (settleMode || towerMode || trioMode) return;
   setTimeout(() => {
@@ -3679,6 +3711,7 @@ function _preloadNextBattlePair() {
       const url = _coverForBattle(animeList[i]?.cover);
       if (!url) return null;
       const im = new Image();
+      if (coverCors(url)) im.crossOrigin = 'anonymous'; // v1.0.250 — must match renderPair's mode, set before src
       im.src = url;
       return im;
     });
@@ -3839,6 +3872,7 @@ function _bootPrefetchCovers() {
           const url = _coverForBattle(animeList[idx]?.cover);
           if (!url) return;
           const im = new Image();
+          if (coverCors(url)) im.crossOrigin = 'anonymous'; // v1.0.250 — must match renderPair's mode, set before src
           im.src = url;
           _preloadedImgs.push(im); // anchor against GC, same as _preloadNextBattlePair
         });
@@ -4270,7 +4304,7 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   // reads dataset.animeId which is already set above.
   const sortExtra = currentSort === 'winrate'
     ? `<div class="rank-elo">${(a => (a.wins+a.losses)>0 ? Math.round(a.wins/(a.wins+a.losses)*100)+'% WR' : '–')(anime)}</div>`
-    : currentSort === 'battles' ? `<div class="rank-elo">${anime.battles || 0} battles</div>`
+    : currentSort === 'battles' ? `<div class="rank-elo">${_nBattles(anime.battles)}</div>` // v1.0.250 — singular at 1
     : currentSort === 'score'   ? `<div class="rank-elo">${anime.globalScore ? anime.globalScore+'%' : 'Unscored'}</div>`
     : `<div class="rank-elo">ELO ${anime.elo}</div>`;
   // v1.0.245 — always emit the episode line (invisible placeholder when there
@@ -5460,6 +5494,7 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
       ${membersHtml}
     `;
   } else {
+    // v1.0.250 — singular "battle" at 1 (franchise-elo WR span below)
     card.innerHTML = `
       <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))" ondblclick="event.stopPropagation();showFranchiseDetail('${esc(group.name)}')" title="Double-click for franchise overview">
         <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
@@ -5469,7 +5504,7 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
             ${tierBadge}
             <span class="franchise-elo">ELO ${group.bestElo}${!isSingle ? '<span class="franchise-elo-sub">avg</span>' : ''}</span>
             ${!isSingle ? `<span class="franchise-peak" title="Highest current ELO in this franchise.">★ Top ${group.peakElo}</span>` : ''}
-            <span class="franchise-elo">${wrStr} WR · ${group.totalBattles} battles</span>
+            <span class="franchise-elo">${wrStr} WR · ${_nBattles(group.totalBattles)}</span>
             ${countBadge}
             ${fuzzyCountBadge}
             ${singleFuzzyPill}
@@ -5533,7 +5568,7 @@ function showFranchiseDetail(groupName, opts) {
   // Reuse the detail modal
   const coverEl = byId(IDS.modalCover);
   coverEl.classList.remove('img-broken');
-  coverEl.src = group.cover;
+  _setCoverSrc(coverEl, group.cover); // v1.0.250 — same crossorigin mode as the franchise grid
   coverEl.alt = group.name;
   byId(IDS.modalTitle).textContent = group.name;
   const tierHtml = tier
@@ -5565,7 +5600,7 @@ function showFranchiseDetail(groupName, opts) {
   const cohHtml   = cohDetail
     ? ` · <span class="franchise-coherence ${cohDetail.cls}" style="font-size:0.78rem" title="${esc(cohDetail.title)}">${cohDetail.icon} ${cohDetail.label} <span style="color:#8b949e;font-weight:400">(±${group.eloStdDev} ELO)</span></span>`
     : '';
-  byId(IDS.modalMetaLine).innerHTML = `${esc(wrStr)} win rate · ${group.totalBattles} total battles · ${conf.label}${cohHtml}`;
+  byId(IDS.modalMetaLine).innerHTML = `${esc(wrStr)} win rate · ${group.totalBattles} total ${group.totalBattles === 1 ? 'battle' : 'battles'} · ${conf.label}${cohHtml}`; // v1.0.250 — singular at 1; inline because "total" sits between count and noun
   byId(IDS.modalGenres).style.display = 'none';
   const totalWins   = group.members.reduce((s,a) => s + (a.wins||0), 0);
   const totalLosses = group.members.reduce((s,a) => s + (a.losses||0), 0);
@@ -5575,7 +5610,7 @@ function showFranchiseDetail(groupName, opts) {
   byId(IDS.modalWinrateVal).textContent = wrStr;
 
   byId(IDS.modalConfidenceWrap).innerHTML =
-    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${group.totalBattles} battles</span>`;
+    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${_nBattles(group.totalBattles)}</span>`; // v1.0.250 — singular at 1
 
   // Hide fields that don't apply to a franchise
   byId(IDS.modalGenres).style.display = 'none';
@@ -5932,9 +5967,9 @@ function showResults() {
 // Uses a.battles (actual picks only) so skips don't inflate confidence.
 // Thresholds are relative to TARGET_BATTLES_PER_ANIME (= 10).
 function confidenceLabel(battles) {
-  if (battles < 3)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${battles} battles — fewer than 3, ranking not reliable yet` };
-  if (battles < TARGET_BATTLES_PER_ANIME) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${battles} battles — ranking is stabilising` };
-  return                                         { cls: 'confident', dot: '●', label: 'Confident', title: `${battles} battles — ranking is well established` };
+  if (battles < 3)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${_nBattles(battles)} — fewer than 3, ranking not reliable yet` }; // v1.0.250 — singular at 1
+  if (battles < TARGET_BATTLES_PER_ANIME) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${_nBattles(battles)} — ranking is stabilising` };
+  return                                         { cls: 'confident', dot: '●', label: 'Confident', title: `${_nBattles(battles)} — ranking is well established` };
 }
 
 function _coherenceLabel(group) {
@@ -6474,7 +6509,7 @@ async function importBackup(event) {
   const exported = payload._exportedAt ? new Date(payload._exportedAt).toLocaleDateString() : 'unknown date';
   const ok = await _confirmAsync(
     '📦 Import backup?',
-    `Backup from ${exported} — ${count} anime, ${battles} battles.\n\nThis will replace your current rankings for "${payload.saveKey.replace(/^kessen\.session\.(anilist|mal)\./, '').replace(/^anime_elo_(mal_)?/, '')}". Your existing data will be lost.`,
+    `Backup from ${exported} — ${count} anime, ${_nBattles(battles)}.\n\nThis will replace your current rankings for "${payload.saveKey.replace(/^kessen\.session\.(anilist|mal)\./, '').replace(/^anime_elo_(mal_)?/, '')}". Your existing data will be lost.`, // v1.0.250 — singular at 1
     'Import'
   );
   if (!ok) {
@@ -6690,9 +6725,14 @@ async function _wipeCloudSession() {
 }
 
 async function deleteAllData() {
+  // v1.0.250 — guest copy: device-wide wipe, no cloud call. Read before
+  // _clearRankingState() resets saveKey (which makes _isGuestSession() false).
+  const deviceOnly = _deleteAllIsDeviceOnly();
   const ok = await _confirmAsync(
     '🗑️ Delete all my data?',
-    'This permanently deletes your rankings from this device and from cloud storage. You will be logged out. There is no undo.',
+    deviceOnly
+      ? 'This permanently deletes all Kessen data on this device, including your guest rankings and any other lists ranked here, and returns you to the start screen. Nothing in cloud storage is touched. There is no undo.'
+      : 'This permanently deletes your rankings from this device and from cloud storage. You will be logged out. There is no undo.',
     'Yes, delete everything'
   );
   if (!ok) return;
@@ -6746,7 +6786,10 @@ async function deleteAllData() {
   if (cloudDeleteOk) {
     showToast('✓ All your data has been deleted (local + cloud).');
   } else if (cloudResult.reason === 'not-signed-in') {
-    showToast("⚠️ Local data cleared. You weren't signed in, so nothing to delete from cloud.", 6000);
+    // v1.0.250 — a guest was just told "device only"; don't follow with a cloud warning
+    showToast(deviceOnly
+      ? '✓ All Kessen data on this device has been deleted.'
+      : "⚠️ Local data cleared. You weren't signed in, so nothing to delete from cloud.", 6000);
   } else if (cloudResult.reason === 'verify-failed') {
     showToast('⚠️ Local data cleared, but the cloud copy keeps coming back — another device may be re-uploading. Sign out everywhere and try again.', 8000);
   } else {
@@ -6955,9 +6998,9 @@ function refreshDiscover() {
   // v1.0.244 — label lives in a span so phones can show the icon alone
   if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refreshing…</span>'; btn.disabled = true; }
   const tabAtLoad = recsTab;
-  _loadRecsGrid().then(() => {
-    _recsCache[tabAtLoad] = { html: grid.innerHTML, gridDisplay: grid.style.display };
-    _recsLoadedTab = tabAtLoad;
+  // v1.0.250 — cache this load's own result; the live grid may show another tab by now
+  _loadRecsGrid().then(res => {
+    _recsCache[tabAtLoad] = res;
     if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refresh</span>'; btn.disabled = false; }
   });
 }
@@ -7038,10 +7081,8 @@ function setRecsTab(tab, fromMood = false) {
       // First visit to this sub-tab: fetch and then cache the result
       const tabAtLoad = tab;
       grid.style.display = 'grid';
-      _loadRecsGrid().then(() => {
-        _recsCache[tabAtLoad] = { html: grid.innerHTML, gridDisplay: grid.style.display };
-        _recsLoadedTab = tabAtLoad;
-      });
+      // v1.0.250 — cache this load's own result; the live grid may show another tab by now
+      _loadRecsGrid().then(res => { _recsCache[tabAtLoad] = res; });
     }
   }
 }
@@ -7565,8 +7606,9 @@ function _registerGapItem(gap) {
 function _renderGapCardGrid(gap) {
   const anilistUrl = `https://anilist.co/anime/${gap.id}`;
   _registerGapItem(gap);
+  // v1.0.250 — coverCors: same mode as the Discover detail modal this card opens
   const cover = gap.cover
-    ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
+    ? `<img${coverCors(gap.cover)} src="${gap.cover}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
     : `<div style="width:100%;aspect-ratio:2/3;background:#161b22;border-radius:6px 6px 0 0"></div>`;
   return `
     <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-grid"
@@ -7583,8 +7625,9 @@ function _renderGapCardGrid(gap) {
 function _renderGapCardList(gap) {
   const anilistUrl = `https://anilist.co/anime/${gap.id}`;
   _registerGapItem(gap);
+  // v1.0.250 — coverCors: same mode as the Discover detail modal this card opens
   const cover = gap.cover
-    ? `<img src="${gap.cover}" alt="" loading="lazy" style="width:34px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
+    ? `<img${coverCors(gap.cover)} src="${gap.cover}" alt="" loading="lazy" style="width:34px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
     : `<div style="width:34px;aspect-ratio:2/3;background:#161b22;border-radius:4px;flex-shrink:0"></div>`;
   return `
     <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-list"
@@ -8129,7 +8172,7 @@ function showDiscoverDetail(item) {
 
   const coverEl = byId(IDS.modalCover);
   coverEl.classList.remove('img-broken');
-  coverEl.src = item.cover || '';
+  _setCoverSrc(coverEl, item.cover); // v1.0.250 — modal-cover is shared with showAnimeDetail; one mode per URL
   coverEl.alt = item.title;
   byId(IDS.modalTitle).textContent = item.title;
 
@@ -8544,30 +8587,41 @@ function _recsSkeletonHtml(count = 8) {
   return card.repeat(count);
 }
 
+// v1.0.250 — the awaits below can outlive a Discover sub-tab switch: render
+// into a detached element, paint the live grid only while the tab that
+// started the load is still active, and resolve to { html, gridDisplay }.
 async function _loadRecsGrid() {
   const grid = byId(IDS.recsGrid);
   grid.style.display = 'grid';
   grid.innerHTML = _recsSkeletonHtml();
+  const tab  = recsTab;
+  const work = document.createElement('div');
+  const commit = (gridDisplay) => {
+    if (recsTab === tab) {
+      grid.style.display = gridDisplay;
+      grid.innerHTML     = work.innerHTML;
+      _recsLoadedTab     = tab;
+    }
+    return { html: work.innerHTML, gridDisplay };
+  };
 
   // ── Seasonal tab: split into current / next season sections ─────────────
-  if (recsTab !== 'foryou') {
+  if (tab !== 'foryou') {
     let seasonal;
     try { seasonal = await fetchSeasonalRecommendations(); }
     catch (e) {
-      renderErrorInto(grid, e.message);
-      return;
+      renderErrorInto(work, e.message);
+      return commit('grid');
     }
     const { current, next, currentLabel, nextLabel } = seasonal;
     if (!current.length && !next.length) {
-      grid.innerHTML = '<p style="color:#8b949e;text-align:center">No seasonal results — try "For You".</p>';
-      return;
+      work.innerHTML = '<p style="color:#8b949e;text-align:center">No seasonal results — try "For You".</p>';
+      return commit('grid');
     }
     // Pre-fetch relation data for all cards in one batch
     _recRelationsCache.clear();
     const allIds = [...current, ...next].map(i => i.media.id);
     await _fetchRecRelations(allIds);
-
-    grid.style.display = 'block';
 
     const renderSection = (items, label) => {
       if (!items.length) return '';
@@ -8580,8 +8634,8 @@ async function _loadRecsGrid() {
         </div>`;
     };
 
-    grid.innerHTML = renderSection(current, currentLabel) + renderSection(next, nextLabel);
-    return;
+    work.innerHTML = renderSection(current, currentLabel) + renderSection(next, nextLabel);
+    return commit('block'); // v1.0.250 — display 'block' only lands together with the content
   }
 
   // ── For You tab: grouped recs + genre dive + hidden gems ─────────────────
@@ -8590,11 +8644,9 @@ async function _loadRecsGrid() {
   let result;
   try { result = await fetchRecommendationsForYou(); }
   catch (e) {
-    renderErrorInto(grid, e.message);
-    return;
+    renderErrorInto(work, e.message);
+    return commit('grid');
   }
-
-  grid.style.display = 'block';
 
   // Fetch relations for all final rec IDs in one lightweight batch query
   _recRelationsCache.clear();
@@ -8621,14 +8673,14 @@ async function _loadRecsGrid() {
   } else {
     const items = result.items || [];
     if (!items.length) {
-      grid.innerHTML = '<p style="color:#8b949e;text-align:center">No recommendations yet — keep ranking!</p>';
-      return;
+      work.innerHTML = '<p style="color:#8b949e;text-align:center">No recommendations yet — keep ranking!</p>';
+      return commit('block');
     }
     mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')}</div>`;
   }
 
   // Render main recs + placeholder sections for async extras
-  grid.innerHTML = mainHtml + `
+  work.innerHTML = mainHtml + `
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading" id="genre-dive-heading">🎭 More of your top genre</h4>
       <p class="recs-extra-sub">Highly rated titles in your favourite genre that you haven't seen</p>
@@ -8639,27 +8691,34 @@ async function _loadRecsGrid() {
       <p class="recs-extra-sub">Well rated but under the radar — fewer than 100k followers on AniList</p>
       <div class="recs-subgrid" id="hidden-gems-grid"><p style="color:#8b949e;font-size:0.8rem">⏳ Loading…</p></div>
     </div>`;
+  commit('block'); // v1.0.250 — main recs paint now (if still on For You); extras fill in below
 
   // Load genre dive and hidden gems concurrently (non-blocking)
   const [genreResult, gemItems] = await Promise.all([fetchGenreDeepDive(), fetchHiddenGems()]);
 
-  const genreHeading = byId(IDS.genreDiveHeading);
-  const genreGridEl  = byId(IDS.genreDiveGrid);
-  const gemsGridEl   = byId(IDS.hiddenGemsGrid);
-
-  if (genreHeading && genreResult.genre) {
-    genreHeading.textContent = `🎭 More ${genreResult.genre} you haven't seen`;
+  // v1.0.250 — fill the placeholders in the detached copy and in the live
+  // grid; the live grid only has them while it still shows this load's markup.
+  const genreHtml = genreResult.items.length
+    ? genreResult.items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
+    : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>';
+  const gemsHtml = gemItems.length
+    ? gemItems.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
+    : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>';
+  for (const root of [work, grid]) {
+    const genreHeading = root.querySelector('#' + IDS.genreDiveHeading);
+    const genreGridEl  = root.querySelector('#' + IDS.genreDiveGrid);
+    const gemsGridEl   = root.querySelector('#' + IDS.hiddenGemsGrid);
+    if (genreHeading && genreResult.genre) {
+      genreHeading.textContent = `🎭 More ${genreResult.genre} you haven't seen`;
+    }
+    if (genreGridEl) genreGridEl.innerHTML = genreHtml;
+    if (gemsGridEl)  gemsGridEl.innerHTML  = gemsHtml;
   }
-  if (genreGridEl) {
-    genreGridEl.innerHTML = genreResult.items.length
-      ? genreResult.items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
-      : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>';
-  }
-  if (gemsGridEl) {
-    gemsGridEl.innerHTML = gemItems.length
-      ? gemItems.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
-      : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>';
-  }
+  // v1.0.250 — still on For You: cache what the grid shows, as before (a mood
+  // run may have painted and cached its own picks meanwhile); else this load's copy.
+  return recsTab === tab
+    ? { html: grid.innerHTML, gridDisplay: grid.style.display }
+    : { html: work.innerHTML, gridDisplay: 'block' };
 }
 
 async function toggleRecommendations() { switchResultsTab('discover'); }
@@ -13300,6 +13359,13 @@ function _isGuestSession() {
   return saveKey === KESSEN_KEYS.session.guest || saveKey === KESSEN_KEYS.session.anilist('guest');
 }
 
+// v1.0.250 — Delete-all copy for guests. Also needs no token: startGuestMode
+// leaves authToken/malAuthToken set, and _wipeCloudSession would then wipe
+// that account's cloud save. Shared by renderManageTab and deleteAllData.
+function _deleteAllIsDeviceOnly() {
+  return _isGuestSession() && !authToken && !malAuthToken;
+}
+
 async function startGuestMode() {
   const myGen = ++_loadGeneration;
   hide('username-screen');
@@ -14286,6 +14352,7 @@ function shareRankings() {
   const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   const url = location.origin + '/#r=' + encoded;
   byId(IDS.shareUrl).value = url;
+  _renderShareLinkText(url); // v1.0.250 — visible link line; set before _requestShortShareLink so a cached id can overwrite it synchronously
   const copyBtn = byId(IDS.copyBtn);
   if (copyBtn) copyBtn.textContent = '📋 Copy link';
   // v1.0.249 — ask the share function for a short id and swap the link in
@@ -14308,7 +14375,11 @@ async function _requestShortShareLink(payload) {
   const urlEl = byId(IDS.shareUrl);
   if (!urlEl || typeof fetch !== 'function') return;
   const key = JSON.stringify(payload);
-  const apply = (id) => { if (urlEl.value.startsWith(location.origin + '/#r=')) urlEl.value = `${location.origin}/s/${id}`; };
+  const apply = (id) => {
+    if (!urlEl.value.startsWith(location.origin + '/#r=')) return;
+    urlEl.value = `${location.origin}/s/${id}`;
+    _renderShareLinkText(urlEl.value); // v1.0.250 — show the short link in the modal
+  };
   if (_shortShareIds.has(key)) { apply(_shortShareIds.get(key)); return; }
   const gen = ++_shortShareGen;
   const controller = new AbortController();
@@ -14326,17 +14397,39 @@ async function _requestShortShareLink(payload) {
     _shortShareIds.set(key, id);
     if (gen === _shortShareGen) apply(id); // a newer share replaced this one — leave it
   } catch { /* offline, blocked, or timed out — long link stays */ }
-  finally { clearTimeout(timer); }
+  finally {
+    clearTimeout(timer);
+    // v1.0.250 — request settled; if the long link is still showing, drop the "shortening…" caveat
+    if (gen === _shortShareGen) _renderShareLinkText(urlEl.value, true);
+  }
 }
 
+// v1.0.250 — readable form of the share link for the modal's link line. Short
+// link: host + path, no protocol. Long #r= link: host + "(long link — shortening…)"
+// while the share function may still answer, "(long link)" once it has settled.
+// textContent only — the url never goes through innerHTML.
+function _renderShareLinkText(url, settled = false) {
+  const el = byId(IDS.shareLinkText);
+  if (!el) return;
+  const isLong = !!url && url.startsWith(location.origin + '/#r=');
+  el.textContent = isLong
+    ? `${location.host}/#r=… (long link${settled ? '' : ' — shortening…'})`
+    : String(url || '').replace(/^https?:\/\//, '');
+  el.classList.toggle('share-link-long', isLong);
+}
+
+// v1.0.250 — the label resets to a constant and one pending timer is
+// replaced, not stacked. Saving the live label as 'orig' meant a second copy
+// within 2 s (easy now the link line also copies) left "✓ Copied!" stuck.
+let _copyShareLinkTimer = null;
 function copyShareLink() {
   const url = byId(IDS.shareUrl).value;
   const btn = byId(IDS.copyBtn);
-  const orig = btn ? btn.textContent : '📋 Copy link';
   navigator.clipboard.writeText(url).then(() => {
     if (btn) {
       btn.textContent = '✓ Copied!';
-      setTimeout(() => { btn.textContent = orig; }, 2000);
+      clearTimeout(_copyShareLinkTimer);
+      _copyShareLinkTimer = setTimeout(() => { btn.textContent = '📋 Copy link'; }, 2000);
     }
   }).catch(() => {
     byId(IDS.shareUrl).select();
@@ -15260,6 +15353,13 @@ function renderManageTab() {
   _updateCloudSyncTimestamp();
   const notifSec = byId(IDS.manageNotificationsSection);
   if (notifSec) notifSec.style.display = _isGuestSession() ? 'none' : ''; // v1.0.246
+  // v1.0.250 — Danger Zone copy matches what deleteAllData will do.
+  const delNote = byId(IDS.manageDeleteAllNote);
+  if (delNote) {
+    delNote.textContent = _deleteAllIsDeviceOnly()
+      ? 'Deletes all Kessen data on this device, including your guest rankings and any other lists ranked here, and returns you to the start screen. Guest sessions have no cloud copy, so nothing in cloud storage is touched.'
+      : 'Deletes all your data from this device and from cloud storage, and logs you out. For privacy removal requests.';
+  }
   // v1.0.242 — the v1.0.239 "Your Kessen stats" panel is gone. It rendered
   // the raw metric keys ("gaps", "compat", "predict · run") to users, which
   // was developer telemetry, not a feature. The counters themselves are
@@ -15303,10 +15403,8 @@ function renderDiscoverTab() {
   grid.style.display = 'grid';
   grid.innerHTML = '';
   const tabAtLoad = recsTab;
-  _loadRecsGrid().then(() => {
-    _recsCache[tabAtLoad] = { html: grid.innerHTML, gridDisplay: grid.style.display };
-    _recsLoadedTab = tabAtLoad;
-  });
+  // v1.0.250 — cache this load's own result; the live grid may show another tab by now
+  _loadRecsGrid().then(res => { _recsCache[tabAtLoad] = res; });
 }
 
 function renderHistoryTab() {
@@ -17733,7 +17831,7 @@ function showAnimeDetail(id, opts) {
 
   const coverEl = byId(IDS.modalCover);
   coverEl.classList.remove('img-broken'); // clear any stale failure state from a previous modal open
-  coverEl.src = anime.cover;
+  _setCoverSrc(coverEl, anime.cover); // v1.0.250 — same crossorigin mode as the Rankings grid
   coverEl.alt = displayTitle(anime);
   byId(IDS.modalTitle).textContent = displayTitle(anime);
   const scoreStr = anime.globalScore ? `· Community ${anime.globalScore}%` : '';
@@ -17761,7 +17859,7 @@ function showAnimeDetail(id, opts) {
 
   const conf = confidenceLabel(anime.battles || 0);
   byId(IDS.modalConfidenceWrap).innerHTML =
-    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${anime.battles || 0} battles</span>`;
+    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${_nBattles(anime.battles)}</span>`; // v1.0.250 — "Uncertain · 1 battles" fix
 
   const modalBtn = byId(IDS.modalAnilistBtn);
   modalBtn.href        = _animeExternalUrl(anime);
@@ -20052,11 +20150,12 @@ function finishTower() {
     const opp = animeList[r.opponentIdx];
     const row = document.createElement('div');
     row.className = `tower-result-row ${r.championWon ? 'won' : 'lost'}`;
+    // v1.0.250 — singular "battle" at 1
     row.innerHTML = `
       <img${coverCors(opp.cover)} src="${safeUrl(opp.cover)}" alt="${esc(displayTitle(opp))}" />
       <div class="tower-result-info">
         <div class="name">${esc(displayTitle(opp))}</div>
-        <div class="meta">ELO ${opp.elo} · ${opp.battles || 0} battles</div>
+        <div class="meta">ELO ${opp.elo} · ${_nBattles(opp.battles)}</div>
       </div>
       <div class="tower-result-outcome">${r.championWon ? '✅ Win' : '❌ Loss'}</div>
     `;
@@ -21544,16 +21643,22 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.249 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.250 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔗 Share links are short now — kessen.co.uk/s/abc123 instead of a 3,700-character address that some chat apps cut off. The link opens your top 20 as before; the old long links keep working.',
-    '↩ Archived anime come back with their history. Add a show back to your AniList or MAL list after archiving it from Kessen and it returns with the ELO, battles and record it had — the add prompt says so — instead of starting again at 1200.',
-    '📤 On phones the share modal offers Share image and Save image; on desktop it is Download image and Copy image (for pasting straight into Discord or Twitter).',
+    '🧭 Switching Discover tabs while recommendations are still loading no longer drops For You or This Season cards on top of Missing or Predict, and the finished results are ready when you switch back.',
+    '🖼 Battle cards and the detail popup now load covers the same way as your Rankings, so an anime you just battled no longer flashes in late there and its cover is kept for offline use like the rest.',
+    '🔗 The share modal now shows your link above the Copy link button — it reads kessen.co.uk/s/… once the short link is ready, and you can click it to copy.',
+    '🔢 Battle counts read properly at one ("1 battle", not "1 battles") on anime and franchise details, the Battles sort, Tower results and the cloud and backup prompts.',
+    '🗑 In Guest Mode the Delete all my data warning now says it only clears this device, instead of promising a cloud wipe and logout that guests don\'t have.',
+    '📱 On phones the header now shows your battle count in full ("16 battles") instead of cutting it off mid-word as "16 battle…"; the anime count still shows on wider screens.',
+    '🏆 The Taste / Achievements switch on the Profile tab now fits both labels on one line on phones and desktop, so the Achievements tab no longer wraps onto two lines.',
+    '📋 In list view the AniList Avg column header is no longer cut off — the full label and its sort arrow now fit.',
+    '⌨️ The first-run keyboard shortcuts tip now hides while the Mode or Filter menu is open instead of sitting on top of it, and comes back when the menu closes.',
   ],
 };
 
@@ -22400,7 +22505,7 @@ function openArchiveConfirm() {
       title.textContent = a.title || '(untitled)';
       const elo = document.createElement('span');
       elo.className = 'arch-elo';
-      elo.textContent = `ELO ${Math.round(a.elo || 1200)} · ${a.battles || 0} battles`;
+      elo.textContent = `ELO ${Math.round(a.elo || 1200)} · ${_nBattles(a.battles)}`; // v1.0.250 — singular at 1
       li.appendChild(title);
       li.appendChild(elo);
       list.appendChild(li);
@@ -22738,7 +22843,7 @@ function maybeOfferGuestMerge(targetSaveKey, onDone) {
   const sub = byId(IDS.guestMergeSub);
   if (sub) {
     sub.textContent =
-      `Your guest session has ${guest.battleCount} battles across ${guest.animeList.length} anime — ${overlap.length} of which are on your account.`;
+      `Your guest session has ${_nBattles(guest.battleCount)} across ${guest.animeList.length} anime — ${overlap.length} of which are on your account.`; // v1.0.250 — singular at 1
   }
   const detail = byId(IDS.guestMergeDetail);
   if (detail) {
@@ -22770,7 +22875,7 @@ function acceptGuestMerge() {
       if (typeof renderRankingList === 'function') renderRankingList();
       if (typeof filterRankings === 'function')    filterRankings();
       if (typeof renderBattle === 'function')      renderBattle();
-      showToast(`🔀 Merged ${result.merged} anime (+${result.battlesAdded} battles) from guest session.`);
+      showToast(`🔀 Merged ${result.merged} anime (+${_nBattles(result.battlesAdded)}) from guest session.`); // v1.0.250 — singular at 1
     } else {
       showToast('✓ No overlap found — nothing to merge.');
     }
