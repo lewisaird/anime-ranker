@@ -220,6 +220,12 @@ export default async (_request, context) => {
           summary.newCompletions += r.pushed;
           summary.devices        += r.sent || 0;
         }
+        // v1.0.224 — per-user log for any non-boring outcome (push sent,
+        // error, revoked token, initial snapshot). "noNew" and "skipped"
+        // are the healthy quiet paths and don't need per-user log spam.
+        if (r.pushed || r.error || r.revoked || r.snapshot) {
+          console.log('[tower-retry-poll] user', userId, '->', JSON.stringify(r));
+        }
       } catch (e) {
         summary.errors++;
         console.error('[tower-retry-poll] user', userId, 'failed:', e?.message);
@@ -235,6 +241,12 @@ export default async (_request, context) => {
 
   summary.finished  = new Date().toISOString();
   summary.durationMs = Date.now() - startTs;
+  // v1.0.224 — surface the summary in Netlify's function log so operators can
+  // see the outcome of each cron run without having to inspect the HTTP
+  // response. Previously the summary was only returned as the Response body,
+  // which Netlify doesn't show in the log viewer. `console.log` output IS
+  // shown, so this makes each invocation self-documenting.
+  console.log('[tower-retry-poll] summary:', JSON.stringify(summary));
   // Capacity headroom — tells us when we're approaching Netlify's scheduled-
   // function runtime limit. Past 80% utilisation: start planning to shard the
   // work or hash-distribute users across the hour.

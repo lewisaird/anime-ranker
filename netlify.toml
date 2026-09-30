@@ -14,3 +14,10 @@
   from = "/.well-known/assetlinks.json"
   to = "/.netlify/functions/assetlinks"
   status = 200
+
+# v1.0.249 — short share links. /s/<id> is the app shell; the client reads the
+# id from the path and fetches the payload from the share function.
+[[redirects]]
+  from = "/s/*"
+  to = "/index.html"
+  status = 200
