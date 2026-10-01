@@ -107,6 +107,7 @@ const IDS = Object.freeze({
   modalConfidenceWrap:    'modal-confidence-wrap',
   modalCover:             'modal-cover',
   modalDescription:       'modal-description',
+  modalEloLabel:          'modal-elo-label', // v1.0.254 — franchise overview labels this box "Avg ELO"
   modalEloVal:            'modal-elo-val',
   modalGenres:            'modal-genres',
   modalLosses:            'modal-losses',
@@ -177,13 +178,14 @@ const IDS = Object.freeze({
   sessionSummarySubtitle: 'session-summary-subtitle',
   settleBanner:           'settle-banner',
   shareCopyImageBtn:      'share-copy-image-btn',
-  shareImageKind:         'share-image-kind', // v1.0.248
+  // v1.0.254 — shareImageKind (the Top 10 / 3×3 toggle) removed; share-image-note is now the preview status line.
   shareImageNote:         'share-image-note', // v1.0.248
   shareLinkText:          'share-link-text', // v1.0.250
   sharedList:             'shared-list',
   sharedSubtitle:         'shared-subtitle',
   sharedTitle:            'shared-title',
   shareModal:             'share-modal',
+  sharePreview:           'share-preview', // v1.0.254 — share modal image preview <img>
   sharePrimaryBtn:        'share-primary-btn',
   shareUrl:               'share-url',
   skipBtn:                'skip-btn',
@@ -249,6 +251,7 @@ const IDS = Object.freeze({
   tasteEvolutionSection:  'taste-evolution-section',
   modeTowerItem:          'mode-tower-item',
   modeExitTower:          'mode-exit-tower',
+  modeWithinNote:         'mode-within-note', // v1.0.254 — Mode menu note shown during Battle within
   progressBarWrap:        'progress-bar-wrap',
   towerSummaryScreen:     'tower-summary-screen',
   towerSummarySub:        'tower-summary-sub',
@@ -876,6 +879,7 @@ const KESSEN_KEYS = {
     // invisible without this).
     lastCloudSaveTs:     'kessen.ui.lastCloudSaveTs',
     // v1.0.248 — share-image format last picked in the share modal ('top10' | 'grid3').
+    // v1.0.254 — unused since v1.0.254 (3×3 dropped, Top 10 only); kept because old values may still be stored.
     shareImageKind:      'kessen.ui.shareImageKind',
     // v1.0.210 — version string of the last release the user has seen the
     // "What's new" notification for. Compared at boot with the current
@@ -3266,16 +3270,22 @@ function updateProgress() {
     const left = next - battleCount;
     wrap.title = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${left} more to your next milestone (${next})`;
   }
-  // v1.0.250 — anime count in its own span so the phone breakpoint can drop
-  // it whole; before, the ellipsis cut mid-word ("16 battle…"). Built with
-  // textContent, not innerHTML: battleCount can come from an imported backup
-  // file unchecked, so it must stay inert.
+  // Built with textContent, not innerHTML: battleCount can come from an
+  // imported backup file unchecked, so it must stay inert.
+  // v1.0.254 — three spans (battles, " · ", anime) so phones can stack the two
+  // counts and hide the dot; desktop still reads "341 battles · 367 anime".
   const info = byId(IDS.progressInfo);
-  info.textContent = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}`;
-  const animeCount = document.createElement('span');
-  animeCount.className = 'progress-anime-count';
-  animeCount.textContent = ` · ${n} anime`;
-  info.appendChild(animeCount);
+  info.textContent = '';
+  for (const [cls, text] of [
+    ['progress-battles', `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}`],
+    ['progress-sep', ' · '],
+    ['progress-anime-count', `${n} anime`],
+  ]) {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    info.appendChild(span);
+  }
   // v1.0.238 — keep the streak badge in sync with the header progress row
   _renderDailyStreakBadge();
 }
@@ -5207,6 +5217,60 @@ function _indexFranchiseKey(indexes, key) {
   s.add(key);
 }
 
+// v1.0.254 — one place for a franchise's card numbers (Lewis: "★ Top" / "ELO x AVG" were unclear).
+// Average, best, cover and spread skip Unranked members (see _isRanked); a battle between two members counts once, outside the win rate.
+function _franchiseGroupStats(members) {
+  // members arrive sorted by ELO, highest first. With no ranked member the
+  // group is Unranked and every member (all still at 1200) is used.
+  const ranked = members.filter(_isRanked);
+  const statMembers = ranked.length ? ranked : members;
+  const ms = matchupStats || {};
+  let wins = 0, losses = 0, battles = 0, inside = 0;
+  members.forEach((a, i) => {
+    wins    += a.wins    || 0;
+    losses  += a.losses  || 0;
+    battles += a.battles || 0;
+    for (let j = i + 1; j < members.length; j++) {
+      inside += Number(ms[_battleWithinKey(a.id, members[j].id)]?.total) || 0; // v1.0.254 — imported saves are unchecked
+    }
+  });
+  // matchupStats skips Tower battles (and is missing from some old saves), so
+  // `inside` can undercount; the clamp stops it ever exceeding the counters.
+  inside  = Math.min(inside, wins, losses);
+  wins   -= inside;
+  losses -= inside;
+  // Consistent / Mixed / Divisive needs two ranked entries; counting Unranked
+  // 1200s would show a wide spread beside an average that leaves them out.
+  let eloStdDev, eloRange, coherence;
+  if (ranked.length >= 2) {
+    const elos   = ranked.map(a => a.elo);
+    const mean   = elos.reduce((s, e) => s + e, 0) / elos.length;
+    const stdDev = Math.sqrt(elos.reduce((s, e) => s + Math.pow(e - mean, 2), 0) / elos.length);
+    eloStdDev = Math.round(stdDev);
+    eloRange  = Math.round(Math.max(...elos) - Math.min(...elos));
+    coherence = stdDev < 30 ? 'consistent' : stdDev < 80 ? 'mixed' : 'divisive';
+  }
+  const rankedBattles = ranked.reduce((s, a) => s + (a.battles || 0), 0);
+  return {
+    statMembers,
+    bestElo:       Math.round(statMembers.reduce((s, a) => s + a.elo, 0) / statMembers.length),
+    peakElo:       statMembers[0].elo,
+    cover:         statMembers[0].cover,
+    format:        statMembers[0].format,
+    wins,
+    losses,
+    insideBattles: inside,
+    totalBattles:  Math.max(0, battles - inside),
+    winRate:       (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : null,
+    // Battles per ranked entry, for the per-anime confidence cut-offs. Floored to
+    // one decimal so 2.96 shows as 2.9 and never rounds up past the "< 3" check.
+    avgBattles:    ranked.length ? Math.floor(rankedBattles * 10 / ranked.length) / 10 : 0,
+    eloStdDev,
+    eloRange,
+    coherence,
+  };
+}
+
 // Build franchise groups from the current animeList.
 // Returns an array of group objects sorted by best ELO descending.
 function _buildFranchiseGroups(sorted) {
@@ -5371,22 +5435,10 @@ function _buildFranchiseGroups(sorted) {
   const result = [];
   for (const group of groups.values()) {
     group.members.sort((a, b) => b.elo - a.elo);
-    group.bestElo = Math.round(group.members.reduce((s, a) => s + a.elo, 0) / group.members.length);
-    // v1.0.211 — peakElo powers the "Peak ELO" sort option in franchise mode.
-    // Not surfaced visually on the card (the headline ELO number is the
-    // average), but lets users re-sort the franchise list by their single
-    // strongest entry per franchise.
-    group.peakElo = group.members[0].elo;
-    group.cover   = group.members[0].cover;
-    group.format  = group.members[0].format;
-    // Aggregate stats across all members
-    const totalWins    = group.members.reduce((s, a) => s + (a.wins    || 0), 0);
-    const totalLosses  = group.members.reduce((s, a) => s + (a.losses  || 0), 0);
-    const totalBattles = group.members.reduce((s, a) => s + (a.battles || 0), 0);
+    // v1.0.254 — bestElo (average), peakElo (★ Best), cover, wins/losses, totalBattles, winRate, avgBattles
+    // and coherence come from _franchiseGroupStats (ranked members; inside battles counted once).
+    Object.assign(group, _franchiseGroupStats(group.members));
     const scoredMembers = group.members.filter(a => a.globalScore > 0);
-    group.totalBattles = totalBattles;
-    group.winRate      = (totalWins + totalLosses) > 0
-      ? Math.round(totalWins / (totalWins + totalLosses) * 100) : null;
     group.avgScore     = scoredMembers.length
       ? Math.round(scoredMembers.reduce((s, a) => s + a.globalScore, 0) / scoredMembers.length) : 0;
     if (group.members.length === 1) {
@@ -5408,16 +5460,8 @@ function _buildFranchiseGroups(sorted) {
       const cleanName = _franchiseBaseName(mainlineRaw);
       if (cleanName) group.name = cleanName;
     }
-    // Coherence — how consistently the user ranks entries within this franchise.
-    // Only meaningful for franchises with 2+ entries.
-    if (group.members.length >= 2) {
-      const elos    = group.members.map(a => a.elo);
-      const mean    = elos.reduce((s, e) => s + e, 0) / elos.length;
-      const stdDev  = Math.sqrt(elos.reduce((s, e) => s + Math.pow(e - mean, 2), 0) / elos.length);
-      group.eloStdDev  = Math.round(stdDev);
-      group.eloRange   = Math.round(Math.max(...elos) - Math.min(...elos));
-      group.coherence  = stdDev < 30 ? 'consistent' : stdDev < 80 ? 'mixed' : 'divisive';
-    }
+    // v1.0.254 — coherence (how consistently the user ranks the entries: eloStdDev, eloRange)
+    // is now set by _franchiseGroupStats above, over ranked members only (needs two).
     result.push(group);
   }
   // Compute ELO rank for each group (used for tier badge regardless of sort order)
@@ -5445,10 +5489,11 @@ function _buildFranchiseGroups(sorted) {
       result.sort((a, b) => (a.avgScore - b.avgScore) * dir);
       break;
     // v1.0.247 — the franchise-only "Top ELO" / "Members" sorts were removed
-    // (peakElo is still shown on the card as ★ Top). The standard sorts
-    // apply to the group aggregates below.
+    // (peakElo is still shown on the card, as ★ Best since v1.0.254). The
+    // standard sorts apply to the group aggregates below.
     case 'confidence':
-      result.sort((a, b) => (a.totalBattles - b.totalBattles) * dir);
+      // v1.0.254 — battles per ranked entry, the same measure as the confidence pill (was the summed total).
+      result.sort((a, b) => (a.avgBattles - b.avgBattles) * dir);
       break;
     default: // elo (v1.0.242 — 'tier' removed; it was this order)
       result.sort((a, b) => (a.bestElo - b.bestElo) * dir);
@@ -5526,7 +5571,8 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
   const singleFuzzyPill = (isSingle && group.members[0]?.fuzzy)
     ? '<span class="fuzzy-tag" title="Fuzzy — you flagged this as not remembered well enough to judge fairly. It appears less often until you’ve refreshed your memory.">〰️ Fuzzy</span>'
     : '';
-  const conf = confidenceLabel(group.totalBattles || 0);
+  // v1.0.254 — battles per ranked entry against the per-anime cut-offs (the franchise sum made 5 × 2 battles "Confident").
+  const conf = confidenceLabel(group.avgBattles);
   const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
   // v1.0.167 — fuzzy members in the inline expand list get the same amber
   // outline + "〰️ Fuzzy" pill as a flat rank card. Helps pinpoint which
@@ -5570,23 +5616,20 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
     // cards use. Top-3 franchises (by ELO rank, not sort position) should
     // stand out in franchise mode just like they do in flat-list mode.
     const numClass = displayRank === 1 ? 'gold' : displayRank === 2 ? 'silver' : displayRank === 3 ? 'bronze' : '';
-    // v1.0.211 — "Top" badge surfaces the strongest *current* entry in the
-    // franchise. Meaningful for multi-entry franchises ("Madoka Magica's
-    // top is its TV series at 1480"), redundant for singletons (top = the
-    // only entry, same as the headline avg). The `avg` sub-label pairs
-    // with this so users don't confuse the average with the strongest.
-    // Historical peak (highest ELO any member has ever reached) lives in
-    // the franchise detail modal — see showFranchiseDetail.
-    const peakBadge = !isSingle
-      ? `<span class="franchise-peak" title="Highest current ELO in this franchise. Historical peak shown in the franchise overview.">★ Top ${group.peakElo}</span>`
+    // v1.0.211 — the star pill is the strongest *current* entry of a multi-entry
+    // franchise; the historical peak lives in the overview (showFranchiseDetail).
+    // v1.0.254 — "★ Top" read like a rank: now "★ Best" (hidden while Unranked), under a
+    // labelled "Avg ELO" headline that replaces "ELO x" + the faint "AVG" suffix.
+    const peakBadge = (!isSingle && !group.unranked && group.statMembers.length >= 2) // v1.0.254 — one ranked entry: Best would just repeat Avg
+      ? `<span class="franchise-peak" title="Highest-rated entry in this franchise">★ Best ${group.peakElo}</span>`
       : '';
     card.innerHTML = `
       ${displayRank ? `<span class="rank-number ${numClass}">#${displayRank}</span>` : ''}
       ${tier ? `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}
       <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="rank-title">${esc(group.name)}</div>
+      <div class="rank-elo">${isSingle ? 'ELO' : 'Avg ELO'} ${group.bestElo}</div>
       ${countBadge || fuzzyCountBadge || peakBadge ? `<div class="franchise-grid-meta">${countBadge}${peakBadge}${fuzzyCountBadge}</div>` : ''}
-      <div class="rank-elo">ELO ${group.bestElo}${!isSingle ? '<span class="franchise-elo-sub">avg</span>' : ''}</div>
       <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
       ${singleFuzzyPill}
       ${cohBadge}
@@ -5629,7 +5672,7 @@ function showFranchiseDetail(groupName, opts) {
 
   const tier = _franchiseTier(group); // v1.0.241 — null when the franchise is Unranked
   const wrStr = group.winRate !== null ? group.winRate + '%' : '–';
-  const conf  = confidenceLabel(group.totalBattles || 0);
+  const conf  = confidenceLabel(group.avgBattles); // v1.0.254 — battles per ranked entry, as on the card
   const fmtLabel = { TV:'TV Series', MOVIE:'Movie', OVA:'OVA', ONA:'ONA', TV_SHORT:'Short', SPECIAL:'Special' };
 
   // v1.0.241 — one ranked-order pass for every member (was a full sort per
@@ -5680,9 +5723,10 @@ function showFranchiseDetail(groupName, opts) {
   // this is "all-time" only within that window — older peaks roll off).
   // We take the max across history + current ELO so the current value
   // itself counts as a high if it hasn't been recorded in history yet.
-  let allTimePeak = group.members[0].elo;
-  let allTimePeakMember = group.members[0];
-  for (const m of group.members) {
+  // v1.0.254 — ranked members only (as for "Best now"), so an Unranked 1200 entry can't be the all-time best.
+  let allTimePeak = group.peakElo;
+  let allTimePeakMember = group.statMembers[0];
+  for (const m of group.statMembers) {
     const memberMax = Math.max(m.elo, ...(Array.isArray(m.eloHistory) ? m.eloHistory : []));
     if (memberMax > allTimePeak) {
       allTimePeak = memberMax;
@@ -5690,10 +5734,11 @@ function showFranchiseDetail(groupName, opts) {
     }
   }
   const isSingleMember = group.members.length === 1;
-  const peakNowHtml = !isSingleMember
-    ? ` · Top now ${group.peakElo}`
+  // v1.0.254 — the card's "★ Best" wording; neither best is shown while the franchise is Unranked.
+  const peakNowHtml = !isSingleMember && !group.unranked && group.statMembers.length >= 2 // v1.0.254 — see the card's Best pill
+    ? ` · Best now ${group.peakElo}`
     : '';
-  const peakAllTimeHtml = !isSingleMember && allTimePeak > group.peakElo
+  const peakAllTimeHtml = !isSingleMember && !group.unranked && allTimePeak > group.peakElo
     ? ` · All-time best ${allTimePeak} <span style="color:#8b949e;font-size:0.82rem">(${esc(displayTitle(allTimePeakMember))})</span>`
     : '';
   byId(IDS.modalRankLine).innerHTML = `${tierHtml}${group.members.length} entries · Avg ELO ${group.bestElo}${peakNowHtml}${peakAllTimeHtml}`;
@@ -5701,17 +5746,20 @@ function showFranchiseDetail(groupName, opts) {
   const cohHtml   = cohDetail
     ? ` · <span class="franchise-coherence ${cohDetail.cls}" style="font-size:0.78rem" title="${esc(cohDetail.title)}">${cohDetail.icon} ${cohDetail.label} <span style="color:#8b949e;font-weight:400">(±${group.eloStdDev} ELO)</span></span>`
     : '';
-  byId(IDS.modalMetaLine).innerHTML = `${esc(wrStr)} win rate · ${group.totalBattles} total ${group.totalBattles === 1 ? 'battle' : 'battles'} · ${conf.label}${cohHtml}`; // v1.0.250 — singular at 1; inline because "total" sits between count and noun
+  // v1.0.254 — battles between two of its own entries count once and sit outside the win rate; say how many.
+  const insideHtml = group.insideBattles ? ` (${group.insideBattles} within the franchise)` : '';
+  byId(IDS.modalMetaLine).innerHTML = `${esc(wrStr)} win rate · ${group.totalBattles} total ${group.totalBattles === 1 ? 'battle' : 'battles'}${insideHtml} · ${conf.label}${cohHtml}`; // v1.0.250 — singular at 1; inline because "total" sits between count and noun
   byId(IDS.modalGenres).style.display = 'none';
-  const totalWins   = group.members.reduce((s,a) => s + (a.wins||0), 0);
-  const totalLosses = group.members.reduce((s,a) => s + (a.losses||0), 0);
-  byId(IDS.modalWins).textContent    = totalWins;
-  byId(IDS.modalLosses).textContent  = totalLosses;
+  // v1.0.254 — wins/losses against other franchises (they match the win rate); the ELO box reads "Avg ELO".
+  byId(IDS.modalWins).textContent    = group.wins;
+  byId(IDS.modalLosses).textContent  = group.losses;
   byId(IDS.modalEloVal).textContent  = group.bestElo;
+  byId(IDS.modalEloLabel).textContent = isSingleMember ? 'ELO' : 'Avg ELO';
   byId(IDS.modalWinrateVal).textContent = wrStr;
 
+  // v1.0.254 — confidence is per ranked entry now, so a multi-entry franchise's pill shows that average (one decimal, e.g. "avg 2.5 battles per entry").
   byId(IDS.modalConfidenceWrap).innerHTML =
-    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${_nBattles(group.totalBattles)}</span>`; // v1.0.250 — singular at 1
+    `<span class="confidence ${conf.cls}">${conf.dot} ${conf.label} · ${isSingleMember ? _nBattles(group.totalBattles) : `avg ${_nBattles(group.avgBattles)} per entry`}</span>`; // v1.0.250 — singular at 1
 
   // Hide fields that don't apply to a franchise
   byId(IDS.modalGenres).style.display = 'none';
@@ -6329,39 +6377,9 @@ async function _loadCoverForCanvas(url, timeoutMs = 4000) {
 // ─── SHARE IMAGE GENERATION ──────────────────────────────────────────────────
 // v1.0.248 — replaces the full tier-list poster wall (every ranked cover at
 // 65px, no titles, thousands of pixels tall for a big list, D tier included).
-// Two formats, picked in the share modal and remembered:
-//   top10 — 1200×720 card: five covers per row, rank badge, title, ELO.
-//   grid3 — the r/anime "3×3": nine covers, no text, a thin kessen.co.uk strip.
-// Shared by the modal's native-share / copy / download flows.
-const SHARE_IMAGE_KINDS = ['top10', 'grid3'];
-let _shareImageKind = (() => {
-  try { return SHARE_IMAGE_KINDS.includes(localStorage.getItem(KESSEN_KEYS.ui.shareImageKind)) ? localStorage.getItem(KESSEN_KEYS.ui.shareImageKind) : 'top10'; }
-  catch { return 'top10'; }
-})();
-
-function setShareImageKind(kind) {
-  if (!SHARE_IMAGE_KINDS.includes(kind)) return;
-  _shareImageKind = kind;
-  try { localStorage.setItem(KESSEN_KEYS.ui.shareImageKind, kind); } catch { /* session only */ }
-  _syncShareImageKindUI();
-}
-
-function _syncShareImageKindUI() {
-  (byId(IDS.shareImageKind)?.querySelectorAll('[data-kind]') || []).forEach(b => {
-    const on = b.dataset.kind === _shareImageKind;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-  const need = _shareImageKind === 'grid3' ? 9 : 10;
-  const have = Math.min(need, _rankedEloOrder().ranked.length);
-  const note = byId(IDS.shareImageNote);
-  if (note) {
-    note.textContent = have < need
-      ? `Only ${have} ranked so far — the image fills in as you battle.`
-      : '';
-    note.style.display = have < need ? '' : 'none';
-  }
-}
+// v1.0.254 — one format: the 1200×720 Top 10 card (five covers per row, rank
+// badge, title, ELO). The 3×3 option, its toggle and remembered choice are gone.
+// Built once per share-modal open by _prepareShareImage and reused by every button.
 
 const _SHARE_FONT = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
 
@@ -6426,15 +6444,17 @@ function _drawCoverSlot(ctx, img, x, y, w, h, r, fallbackTitle) {
   ctx.restore();
 }
 
-async function _buildShareImageBlob(kind = _shareImageKind) {
+// v1.0.254 — Top 10 card only (3×3 dropped).
+async function _buildShareImageBlob() {
   const ranked = _rankedEloOrder().ranked;
   const rawUser = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
   const user   = rawUser && rawUser !== 'guest' ? rawUser : ''; // guests get "My …"
-  const picks  = ranked.slice(0, kind === 'grid3' ? 9 : 10);
+  const picks  = ranked.slice(0, 10);
   if (!picks.length) throw new Error('Nothing ranked yet');
 
   // v1.0.253 — logo (same-origin, SW-precached) + covers load in parallel, each capped at
-  // 3.5 s (late covers get the title placeholder) so navigator.share runs inside the tap's ~5 s window.
+  // 3.5 s (late covers get the title placeholder). v1.0.254 — built when the share modal opens, so
+  // this caps the preview wait; the buttons reuse the result and never rebuild inside a tap.
   const [logo, ...imgs] = await Promise.all([
     _loadCoverForCanvas('/icon-512.png', 3500),
     ...picks.map(a => a.cover ? _loadCoverForCanvas(a.cover, 3500) : Promise.resolve(null)),
@@ -6443,112 +6463,86 @@ async function _buildShareImageBlob(kind = _shareImageKind) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
-  if (kind === 'grid3') {
-    // ── 3×3: nine 300×450 covers, 6px gutters, thin footer strip ──────────
-    const CW = 300, CH = 450, GAP = 6, FOOT = 34;
-    canvas.width  = CW * 3 + GAP * 2;
-    canvas.height = CH * 3 + GAP * 2 + FOOT;
-    ctx.fillStyle = '#0d1117';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    picks.forEach((a, i) => {
-      const col = i % 3, row = Math.floor(i / 3);
-      _drawCoverSlot(ctx, imgs[i], col * (CW + GAP), row * (CH + GAP), CW, CH, 0, displayTitle(a));
-    });
-    ctx.fillStyle = '#8b949e';
-    ctx.font = `600 15px ${_SHARE_FONT}`;
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillText(user ? `${user}'s 3×3` : 'My 3×3', 12, canvas.height - FOOT / 2);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#6e7681';
-    ctx.fillText('kessen.co.uk', canvas.width - 12, canvas.height - FOOT / 2);
-    // v1.0.253 — small Kessen logo before the site name (text only if it didn't load).
-    if (logo) {
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(logo, canvas.width - 12 - ctx.measureText('kessen.co.uk').width - 30, canvas.height - FOOT / 2 - 12, 24, 24);
-    }
-  } else {
-    // ── Top 10 card: 1200×720, two rows of five ────────────────────────────
-    // TEXT_H fits two 17px title lines + the ELO line with room to spare;
-    // 150×225 covers keep the whole grid inside the header/footer budget.
-    const W = 1200, H = 720, HEAD = 92, FOOT = 34;
-    const CW = 150, CH = 225, COLS = 5, GAPX = 22, GAPY = 16, TEXT_H = 62;
-    canvas.width = W; canvas.height = H;
-    // Background with a faint vertical gradient so it doesn't read as flat black
-    const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, '#0d1117'); bg.addColorStop(1, '#10161f');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, W, H);
+  // ── Top 10 card: 1200×720, two rows of five ────────────────────────────
+  // TEXT_H fits two 17px title lines + the ELO line with room to spare;
+  // 150×225 covers keep the whole grid inside the header/footer budget.
+  const W = 1200, H = 720, HEAD = 92, FOOT = 34;
+  const CW = 150, CH = 225, COLS = 5, GAPX = 22, GAPY = 16, TEXT_H = 62;
+  canvas.width = W; canvas.height = H;
+  // Background with a faint vertical gradient so it doesn't read as flat black
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0d1117'); bg.addColorStop(1, '#10161f');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
 
-    // Header
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#e6edf3';
-    ctx.font = `700 30px ${_SHARE_FONT}`;
-    ctx.fillText(user ? `${user}'s Top 10` : 'My Top 10', 40, 42);
-    ctx.fillStyle = '#8b949e';
-    ctx.font = `15px ${_SHARE_FONT}`;
-    ctx.fillText(`Ranked battle by battle · ${animeList.length} anime · ${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}`, 40, 70);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#58a6ff';
-    ctx.font = `700 22px ${_SHARE_FONT}`;
-    // v1.0.253 — plain wordmark with the real logo (icon-512.png) to its left instead of
-    // the platform ⚔️ emoji; wordmark only if the logo didn't load.
-    ctx.fillText('Kessen', W - 40, 42);
-    const brandW = ctx.measureText('Kessen').width;
-    ctx.fillStyle = '#6e7681';
-    ctx.font = `14px ${_SHARE_FONT}`;
-    ctx.fillText('kessen.co.uk', W - 40, 70);
-    if (logo) {
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(logo, W - 40 - Math.max(brandW, ctx.measureText('kessen.co.uk').width) - 60, 32, 48, 48);
-    }
-
-    // Grid
-    const gridW = COLS * CW + (COLS - 1) * GAPX;
-    const x0 = Math.round((W - gridW) / 2);
-    const rowH = CH + TEXT_H;
-    const gridH = 2 * rowH + GAPY;
-    const y0 = HEAD + Math.round((H - HEAD - FOOT - gridH) / 2);
-    picks.forEach((a, i) => {
-      const col = i % COLS, row = Math.floor(i / COLS);
-      const x = x0 + col * (CW + GAPX);
-      const y = y0 + row * (rowH + GAPY);
-      _drawCoverSlot(ctx, imgs[i], x, y, CW, CH, 8, displayTitle(a));
-      // Rank badge
-      const badgeR = 16;
-      ctx.fillStyle = i === 0 ? '#f0c040' : i === 1 ? '#c9d1d9' : i === 2 ? '#d29922' : '#161b22';
-      ctx.beginPath(); ctx.arc(x + badgeR + 6, y + badgeR + 6, badgeR, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = i < 3 ? '#0d1117' : '#e6edf3';
-      ctx.font = `700 ${i >= 9 ? 14 : 16}px ${_SHARE_FONT}`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(i + 1), x + badgeR + 6, y + badgeR + 7);
-      // Title (two lines) + ELO
-      ctx.fillStyle = '#e6edf3';
-      ctx.font = `600 14px ${_SHARE_FONT}`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      const lines = _canvasWrap(ctx, displayTitle(a), CW - 4, 2);
-      lines.forEach((line, li) => ctx.fillText(line, x + CW / 2, y + CH + 8 + li * 17));
-      ctx.fillStyle = '#8b949e';
-      ctx.font = `12px ${_SHARE_FONT}`;
-      ctx.fillText(`${Math.round(a.elo)} ELO`, x + CW / 2, y + CH + 8 + lines.length * 17 + 1);
-    });
-
-    // Footer
-    ctx.fillStyle = '#30363d';
-    ctx.fillRect(40, H - FOOT, W - 80, 1);
-    ctx.fillStyle = '#6e7681';
-    ctx.font = `13px ${_SHARE_FONT}`;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText('Make your own — rank your AniList or MAL list head-to-head at kessen.co.uk', 40, H - FOOT / 2 + 2);
+  // Header
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e6edf3';
+  ctx.font = `700 30px ${_SHARE_FONT}`;
+  ctx.fillText(user ? `${user}'s Top 10` : 'My Top 10', 40, 42);
+  ctx.fillStyle = '#8b949e';
+  ctx.font = `15px ${_SHARE_FONT}`;
+  ctx.fillText(`Ranked battle by battle · ${animeList.length} anime · ${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}`, 40, 70);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#58a6ff';
+  ctx.font = `700 22px ${_SHARE_FONT}`;
+  // v1.0.253 — plain wordmark with the real logo (icon-512.png) to its left instead of
+  // the platform ⚔️ emoji; wordmark only if the logo didn't load.
+  ctx.fillText('Kessen', W - 40, 42);
+  const brandW = ctx.measureText('Kessen').width;
+  ctx.fillStyle = '#6e7681';
+  ctx.font = `14px ${_SHARE_FONT}`;
+  ctx.fillText('kessen.co.uk', W - 40, 70);
+  if (logo) {
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(logo, W - 40 - Math.max(brandW, ctx.measureText('kessen.co.uk').width) - 60, 32, 48, 48);
   }
+
+  // Grid
+  const gridW = COLS * CW + (COLS - 1) * GAPX;
+  const x0 = Math.round((W - gridW) / 2);
+  const rowH = CH + TEXT_H;
+  const gridH = 2 * rowH + GAPY;
+  const y0 = HEAD + Math.round((H - HEAD - FOOT - gridH) / 2);
+  picks.forEach((a, i) => {
+    const col = i % COLS, row = Math.floor(i / COLS);
+    const x = x0 + col * (CW + GAPX);
+    const y = y0 + row * (rowH + GAPY);
+    _drawCoverSlot(ctx, imgs[i], x, y, CW, CH, 8, displayTitle(a));
+    // Rank badge
+    const badgeR = 16;
+    ctx.fillStyle = i === 0 ? '#f0c040' : i === 1 ? '#c9d1d9' : i === 2 ? '#d29922' : '#161b22';
+    ctx.beginPath(); ctx.arc(x + badgeR + 6, y + badgeR + 6, badgeR, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = i < 3 ? '#0d1117' : '#e6edf3';
+    ctx.font = `700 ${i >= 9 ? 14 : 16}px ${_SHARE_FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), x + badgeR + 6, y + badgeR + 7);
+    // Title (two lines) + ELO
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = `600 14px ${_SHARE_FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const lines = _canvasWrap(ctx, displayTitle(a), CW - 4, 2);
+    lines.forEach((line, li) => ctx.fillText(line, x + CW / 2, y + CH + 8 + li * 17));
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `12px ${_SHARE_FONT}`;
+    ctx.fillText(`${Math.round(a.elo)} ELO`, x + CW / 2, y + CH + 8 + lines.length * 17 + 1);
+  });
+
+  // Footer
+  ctx.fillStyle = '#30363d';
+  ctx.fillRect(40, H - FOOT, W - 80, 1);
+  ctx.fillStyle = '#6e7681';
+  ctx.font = `13px ${_SHARE_FONT}`;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('Make your own — rank your AniList or MAL list head-to-head at kessen.co.uk', 40, H - FOOT / 2 + 2);
 
   [logo, ...imgs].forEach(b => b?.close?.()); // v1.0.253 — free drawn ImageBitmaps (an <img> has no close)
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('Canvas.toBlob returned null');
-  const filename = `kessen-${kind === 'grid3' ? '3x3' : 'top10'}${user ? '-' + user : ''}.png`;
-  return { blob, filename, canvas, kind };
+  const filename = `kessen-top10${user ? '-' + user : ''}.png`;
+  return { blob, filename, canvas };
 }
 
 // (v1.0.248 — exportTierListImage removed: it was a download-only duplicate of
@@ -7128,7 +7122,7 @@ function refreshDiscover() {
   const grid = byId(IDS.recsGrid);
   const btn  = byId(IDS.discoverRefreshBtn);
   grid.innerHTML = '';
-  grid.style.display = 'grid';
+  grid.style.display = 'block'; // v1.0.254 — #recs-grid is block throughout; placeholders and sections carry their own grids
   // v1.0.244 — label lives in a span so phones can show the icon alone
   if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refreshing…</span>'; btn.disabled = true; }
   const tabAtLoad = recsTab;
@@ -7222,7 +7216,7 @@ function setRecsTab(tab, fromMood = false) {
     } else {
       // First visit to this sub-tab: fetch and then cache the result
       const tabAtLoad = tab;
-      grid.style.display = 'grid';
+      grid.style.display = 'block'; // v1.0.254 — block throughout, as in _loadRecsGrid
       // v1.0.250 — cache this load's own result; the live grid may show another tab by now
       _loadRecsGrid().then(res => { _recsCache[tabAtLoad] = res; });
     }
@@ -8277,8 +8271,8 @@ function _getRelationNote(media) {
     const { relationType, node } = matches[0];
     const relTitle = node.title.english || node.title.romaji;
     const rank = eloRankMap.get(node.id);
-    // v1.0.247 — shorter phrasing + full text in the title attribute; the
-    // note is clamped to two lines in CSS.
+    // v1.0.247 — shorter phrasing + full text in the title attribute.
+    // v1.0.254 — no longer clamped in CSS; the card grows to fit the whole note.
     if (relationType === 'PREQUEL')
       return _recRelationNote(`📺 Sequel to <strong>${esc(relTitle)}</strong> (your <strong>#${rank}</strong>)`);
     if (relationType === 'SEQUEL')
@@ -8323,8 +8317,8 @@ function _getRelationNote(media) {
   return _recRelationNote(`🔗 Part of <strong>${esc(relTitle)}</strong> (your <strong>#${bestRank}</strong>)`);
 }
 
-// v1.0.247 — wraps a relation note; the plain-text version goes in `title`
-// so the two-line CSS clamp never hides the franchise name for good.
+// v1.0.247 — wraps a relation note; the plain-text version goes in `title`.
+// v1.0.254 — cards no longer clamp the note (full text shows); `title` is just a hover tooltip now.
 function _recRelationNote(innerHtml) {
   const plain = innerHtml.replace(/<[^>]+>/g, '');
   return `<div class="rec-relation-note" title="${plain}">${innerHtml}</div>`;
@@ -8707,6 +8701,11 @@ async function fetchHiddenGems() {
   }
 }
 
+// v1.0.254 — cards per This Season section; _loadRecsGrid's loading placeholder uses the same
+// number, so the loading and loaded pages keep the same shape if it ever changes.
+// v1.0.254 — 12 (was 8, a ragged 6 + 2 on desktop) fills rows of 6/4/3/2; same one 50-title fetch per season.
+const SEASON_RECS_PER_SECTION = 12;
+
 async function fetchSeasonalRecommendations() {
   const ownIds = new Set(animeList.map(a => a.id));
   const { season, year } = getCurrentSeason();
@@ -8750,7 +8749,6 @@ async function fetchSeasonalRecommendations() {
     // Score each item by taste + community
     items.forEach(r => {
       r._tasteScore = _computeTasteScore(r.media, genreAffinityMap, eloMin, eloRange);
-      r._strong = isStrong(r.media); // v1.0.253 — Strong match flag for the card
       // For ranking we still need a number — fall back to 0.5 (median) when
       // tasteScore is null so unscored items don't sink to the bottom.
       const tasteForRanking = r._tasteScore == null ? 0.5 : r._tasteScore;
@@ -8758,13 +8756,18 @@ async function fetchSeasonalRecommendations() {
       r._score = tasteForRanking * 0.65 + commNorm * 0.35;
     });
 
-    // Sort: unwatched first, then by taste+community score, cap at 8
+    // Sort: unwatched first, then by taste+community score, cap per section
+    // v1.0.254 — the cap (now 12) is SEASON_RECS_PER_SECTION, shared with the loading placeholder;
+    // a thin season just shows what it has.
     buckets[label] = items
       .sort((a, b) => {
         if (a.watched !== b.watched) return a.watched ? 1 : -1;
         return b._score - a._score;
       })
-      .slice(0, 8);
+      .slice(0, SEASON_RECS_PER_SECTION);
+    // v1.0.254 — Strong match flag, capped to a fifth of the shown unwatched cards (watched ones never show it)
+    const strong = _strongMatchPick(buckets[label].filter(r => !r.watched), isStrong);
+    buckets[label].forEach(r => { r._strong = strong.has(r.media); });
 
     await new Promise(r => setTimeout(r, 500));
   }
@@ -8842,14 +8845,26 @@ function _strongMatchTest(list = animeList) {
   if (!own.length) return () => false;
   const cut   = own[Math.min(own.length - 1, Math.floor(own.length * STRONG_MATCH_PERCENTILE))];
   const floor = ranked.reduce((s, a) => s + a.elo, 0) / ranked.length;
-  return (media) => {
+  const isStrong = (media) => {
     const m = _meanGenreElo(media, affinity);
     return m !== null && m >= cut && m > floor;
   };
+  isStrong.fit = (media) => _meanGenreElo(media, affinity); // v1.0.254 — lets _strongMatchPick rank the cards that pass
+  return isStrong;
 }
 
-function _recsSkeletonHtml(count = 8) {
-  const card = `<div class="skeleton-card">
+// v1.0.254 — 🎯 on at most a fifth of a section's cards (rounded up), best genre fit first: a For You
+// row's recs share their seed's genres, so the per-card test alone often badged the whole row.
+function _strongMatchPick(items, isStrong) {
+  const passing = items.map(i => i.media).filter(m => isStrong(m));
+  passing.sort((x, y) => isStrong.fit(y) - isStrong.fit(x));
+  return new Set(passing.slice(0, Math.ceil(items.length / 5)));
+}
+
+// v1.0.254 — `count` placeholder cards for inside a .recs-subgrid (real card's 2/3 cover over a
+// centred text block, styles.css .skeleton-*); hidden from screen readers.
+function _recsSkeletonCards(count) {
+  const card = `<div class="skeleton-card" aria-hidden="true">
     <div class="skeleton-img"></div>
     <div class="skeleton-body">
       <div class="skeleton-line"></div>
@@ -8857,8 +8872,19 @@ function _recsSkeletonHtml(count = 8) {
       <div class="skeleton-line shorter"></div>
     </div>
   </div>`;
-  // Cards placed directly so the grid's own column layout applies
   return card.repeat(count);
+}
+
+// v1.0.254 — placeholder shaped like the finished page (was 8 bare cards): `groups` blocks of a heading bar
+// over one .recs-subgrid of `perGroup` cards, with For You's group classes or This Season's section classes.
+function _recsSkeletonHtml(groups, perGroup, section = false) {
+  const wrap = section ? 'recs-extra-section' : 'recs-group';
+  const head = section ? 'recs-extra-heading' : 'recs-group-heading';
+  const block = `<div class="${wrap}" aria-hidden="true">
+    <h4 class="${head}"><span class="skeleton-line skeleton-heading"></span></h4>
+    <div class="recs-subgrid">${_recsSkeletonCards(perGroup)}</div>
+  </div>`;
+  return block.repeat(groups);
 }
 
 // v1.0.250 — the awaits below can outlive a Discover sub-tab switch: render
@@ -8866,9 +8892,13 @@ function _recsSkeletonHtml(count = 8) {
 // started the load is still active, and resolve to { html, gridDisplay }.
 async function _loadRecsGrid() {
   const grid = byId(IDS.recsGrid);
-  grid.style.display = 'grid';
-  grid.innerHTML = _recsSkeletonHtml();
   const tab  = recsTab;
+  // v1.0.254 — placeholder in the finished page's shape (For You: 3 seed groups of 6; This Season: 2 sections),
+  // painted in the same block layout the content lands in, so nothing jumps from grid to block.
+  grid.style.display = 'block';
+  grid.innerHTML = tab === 'foryou'
+    ? _recsSkeletonHtml(3, 6)
+    : _recsSkeletonHtml(2, SEASON_RECS_PER_SECTION, true);
   // v1.0.251 — For You loads share _forYouGen with mood runs; once a newer one
   // starts, this load stops painting and resolves to the cache as it stands.
   const gen  = tab === 'foryou' ? ++_forYouGen : 0;
@@ -8890,12 +8920,12 @@ async function _loadRecsGrid() {
     try { seasonal = await fetchSeasonalRecommendations(); }
     catch (e) {
       renderErrorInto(work, e.message);
-      return commit('grid');
+      return commit('block'); // v1.0.254 — full width; 'grid' squeezed the centred message into one column
     }
     const { current, next, currentLabel, nextLabel } = seasonal;
     if (!current.length && !next.length) {
       work.innerHTML = '<p style="color:#8b949e;text-align:center">No seasonal results — try "For You".</p>';
-      return commit('grid');
+      return commit('block'); // v1.0.254 — full width, as above
     }
     // Pre-fetch relation data for all cards in one batch
     _recRelationsCache.clear();
@@ -8919,13 +8949,12 @@ async function _loadRecsGrid() {
   }
 
   // ── For You tab: grouped recs + genre dive + hidden gems ─────────────────
-  // Note: grid stays as display:grid (skeleton layout) until data arrives,
-  // then switches to block for the grouped/sectioned real layout.
+  // v1.0.254 — #recs-grid is display:block from the placeholder on (it used to stay grid until data arrived).
   let result;
   try { result = await fetchRecommendationsForYou(); }
   catch (e) {
     renderErrorInto(work, e.message);
-    return commit('grid');
+    return commit('block'); // v1.0.254 — full width, as on This Season
   }
 
   // Fetch relations for all final rec IDs in one lightweight batch query
@@ -8944,31 +8973,37 @@ async function _loadRecsGrid() {
 
   let mainHtml;
   if (result.grouped && result.groups.length) {
-    mainHtml = result.groups.map(({ seed, recs }) => `
+    // v1.0.254 — Strong match capped per row (_strongMatchPick)
+    mainHtml = result.groups.map(({ seed, recs }) => {
+      const strong = _strongMatchPick(recs, isStrong);
+      return `
       <div class="recs-group">
         <h4 class="recs-group-heading">Because you loved <em>${esc(displayTitle(seed))}</em></h4>
-        <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')}</div>
-      </div>`).join('');
+        <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media, { strongMatch: strong.has(media) })).join('')}</div>
+      </div>`;
+    }).join('');
   } else {
     const items = result.items || [];
     if (!items.length) {
       work.innerHTML = '<p style="color:#8b949e;text-align:center">No recommendations yet — keep ranking!</p>';
       return commit('block');
     }
-    mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')}</div>`;
+    const strong = _strongMatchPick(items, isStrong); // v1.0.254 — Strong match capped for the list
+    mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { strongMatch: strong.has(media) })).join('')}</div>`;
   }
 
   // Render main recs + placeholder sections for async extras
+  // v1.0.254 — each extra shows 4 placeholder cards (its final count) instead of a "⏳ Loading…" line
   work.innerHTML = mainHtml + `
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading" id="genre-dive-heading">🎭 More of your top genre</h4>
       <p class="recs-extra-sub">Highly rated titles in your favourite genre that you haven't seen</p>
-      <div class="recs-subgrid" id="genre-dive-grid"><p style="color:#8b949e;font-size:0.8rem">⏳ Loading…</p></div>
+      <div class="recs-subgrid" id="genre-dive-grid">${_recsSkeletonCards(4)}</div>
     </div>
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading">💎 Hidden Gems</h4>
       <p class="recs-extra-sub">Well rated but under the radar — fewer than 100k followers on AniList</p>
-      <div class="recs-subgrid" id="hidden-gems-grid"><p style="color:#8b949e;font-size:0.8rem">⏳ Loading…</p></div>
+      <div class="recs-subgrid" id="hidden-gems-grid">${_recsSkeletonCards(4)}</div>
     </div>`;
   commit('block'); // v1.0.250 — main recs paint now (if still on For You); extras fill in below
   if (superseded()) return _recsCache[tab]; // v1.0.251 — superseded: skip the extras' AniList requests
@@ -8986,14 +9021,17 @@ async function _loadRecsGrid() {
   // v1.0.250 — fill the placeholders in the detached copy and in the live
   // grid; the live grid only has them while it still shows this load's markup.
   // v1.0.253 — genre dive and hidden gems use the same Strong match test as the main recs
+  // v1.0.254 — and the same per-section cap
+  const genreStrong = _strongMatchPick(genreResult.items, isStrong);
+  const gemsStrong  = _strongMatchPick(gemItems, isStrong);
   const genreHtml = genreResult.items.length
-    ? genreResult.items.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')
+    ? genreResult.items.map(({ media }) => recCardHtml(media, { strongMatch: genreStrong.has(media) })).join('')
     : (genreFailed ? extraFailedHtml : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>');
   const gemsHtml = gemItems.length
-    ? gemItems.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')
+    ? gemItems.map(({ media }) => recCardHtml(media, { strongMatch: gemsStrong.has(media) })).join('')
     : (gemsFailed ? extraFailedHtml : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>');
   // v1.0.251 — checked before the fill: a superseded load must not write its
-  // extras into a newer load's "⏳ Loading…" placeholders in the live grid.
+  // extras into a newer load's placeholder cards in the live grid (v1.0.254: skeleton cards, not "⏳ Loading…").
   if (superseded()) return _recsCache[tab]; // a newer For You load or mood run owns the grid and cache now
   for (const root of [work, grid]) {
     const genreHeading = root.querySelector('#' + IDS.genreDiveHeading);
@@ -14665,9 +14703,9 @@ function shareRankings() {
   // when it arrives. The long link is already in place, so a slow or failed
   // request just leaves the old behaviour.
   _requestShortShareLink(payload);
-  const subEl = byId(IDS.shareModal)?.querySelector('.share-subtitle');
-  if (subEl) subEl.textContent = 'Share an image of your top 10 (or a 3×3) — or copy a link to your top 20.';
   _updateShareModalCapabilities();
+  // v1.0.254 — build the one Top 10 image now: preview + reused by every button. (Subtitle is static HTML.)
+  _prepareShareImage();
   byId(IDS.shareModal).style.display = 'flex';
   pushModalBack('share', closeShare);
 }
@@ -14744,128 +14782,111 @@ function copyShareLink() {
 }
 
 // ─── NATIVE SHARE SHEET (§5.2.5) ──────────────────────────────────────────────
-// On mobile (and any browser where navigator.canShare({ files }) returns true),
-// open the OS share sheet with the image attached. Users can then pick
-// Messages, WhatsApp, Instagram, etc. Falls back to direct download on desktop.
-// v1.0.248 — this is now what the modal's primary button calls. It used to
-// call a download-only function, so the "📤 Share image" label on phones
-// downloaded instead of opening the share sheet.
-async function shareImageFromModal() {
-  const btn = byId(IDS.sharePrimaryBtn);
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating image…'; }
-  try {
-    const { blob, filename, kind } = await _buildShareImageBlob();
-    const file = new File([blob], filename, { type: 'image/png' });
-    const shareUrl = byId(IDS.shareUrl)?.value || location.href.split('#')[0];
-    const what = kind === 'grid3' ? 'My anime 3×3' : 'My top 10 anime';
-    const shareData = {
-      files: [file],
-      title: `${what} — Kessen`,
-      text:  `${what} — ranked battle by battle on kessen.co.uk\n${shareUrl}`,
-    };
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share(shareData);
-        if (btn) btn.textContent = '✓ Shared!';
-        setTimeout(() => { if (btn) btn.textContent = orig; }, 1500);
-        return;
-      } catch (err) {
-        // User cancelled (AbortError) — silent. Other errors → fallback.
-        if (err && err.name === 'AbortError') return;
-      }
-    }
-    // Desktop / no-file-share fallback: download the PNG
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    showToast('📥 Image downloaded — share it from your files.');
-  } catch (e) {
-    showToast('⚠️ Share failed: ' + e.message);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      if (btn.textContent === '⏳ Generating image…') btn.textContent = orig;
-    }
-  }
-}
+// v1.0.254 — the modal builds the one Top 10 image as it opens, shows it as a
+// preview and keeps the blob. Every button then acts at once (no rebuild, no
+// await before navigator.share / clipboard.write), so cover loading can't use
+// up the tap's user activation on Android. shareToSocial (no callers) removed.
+let _shareImage = null; // { blob, filename, file } for the open modal
+let _shareImageGen = 0; // bumped on open and close; a build that lands late is dropped
+const _SHARE_PRIMARY_LABEL = { share: '📤 Share image', download: '⬇️ Download image' };
+const _SHARE_COPY_LABEL = '📋 Copy image';
 
-// Copy the share image to the clipboard (desktop-friendly — lets users
-// paste straight into Discord / Twitter / Slack compose boxes). Uses the
-// ClipboardItem API where available.
-async function copyShareImageToClipboard() {
-  const btn = byId(IDS.shareCopyImageBtn);
-  // v1.0.249 — on phones this button is "Save image" (see
-  // _updateShareModalCapabilities): plain download, no clipboard.
-  if (btn?.dataset.action === 'save') return _downloadShareImage(btn);
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Copying…'; }
-  try {
-    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
-      throw new Error('Clipboard image copy not supported in this browser');
-    }
-    const { blob } = await _buildShareImageBlob();
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    if (btn) {
-      btn.textContent = '✓ Image copied — paste anywhere!';
-      setTimeout(() => { btn.textContent = orig; }, 2200);
-    }
-  } catch (e) {
-    if (btn) btn.textContent = orig;
-    showToast('⚠️ Copy failed: ' + e.message);
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-// v1.0.249 — plain download of the current share image (the phone "Save
-// image" button; also the desktop fallback path inside shareImageFromModal).
-async function _downloadShareImage(btn) {
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving…'; }
+async function _prepareShareImage() {
+  const gen = ++_shareImageGen;
+  _shareImage = null;
+  const img = byId(IDS.sharePreview);
+  const note = byId(IDS.shareImageNote);
+  const buttons = [byId(IDS.sharePrimaryBtn), byId(IDS.shareCopyImageBtn)];
+  const setNote = (text) => { if (note) { note.textContent = text; note.style.display = text ? '' : 'none'; } };
+  if (img) { img.removeAttribute('src'); img.style.display = 'none'; img.parentElement.style.display = ''; }
+  buttons.forEach(b => { if (b) b.disabled = true; });
+  if (buttons[0]) buttons[0].style.display = ''; // v1.0.254 — re-shown after a failed build hid it
+  setNote('⏳ Making your image…');
   try {
     const { blob, filename } = await _buildShareImageBlob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = orig; }, 1500); }
-  } catch (e) {
-    if (btn) btn.textContent = orig;
-    showToast('⚠️ Save failed: ' + e.message);
-  } finally {
-    if (btn) btn.disabled = false;
+    // A data: URL, not blob: — the live CSP img-src has no blob:. Same PNG bytes, so long-press / right-click saves the real image.
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error('Could not read the image'));
+      reader.readAsDataURL(blob);
+    });
+    if (gen !== _shareImageGen) return; // modal closed or reopened meanwhile
+    _shareImage = { blob, filename, file: new File([blob], filename, { type: 'image/png' }) };
+    if (img) { img.src = dataUrl; img.style.display = ''; }
+    buttons.forEach(b => { if (b) b.disabled = false; });
+    const have = Math.min(10, _rankedEloOrder().ranked.length);
+    // v1.0.254 — with the share sheet as the only button (phones), say how to save the image itself.
+    const saveHint = byId(IDS.sharePrimaryBtn)?.dataset.nativeShare === '1' ? 'Long-press or right-click the preview to save it.' : '';
+    setNote([have < 10 ? `Only ${have} ranked so far — the image fills in as you battle.` : '', saveHint].filter(Boolean).join(' '));
+  } catch {
+    if (gen !== _shareImageGen) return;
+    if (img) img.parentElement.style.display = 'none';
+    buttons.forEach(b => { if (b) b.style.display = 'none'; }); // v1.0.254 — no dead greyed-out image buttons
+    setNote('⚠️ Couldn’t make the image — the link below still works.');
   }
 }
 
-// Per-platform share via the encoded URL. Opens a new tab pre-filled with text
-// + link — users can still edit before posting.
-function shareToSocial(platform) {
-  const url  = byId(IDS.shareUrl)?.value;
-  if (!url) return;
-  const text = 'My anime tier list — built battle by battle on Kessen ⚔️';
-  let target;
-  switch (platform) {
-    case 'twitter':
-      target = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
-      break;
-    case 'reddit':
-      target = `https://www.reddit.com/submit?title=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
-      break;
-    case 'whatsapp':
-      target = `https://api.whatsapp.com/send?text=${encodeURIComponent(text + ' ' + url)}`;
-      break;
-    case 'telegram':
-      target = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
-      break;
-    case 'facebook':
-      target = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`;
-      break;
-    default:
-      return;
+// v1.0.254 — brief "✓ …" on a share button, then back to its fixed label; one
+// timer per button so a quick second tap can't leave the tick stuck.
+function _flashShareBtn(btn, label, restore) {
+  if (!btn) return;
+  clearTimeout(btn._flashTimer);
+  btn.textContent = label;
+  btn._flashTimer = setTimeout(() => { btn.textContent = restore; }, 1800);
+}
+
+// v1.0.254 — the one primary button: share sheet (image + short link) where
+// navigator.canShare({ files }) is true, otherwise a download. Synchronous up
+// to navigator.share, using the image prepared when the modal opened.
+function shareImageFromModal() {
+  const shot = _shareImage;
+  if (!shot) return; // still building (the button is disabled meanwhile)
+  const btn = byId(IDS.sharePrimaryBtn);
+  const native = btn?.dataset.nativeShare === '1';
+  let canShare = false;
+  try { canShare = native && !!navigator.canShare?.({ files: [shot.file] }); } catch { canShare = false; }
+  if (!canShare) {
+    _downloadShareImage(shot);
+    _flashShareBtn(btn, '✓ Downloaded', native ? _SHARE_PRIMARY_LABEL.share : _SHARE_PRIMARY_LABEL.download);
+    return;
   }
-  window.open(target, '_blank', 'noopener,noreferrer');
+  // The text never carries the ~3,700-character #r= link: the short link once it's ready, else just the site.
+  const url = byId(IDS.shareUrl)?.value || '';
+  const text = 'My top 10 anime — ranked battle by battle on kessen.co.uk'
+    + (url.startsWith(location.origin + '/s/') ? `\n${url}` : '');
+  // v1.0.254 — one share at a time: a quick second tap used to hit InvalidStateError
+  // ("an earlier share has not yet completed") and fall through to a download.
+  if (btn) btn.disabled = true;
+  navigator.share({ files: [shot.file], title: 'My top 10 anime — Kessen', text })
+    .then(() => _flashShareBtn(btn, '✓ Shared!', _SHARE_PRIMARY_LABEL.share))
+    .catch(err => {
+      if (err && (err.name === 'AbortError' || err.name === 'InvalidStateError')) return; // closed, or a share already open
+      _downloadShareImage(shot);
+      showToast('📥 Image downloaded — share it from your files.');
+    })
+    .finally(() => { if (btn) btn.disabled = false; });
+}
+
+// v1.0.254 — desktop "Copy image" (shown only where the clipboard image API
+// exists): writes the prepared blob inside the click, which Safari requires.
+function copyShareImageToClipboard() {
+  const shot = _shareImage;
+  if (!shot) return;
+  const btn = byId(IDS.shareCopyImageBtn);
+  const fail = (e) => showToast('⚠️ Copy failed: ' + (e?.message || 'not supported in this browser'));
+  try {
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': shot.blob })])
+      .then(() => _flashShareBtn(btn, '✓ Image copied — paste anywhere!', _SHARE_COPY_LABEL), fail);
+  } catch (e) { fail(e); }
+}
+
+// v1.0.254 — save the prepared image (desktop primary; share-sheet fallback).
+function _downloadShareImage(shot) {
+  const url = URL.createObjectURL(shot.blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = shot.filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 // Show/hide the "Copy image to clipboard" button depending on browser support.
@@ -14882,31 +14903,18 @@ function _updateShareModalCapabilities() {
   } catch { canNativeShare = false; }
   const primary = byId(IDS.sharePrimaryBtn);
   if (primary) {
-    primary.textContent = canNativeShare
-      ? '📤 Share image'
-      : '⬇️ Download image';
+    primary.textContent = canNativeShare ? _SHARE_PRIMARY_LABEL.share : _SHARE_PRIMARY_LABEL.download;
     primary.dataset.nativeShare = canNativeShare ? '1' : '0';
   }
-  // v1.0.249 — the secondary action depends on the device. With a share
-  // sheet (phones) the useful second option is "Save image" — copying an
-  // image to a phone clipboard is rarely what anyone wants and works
-  // unevenly. Without one (desktop) the primary already downloads, so the
-  // secondary is "Copy image" for pasting into Discord / Twitter, shown only
-  // where ClipboardItem exists (not Firefox).
+  // v1.0.254 — one optional secondary: "Copy image" on desktop (fine pointer) where the
+  // clipboard image API exists. Phones get the single Share button (long-press the preview to save).
   const secondary = byId(IDS.shareCopyImageBtn);
   if (secondary) {
-    const canCopy = typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write;
-    if (canNativeShare) {
-      secondary.textContent = '💾 Save image';
-      secondary.dataset.action = 'save';
-      secondary.style.display = '';
-    } else {
-      secondary.textContent = '📋 Copy image to clipboard';
-      secondary.dataset.action = 'copy';
-      secondary.style.display = canCopy ? '' : 'none';
-    }
+    const canCopy = typeof ClipboardItem !== 'undefined' && !!navigator.clipboard?.write
+      && !!window.matchMedia?.('(pointer: fine)').matches;
+    secondary.textContent = _SHARE_COPY_LABEL;
+    secondary.style.display = canCopy ? '' : 'none';
   }
-  _syncShareImageKindUI(); // v1.0.248 — Top 10 / 3×3 toggle state + short-list note
   // Wire Escape-to-close. Safe to call repeatedly — removeEventListener is a
   // no-op if the handler isn't attached, and the browser deduplicates identical
   // (handler, phase) pairs.
@@ -14919,11 +14927,13 @@ function closeShare() {
   byId(IDS.shareModal).style.display = 'none';
   document.removeEventListener('keydown', _shareEscHandler);
   popModalBack('share');
+  // v1.0.254 — let go of the prepared image and its preview data: URL; a build still running is dropped.
+  _shareImageGen++;
+  _shareImage = null;
+  byId(IDS.sharePreview)?.removeAttribute('src');
 }
 function closeShareOnOverlay(e) { if (e.target === byId(IDS.shareModal)) closeShare(); }
-
-// Opens the share modal from the Manage tab — equivalent to shareRankings().
-function openShareFromManage() { shareRankings(); }
+// (v1.0.254 — openShareFromManage removed: no callers.)
 
 // ─── HARDWARE BACK BUTTON / MODAL DISMISS (TWA) ─────────────────────────────
 // On Android — especially as a TWA on Play Store — the hardware back button
@@ -15728,7 +15738,7 @@ function renderDiscoverTab() {
   // behaves the same as sub-tab-click: fetch, populate, cache.
   const sub = byId(IDS.recsSubText);
   if (sub) sub.style.display = '';
-  grid.style.display = 'grid';
+  grid.style.display = 'block'; // v1.0.254 — block throughout, as in _loadRecsGrid
   grid.innerHTML = '';
   const tabAtLoad = recsTab;
   // v1.0.250 — cache this load's own result; the live grid may show another tab by now
@@ -16033,8 +16043,9 @@ function tryLoadSharedView() {
     let ok = false;
     try {
       // v1.0.253 — a just-created link can 404 briefly while Netlify Blobs catches up: retry a 404
-      // three times (~1.5 s, 3 s, 5 s) under "Loading…"; any other failure ends at once, as before.
-      const retryWaits = [1500, 3000, 5000];
+      // under "Loading…"; any other failure ends at once, as before.
+      // v1.0.254 — live links took ~10.5 s to become readable (old waits covered ~9.5 s); now ~25 s.
+      const retryWaits = [1500, 3000, 5000, 7000, 8000];
       for (let attempt = 0; attempt <= retryWaits.length; attempt++) {
         if (attempt) await new Promise(r => setTimeout(r, retryWaits[attempt - 1]));
         const res = await fetch(`/.netlify/functions/share?id=${encodeURIComponent(m[1])}`, { cache: 'no-store' });
@@ -17759,8 +17770,6 @@ async function applyMoodRec(moodKey) {
   grid.style.display = 'block';
   // v1.0.251 — no gridTemplateColumns override: block layout ignores it, and a run
   // that stops early would leave it on the shared grid (single-column skeletons).
-  grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
-    ${mood.emoji} Finding ${mood.label.toLowerCase()} recommendations…</p>`;
 
   // Seed from exactly the anime shown in the cover tiles.
   // v1.0.253 — painted above on every run, so the "paint if empty" fallback is gone
@@ -17771,6 +17780,15 @@ async function applyMoodRec(moodKey) {
       Not enough ${mood.label.toLowerCase()} anime in your rankings yet.</p>`;
     return;
   }
+
+  // v1.0.254 — while loading, show the picks' own heading over one placeholder group (6 cards) per seed,
+  // as the finished picks look (was a "Finding … recommendations…" line); titleHtml moved up from below.
+  const titleHtml = `<div style="margin-bottom:16px">
+    <h3 style="color:var(--text-bright);margin:0 0 4px">${mood.emoji} ${mood.label} picks</h3>
+    <p style="color:#8b949e;font-size:0.82rem;margin:0">
+      Based on your top-ranked ${mood.label.toLowerCase()} anime</p>
+  </div>`;
+  grid.innerHTML = titleHtml + _recsSkeletonHtml(seeds.length, 6);
 
   const ownIds  = new Set(animeList.map(a => a.id));
   const usedIds = new Set();
@@ -17837,21 +17855,20 @@ async function applyMoodRec(moodKey) {
   }
   if (gen !== _forYouGen) return; // v1.0.251 — a newer chip tap or For You load took over meanwhile
 
-  // Render with mood header
-  const titleHtml = `<div style="margin-bottom:16px">
-    <h3 style="color:var(--text-bright);margin:0 0 4px">${mood.emoji} ${mood.label} picks</h3>
-    <p style="color:#8b949e;font-size:0.82rem;margin:0">
-      Based on your top-ranked ${mood.label.toLowerCase()} anime</p>
-  </div>`;
+  // Render with mood header (v1.0.254 — titleHtml is built above, before the loading placeholder)
   // v1.0.253 — Strong match: same ranked-list test as For You (was a fixed 0.65 cut).
   const _moodStrong = _strongMatchTest();
-  const cardsHtml = groups.map(({ seed, recs }) => `
+  // v1.0.254 — capped per row like For You (_strongMatchPick)
+  const cardsHtml = groups.map(({ seed, recs }) => {
+    const strong = _strongMatchPick(recs, _moodStrong);
+    return `
     <div class="recs-group">
       <div class="recs-group-label">Because you liked <strong>${esc(displayTitle(seed))}</strong></div>
       <div class="recs-row">
-        ${recs.map(r => recCardHtml(r.media, { strongMatch: _moodStrong(r.media) })).join('')}
+        ${recs.map(r => recCardHtml(r.media, { strongMatch: strong.has(r.media) })).join('')}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   // v1.0.251 — cache the picks for For You's restore even if the user moved to
   // another sub-tab meanwhile; paint only while For You is still showing.
@@ -18205,6 +18222,7 @@ function showAnimeDetail(id, opts) {
   byId(IDS.modalWins).textContent    = anime.wins;
   byId(IDS.modalLosses).textContent  = anime.losses;
   byId(IDS.modalEloVal).textContent = anime.elo;
+  byId(IDS.modalEloLabel).textContent = 'ELO'; // v1.0.254 — undo the franchise overview's "Avg ELO" label
 
   const total = anime.wins + anime.losses;
   byId(IDS.modalWinrateVal).textContent =
@@ -19309,8 +19327,34 @@ function _exitNonTowerModes() {
   if (btn) btn.classList.remove('active-settle', 'active-blind', 'active-trio', 'active-wso');
 }
 
+// v1.0.254 — Battle within only works with the Standard and Blind pickers; Settle, Trio,
+// Winner Stays and Tower ignore its every-pair-once order, so they are greyed out and refused.
+function _modeWorksInBattleWithin(mode) {
+  return !battleWithinFranchise || mode === 'normal' || mode === 'blind';
+}
+
+// v1.0.254 — Run when the Mode menu opens: greys out the modes above and shows the one-line
+// note while Battle within is on; once it stops, the next open enables everything again.
+function _syncModeMenuLock() {
+  const items = [...document.querySelectorAll('#mode-popover [role="menuitemradio"]'), byId(IDS.modeTowerItem)];
+  items.forEach(el => {
+    if (!el) return;
+    const off = !_modeWorksInBattleWithin(el.dataset.mode); // the Tower item has no data-mode
+    el.disabled = off;
+    el.setAttribute('aria-disabled', off ? 'true' : 'false');
+  });
+  const note = byId(IDS.modeWithinNote);
+  if (note) note.hidden = !battleWithinFranchise;
+}
+
 function setMode(name) {
   if (!['normal', 'settle', 'blind', 'trio', 'wso'].includes(name)) name = 'normal';
+  // v1.0.254 — refuse a mode Battle within can't use (the Mode menu greys it out too).
+  if (!_modeWorksInBattleWithin(name)) {
+    _closeModeMenu();
+    showToast('⚔ Only Standard and Blind work during Battle within — tap Stop on its banner first.', 4000);
+    return;
+  }
   if (name !== 'normal') _metric('mode.' + name);  // v1.0.239 — usage metrics (normal is the default, not interesting)
 
   // If currently in tower, exit cleanly first. Tower is mutually exclusive
@@ -19448,6 +19492,8 @@ function _battleWithinCheckDone(skipRender) {
 // new "mode" because every existing mode (Classic / Settle / Blind / Trio /
 // WSO) composes cleanly — Settle within franchise, Blind within franchise,
 // and Trio within franchise all just work on top.
+// v1.0.254 — No longer: only Standard and Blind keep its every-pair-once order, so the
+// Mode menu greys out the rest while it is on (_modeWorksInBattleWithin).
 function startBattleWithinFranchise(name) {
   // Re-resolve the group at call time — the user could have excluded an
   // entry between modal-open and clicking the button.
@@ -19484,7 +19530,8 @@ function startBattleWithinFranchise(name) {
   // WSO seeds from an empty streak so the champion gets picked from the
   // restricted pool rather than carrying over a stale champion that might
   // not even be in this franchise.
-  setMode('normal');
+  // v1.0.254 — Blind stays on (it uses the same picker as Standard); any other mode drops to Standard.
+  if (!blindMode) setMode('normal');
 
   // Banner + filter-button visual cue
   const banner = byId(IDS.withinFranchiseBanner);
@@ -19745,6 +19792,7 @@ function toggleModeMenu(event) {
   pop.classList.toggle('open', willOpen);
   btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   if (willOpen) {
+    _syncModeMenuLock(); // v1.0.254 — grey out modes Battle within can't use (before the flip measures height)
     // v1.0.238 — Desktop: sizes to content, no cap. Mobile (≤600px): CSS
     // media query converts to a full-width bottom sheet — see mode-popover
     // rules in styles.css. Show the backdrop on mobile so tap-outside
@@ -20473,6 +20521,12 @@ function populateTowerList(q) {
 function startTower(championIdx) {
   _metric('tower.start');  // v1.0.239 — usage metrics
   closeTowerModal();
+  // v1.0.254 — Tower ignores Battle within (greyed out in the Mode menu). A run started from a
+  // notification or finish prompt ends it, so its banner and Stop button don't sit over the run.
+  if (battleWithinFranchise) {
+    stopBattleWithinFranchise(true);
+    showToast('⚔ Battle within stopped — Tower doesn’t work inside a franchise.', 3500);
+  }
   // Exit any other active mode cleanly — tower is mutually exclusive with
   // trio / settle / blind. Without this reset, the prior mode's flags and
   // DOM state would linger and produce broken renders (e.g. trio arena
@@ -20892,7 +20946,7 @@ function renderFranchiseTable() {
     const tier     = _franchiseTier(group); // null = Unranked (v1.0.241)
     const isSingle = group.members.length === 1;
     const gid      = rank;
-    const conf     = confidenceLabel(group.totalBattles || 0);
+    const conf     = confidenceLabel(group.avgBattles); // v1.0.254 — battles per ranked entry, same as the grid card
     const wrStr    = group.winRate !== null ? group.winRate + '%' : '–';
     const scoreStr = group.avgScore ? group.avgScore + '%' : '–';
     const clickHandler = isSingle
@@ -22151,21 +22205,20 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.253 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.254 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
-// 1.0.252 never shipped, so its Trio bullet is carried as the last bullet.
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔗 Short share links now open straight away. Before, a link opened just after sharing could say "This share link isn\'t available" for a few seconds.',
-    '📸 Shared Top 10 and 3×3 images show your anime covers again instead of grey title boxes, carry the real Kessen logo, and no longer fall back to a download on Android when covers are slow to load.',
-    '⚔ Battle within a franchise now shows each matchup only once, counts your progress in the banner (e.g. 3 / 15) and stops when every pair is done; it also works for franchises with an apostrophe in the name, like JoJo\'s.',
-    '🎭 With a mood picked on Discover ▸ For You, ↻ Refresh now brings back fresh picks for that mood from your latest rankings instead of switching back to your normal recommendations, and tapping a mood chip no longer clears your Rankings search box.',
-    '🔮 Predict now places a new title by comparing it with how your own ranked anime score, so guesses spread from S to D instead of piling up in B/C; it also says how sure it is and why, and typing a title like "Frieren: Beyond Journey\'s End" now finds the main series instead of a spin-off.',
-    '🎯 The Strong match badge now actually appears: Discover marks recs whose genres fit your list better than about four in five of your own ranked anime (once you\'ve ranked 20).',
-    '🖼 Trio mode now uses the same bigger covers as the other battle modes on wider screens, so switching into Trio no longer shrinks the art.',
+    '📱 On phones the header shows your anime count again, on a second small line under your battle count (e.g. "341 battles" over "367 anime"), and the header is no taller.',
+    '⏳ While Discover loads, For You, This Season and mood picks now show grey placeholder cards laid out like the finished page (headed rows, two per row on phones) instead of a block of bare boxes or one huge grey box, and the placeholders now visibly pulse in light mode too.',
+    '🗓 Discover ▸ This Season now shows 12 picks per season so desktop rows are full, and every Discover card lines up its title, format and ⭐ score with its neighbours, with the full "Part of…" note at the bottom instead of a half-cut line.',
+    '⛓ Franchise cards are clearer: the headline now reads "Avg ELO", "★ Top" is now "★ Best" (the franchise\'s highest-rated entry), and the numbers skip entries still unranked at 1200, count a battle between two of the franchise\'s own entries only once (and leave it out of the win rate), and judge confidence by battles per entry, so some franchise ranks and tiers may move.',
+    '📤 The Share window is simpler: it shows a preview of your Top 10 image with one Share button (Download if your device has no share sheet) and your short link underneath, the 3×3 option is gone, and a brand-new short link now keeps trying for longer instead of saying it isn\'t available.',
+    '🎯 Strong match is rarer and means more: it now goes to roughly one card in five (at most two per row, three per This Season section), the ones whose genres best fit your list.',
+    '⚔ While you\'re battling within a franchise, the Mode menu now greys out Settle, Trio, Winner Stays and Tower (they ignored the one-pair-at-a-time order, so Winner Stays kept the same champion every round); Standard and Blind still work, and everything comes back when you stop or finish.',
   ],
 };
 

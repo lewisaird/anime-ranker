@@ -658,6 +658,13 @@
     @media (hover: hover) { .mode-popover-action:hover { background: var(--border-subtle); } }
     /* v1.0.244 — Tower item reads as "current" during a run, same as a checked radio item */
     .mode-popover-action.is-current { background: #1f2937; }
+    /* v1.0.254 — modes Battle within can't use are greyed out while it is on (_syncModeMenuLock) */
+    #mode-popover button[role="menuitemradio"]:disabled,
+    #mode-popover .mode-popover-action:disabled { opacity: 0.4; cursor: not-allowed; background: transparent; }
+    #mode-within-note {
+      padding: 6px 10px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border-default);
+      font-size: 0.72rem; line-height: 1.35; color: var(--text-secondary);
+    }
     #mode-btn.active-tower { background: var(--hover-amber-bg); border-color: #9e6a03; color: #e3b341; }
 
     .btn-danger {
@@ -2979,30 +2986,25 @@
     #share-modal {
       display: none; position: fixed; inset: 0; z-index: 1500;
       background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
-      align-items: center; justify-content: center; padding: 20px;
+      align-items: flex-start; justify-content: center; padding: 20px; /* v1.0.254 — was center: a box taller than the screen clipped its ✕ and title */
       overflow-y: auto;
     }
     .share-box {
       background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 16px;
       padding: 28px; max-width: 440px; width: 100%; position: relative;
+      margin: auto; /* v1.0.254 — still centred when it fits; scrolls from its top when it doesn't */
     }
     .share-box h3 { font-size: 1.15rem; color: var(--accent-blue); margin-bottom: 6px; text-align: center; }
     .share-box p.share-subtitle { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 18px; text-align: center; }
 
-    /* v1.0.248 — image format toggle (Top 10 card / 3×3 grid) */
-    .share-kind-row { display: flex; gap: 8px; justify-content: center; margin: -6px 0 12px; }
-    .share-kind-btn {
-      flex: 1; max-width: 190px; padding: 8px 12px; border-radius: 999px;
-      border: 1px solid var(--border-default); background: var(--bg-primary);
-      color: var(--text-secondary); font-size: 0.85rem; cursor: pointer;
-      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    /* v1.0.254 — the format toggle is gone; live preview of the one Top 10 image instead.
+       The box keeps the card's 5:3 shape (1200×720) while it builds, so nothing jumps. */
+    .share-preview {
+      width: 100%; aspect-ratio: 5 / 3; margin: 0 0 8px; overflow: hidden;
+      background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 10px;
     }
-    .share-kind-btn.active {
-      border-color: var(--accent-blue); color: var(--accent-blue);
-      background: var(--hover-blue-bg); font-weight: 600;
-    }
-    @media (hover: hover) { .share-kind-btn:hover:not(.active) { border-color: var(--accent-blue); } }
-    .share-image-note { color: var(--text-secondary); font-size: 0.78rem; text-align: center; margin: -4px 0 10px; }
+    .share-preview-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .share-image-note { color: var(--text-secondary); font-size: 0.78rem; text-align: center; margin: 0 0 10px; }
 
     .share-primary {
       width: 100%; font-size: 1rem; padding: 14px 20px;
@@ -4495,29 +4497,43 @@
       text-align: center;
       transition: all 0.18s;
       text-decoration: none;
-      display: block;
+      /* v1.0.254 — flex column (was block) so the body under the cover fills the card;
+         grid rows already stretch every card in a row to the tallest one. */
+      display: flex;
+      flex-direction: column;
       color: inherit;
     }
-    .rec-card:hover { border-color: var(--accent-blue); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(88,166,255,0.12); }
+    /* v1.0.254 — inside (hover: hover): on Android the lift stuck to the last card tapped. */
+    @media (hover: hover) { .rec-card:hover { border-color: var(--accent-blue); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(88,166,255,0.12); } }
     /* Discover tab skeleton loader */
+    /* v1.0.254 — pulse by opacity over --border-default: light mode's --border-subtle and --border-default
+       are the same grey, so the old colour pulse never moved there (dark and warm keep the same range). */
     @keyframes skeleton-pulse {
-      0%, 100% { background-color: var(--border-subtle); }
-      50%       { background-color: var(--border-default); }
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.45; }
     }
     .skeleton-card {
       background: var(--bg-secondary); border: 1px solid var(--border-default);
       border-radius: 12px; overflow: hidden;
     }
-    .skeleton-img  { width: 100%; padding-top: 150%; background: var(--border-subtle); animation: skeleton-pulse 1.4s ease-in-out infinite; }
-    .skeleton-body { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-    .skeleton-line { height: 10px; border-radius: 4px; background: var(--border-subtle); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+    .skeleton-img  { width: 100%; padding-top: 150%; background: var(--border-default); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+    /* v1.0.254 — centred like real card text; min-height is a real .rec-card-body (2-line title, format, ⭐ pill) */
+    .skeleton-body { padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 90px; }
+    .skeleton-line { width: 85%; height: 10px; border-radius: 4px; background: var(--border-default); animation: skeleton-pulse 1.4s ease-in-out infinite; }
     .skeleton-line.short { width: 55%; }
     .skeleton-line.shorter { width: 35%; }
-    .rec-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
-    .rec-card-body { padding: 8px; }
+    /* v1.0.254 — heading bar inside a real .recs-group-heading / .recs-extra-heading, so placeholder spacing matches */
+    .skeleton-heading { display: inline-block; width: 45%; max-width: 240px; vertical-align: middle; }
+    /* v1.0.254 — flex-shrink:0 so the 2/3 cover never squashes inside the flex-column card. */
+    .rec-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; flex-shrink: 0; }
+    /* v1.0.254 — the body fills the card below the cover as a centred column. */
+    .rec-card-body { padding: 8px; flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; }
+    /* v1.0.254 — min-height reserves both title lines, so a 1-line title no longer lifts the rows under it. */
     .rec-card-title { font-size: 0.78rem; font-weight: 600; line-height: 1.3; color: var(--text-bright); margin-bottom: 4px;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-    .rec-card-meta { font-size: 0.7rem; color: var(--text-secondary); }
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      min-height: 2.6em; align-self: stretch; }
+    /* v1.0.254 — a fixed line box: an empty meta (no format) still holds its line. */
+    .rec-card-meta { font-size: 0.7rem; color: var(--text-secondary); line-height: 1.2; min-height: 1.2em; align-self: stretch; }
     .rec-score-pill {
       display: inline-block;
       background: var(--border-subtle);
@@ -4527,6 +4543,10 @@
       color: var(--accent-blue);
       margin-top: 3px;
     }
+    /* v1.0.254 — the pill takes the card's spare height below it, pinning the optional Strong match /
+       relation note / Watched to the card bottom (each keeps its own top margin); the note spans the width. */
+    .rec-card-body > .rec-score-pill { margin-bottom: auto; }
+    .rec-card-body > .rec-relation-note { align-self: stretch; }
     /* v1.0.211 — Strong match + Watched badges. Moved out of inline
        app.js styles so light mode actually overrides them. The dark hex
        previously hard-coded (#1a2d1a / #3fb950 / #238636) showed dark
@@ -4565,12 +4585,8 @@
       padding: 4px 7px;
       margin-top: 5px;
       line-height: 1.35;
-      /* v1.0.247 — two lines max at the 150px card width; a long franchise
-         title was stretching the whole row. Full text lives in the title. */
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+      /* v1.0.254 — v1.0.247's 2-line clamp is gone: overflow:hidden clipped at the padding edge, so a
+         half-cut third line showed and "(your #N)" was lost. Full note now; the card row grows to fit. */
     }
     .rec-relation-note strong { color: var(--accent-blue); }
 
@@ -5597,12 +5613,21 @@
          avatar with zero width, so the text fits again. If a narrower
          phone still can't fit it, the base rule's ellipsis truncates the
          text rather than squashing anything else. */
-      #progress-info { font-size: 0.75rem; }
-      /* v1.0.250 — drop the "· N anime" segment on phones. When the row was
-         tight the ellipsis cut inside a word ("16 battle…"); hiding the whole
-         segment leaves "16 battles" intact, with the ellipsis only for the
-         rare case where even that does not fit. */
-      #progress-info .progress-anime-count { display: none; }
+      /* v1.0.254 — battles and anime count stacked as two small lines (v1.0.250
+         hid the anime count); no " · ", and each line ellipsises on its own. */
+      #progress-info { font-size: 0.72rem; line-height: 1.15; text-align: right; }
+      #progress-info .progress-battles,
+      #progress-info .progress-anime-count {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #progress-info .progress-sep { display: none; }
+      /* v1.0.254 — ~28px back for the stacked counts on 360px phones (guests and
+         username sessions show the wider ⇄ button): tighter gaps and button padding. */
+      header { gap: 10px; }
+      .header-right { gap: 6px; }
+      #change-user-btn { padding: 5px 7px; }
 
       /* ── Manage tab ── */
       /* v1.0.209 — center the button text on mobile. Desktop keeps the

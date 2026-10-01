@@ -65,7 +65,15 @@ export function createHandler(storeFactory) {
     if (!ID_RE.test(id)) return Response.json({ error: 'Bad id' }, { status: 400 });
     try {
       const store = storeFactory({ name: STORE_NAME, context });
-      const record = await store.get(id, { type: 'json' });
+      // v1.0.253 — strong read: the default (eventual) read 404'd a new id for ~15 s after POST.
+      // Strong needs the uncached edge URL; where the environment lacks it, read normally.
+      let record;
+      try {
+        record = await store.get(id, { type: 'json', consistency: 'strong' });
+      } catch (e) {
+        if (e?.name !== 'BlobsConsistencyError') throw e;
+        record = await store.get(id, { type: 'json' });
+      }
       if (!record || !record.payload) return Response.json({ error: 'Not found' }, { status: 404 });
       return Response.json(record.payload, {
         headers: { 'Cache-Control': 'public, max-age=86400', 'X-Robots-Tag': 'noindex' },
@@ -105,12 +113,16 @@ export function createHandler(storeFactory) {
     const store = storeFactory({ name: STORE_NAME, context });
     // 48+ bits of randomness — a collision is vanishingly unlikely, but a
     // second attempt costs nothing.
+    // v1.0.253 — create-only write replaces read-then-write (that read could cache a 404 for the new id).
+    // set(JSON string), not setJSON: in @netlify/blobs 10.7.4 setJSON drops onlyIfNew's if-none-match header.
+    const rec = JSON.stringify({ v: 1, createdAt: new Date().toISOString(), payload });
     for (let attempt = 0; attempt < 3; attempt++) {
       const id = newId();
-      const existing = await store.get(id, { type: 'json' });
-      if (existing) continue;
-      await store.setJSON(id, { v: 1, createdAt: new Date().toISOString(), payload });
-      return Response.json({ id });
+      const { modified, etag } = await store.set(id, rec, { onlyIfNew: true });
+      // v1.0.253 — @netlify/blobs reports modified:true for any non-412 status, so only an
+      // etag proves the write landed; otherwise fail and the client keeps the long link.
+      if (modified && etag) return Response.json({ id });
+      if (modified) return Response.json({ error: 'Write not confirmed' }, { status: 500 });
     }
     return Response.json({ error: 'Could not allocate an id' }, { status: 500 });
   } catch (e) {

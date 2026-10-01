@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.253" />
+  <meta name="version" content="1.0.254" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -114,7 +114,8 @@
          reveals it once the user has current > 0.
          v1.0.239 — white-space:nowrap + flex-shrink:0 so it can never be squeezed
          into a two-line "🔥 / 1d" pill when the header row is tight on phones. -->
-    <span id="daily-streak-badge" style="display:none;white-space:nowrap;flex-shrink:0;font-size:0.75rem;color:#e3b341;background:rgba(227,179,65,0.12);border:1px solid rgba(227,179,65,0.35);border-radius:12px;padding:2px 8px;line-height:1;font-weight:600" title=""></span>
+    <!-- v1.0.254 — side padding 8px→6px: gives the stacked phone counts room at 360px -->
+    <span id="daily-streak-badge" style="display:none;white-space:nowrap;flex-shrink:0;font-size:0.75rem;color:#e3b341;background:rgba(227,179,65,0.12);border:1px solid rgba(227,179,65,0.35);border-radius:12px;padding:2px 6px;line-height:1;font-weight:600" title=""></span>
     <button id="notif-bell" onclick="openNotifCentre()" title="Notification Centre" aria-label="Notification Centre" style="display:none">
       🔔
       <span id="notif-badge" style="display:none"></span>
@@ -869,6 +870,7 @@
          user can be in Settle mode AND restricted to a franchise. The Stop
          button only lifts the franchise restriction; the underlying mode
          continues. -->
+    <!-- v1.0.254 — only Standard and Blind compose with it now; the Mode menu greys out the rest. -->
     <div id="within-franchise-banner">
       <span id="within-franchise-msg">⚔ Battle within franchise</span>
       <button onclick="stopBattleWithinFranchise()" style="background:none;border:1px solid var(--accent-primary);color:var(--accent-primary);padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem">Stop</button>
@@ -928,6 +930,8 @@
       <div class="mode-control">
         <button class="btn-secondary" id="mode-btn" onclick="toggleModeMenu(event)" aria-haspopup="menu" aria-expanded="false" title="Choose battle mode">⚙ Mode ▾</button>
         <div id="mode-popover" role="menu" aria-labelledby="mode-btn">
+          <!-- v1.0.254 — shown only during Battle within, while the modes it can't use are greyed out -->
+          <div id="mode-within-note" hidden>⚔ Only Standard and Blind work during Battle within.</div>
           <button type="button" role="menuitemradio" data-mode="normal" onclick="setMode('normal')" aria-checked="true">
             <span class="mode-icon" aria-hidden="true">⚙</span>
             <span class="mode-text"><span class="mode-name">Standard</span><span class="mode-desc">Default matchmaking</span></span>
@@ -1790,10 +1794,12 @@
 
         <div class="help-section">
           <h4>⛓ Franchise Mode</h4>
-          <p>Groups sequels and seasons together in the Rankings view so you can see a franchise's overall standing at a glance. Each franchise card shows the average ELO, a <strong>★ Top</strong> badge for the highest-rated entry, and the franchise's <strong>all-time best</strong> ELO. Tap a card to drill in, then use:</p>
-          <p><strong>⚔ Battle within</strong> — restrict the next battles to entries inside the franchise so you can settle "which Re:Zero season is best?". Auto-stops once every pair has been battled.<br>
+          <!-- v1.0.254 — card reads "Avg ELO" + "★ Best" and skips Unranked entries (_isRanked); it never showed the all-time best -->
+          <p>Groups sequels and seasons together in the Rankings view so you can see a franchise's overall standing at a glance. Each franchise card shows its <strong>Avg ELO</strong>, a <strong>★ Best</strong> badge for its highest-rated entry, and how consistently you rate its entries (Consistent / Mixed / Divisive). Unranked entries (never battled and still at the starting 1200 ELO) are left out of all three. A franchise's confidence is based on the average number of battles per ranked entry. Tap a card to drill in, then use:</p>
+          <p><strong>⚔ Battle within</strong> — restrict the next battles to entries inside the franchise so you can settle "which Re:Zero season is best?". Auto-stops once every pair has been battled. Works in Standard and Blind mode; the other modes are greyed out until it stops.<!-- v1.0.254 — the other modes ignore its pair order --><br>
           <strong>🚫 Exclude all from battles</strong> — bulk-remove the whole franchise from your battle pool (with undo).</p>
-          <p>The usual Sort menu applies to franchises too: ELO sorts by the franchise average, Battles by the total across its entries.</p>
+          <!-- v1.0.254 — inside battles counted once via matchupStats (Tower runs don't write it); Confidence sort is per entry -->
+          <p>The usual Sort menu applies to franchises too: ELO sorts by the franchise average, Battles by the total across its entries, Confidence by battles per entry. A battle between two of a franchise's own entries counts once and doesn't change its win rate, except in Tower runs.</p>
         </div>
 
         <div class="help-section">
@@ -1815,7 +1821,8 @@
 
         <div class="help-section">
           <h4>🔗 Share</h4>
-          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) or a <strong>3×3</strong> grid of your top nine — the format r/anime uses — plus a link that opens your top 20 in a browser. On phones the image goes straight to the share sheet; on desktop it downloads or copies to the clipboard.</p>
+          <!-- v1.0.254 — 3×3 dropped; one Top 10 image with a preview, one Share/Download button, link underneath -->
+          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) and shows you a preview, plus a short link that opens your top 20 in a browser. Where your device has a share sheet the image goes straight to it; otherwise it downloads, and on desktop you can also copy it to the clipboard. Long-press or right-click the preview to save it.</p>
         </div>
 
         <div class="help-section">
@@ -1886,7 +1893,8 @@
         <div class="modal-stats-row" id="modal-stats-row">
           <div class="modal-stat"><span class="val" id="modal-wins">0</span><label>Wins</label></div>
           <div class="modal-stat"><span class="val" id="modal-losses">0</span><label>Losses</label></div>
-          <div class="modal-stat"><span class="val" id="modal-elo-val">–</span><label>ELO</label></div>
+          <!-- v1.0.254 — label id: the franchise overview relabels this box "Avg ELO" -->
+          <div class="modal-stat"><span class="val" id="modal-elo-val">–</span><label id="modal-elo-label">ELO</label></div>
           <div class="modal-stat"><span class="val" id="modal-winrate-val">–</span><label>Win Rate</label></div>
         </div>
         <div id="modal-confidence-wrap" style="margin-bottom:12px"></div>
@@ -1936,25 +1944,23 @@
   <div class="share-box">
     <button class="share-close" onclick="closeShare()" aria-label="Close">✕</button>
     <h3 id="share-modal-title">📤 Share Your Rankings</h3>
-    <p class="share-subtitle">Share an image of your top 10 (or a 3×3) — or copy a link to your top 20.</p>
+    <p class="share-subtitle">Share an image of your top 10, or copy a link to your top 20.</p>
 
-    <!-- v1.0.248 — image format: Top 10 card or the r/anime-style 3×3. The
-         full tier-list poster wall was retired (unreadable at any real list
-         size, and it showed the D tier). Choice is remembered. -->
-    <div class="share-kind-row" id="share-image-kind" role="group" aria-label="Image format">
-      <button type="button" class="share-kind-btn" data-kind="top10" onclick="setShareImageKind('top10')" aria-pressed="true">🏆 Top 10 card</button>
-      <button type="button" class="share-kind-btn" data-kind="grid3" onclick="setShareImageKind('grid3')" aria-pressed="false">▦ 3×3 grid</button>
-    </div>
-    <p class="share-image-note" id="share-image-note" style="display:none"></p>
+    <!-- v1.0.254 — one Top 10 image (3×3 and its toggle dropped). Live preview of the exact
+         image the buttons send, as a data: URL (live CSP img-src has no blob:); the line under
+         it shows progress, the short-list note, or a failure. -->
+    <div class="share-preview"><img id="share-preview" class="share-preview-img" alt="Preview of your Top 10 image" style="display:none"></div>
+    <p class="share-image-note" id="share-image-note" role="status" style="display:none"></p>
 
-    <!-- Primary action: native share sheet (mobile) or download (desktop) -->
-    <button class="btn-primary share-primary" id="share-primary-btn" onclick="shareImageFromModal()">
+    <!-- Primary action: native share sheet where the browser can share files, otherwise download.
+         v1.0.254 — disabled until the image is ready (_prepareShareImage). -->
+    <button class="btn-primary share-primary" id="share-primary-btn" onclick="shareImageFromModal()" disabled>
       ⬇️ Download image
     </button>
 
     <!-- Desktop-only: copy image to clipboard -->
     <button class="btn-secondary share-copy-image" id="share-copy-image-btn" onclick="copyShareImageToClipboard()" style="display:none">
-      📋 Copy image to clipboard
+      📋 Copy image
     </button>
 
     <!-- Share link -->
