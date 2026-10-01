@@ -826,6 +826,11 @@
          for other .anime-card contexts. */
       -webkit-user-drag: none;
     }
+    /* v1.0.251 — wide screens: the two battle covers sat small in ~450px cards;
+       200×281 keeps the 160:225 ratio. Phone and trio sizes are unchanged. */
+    @media (min-width: 1000px) {
+      .battle-arena .anime-card img { width: 200px; height: 281px; }
+    }
 
     .anime-card .title {
       font-size: 1rem;
@@ -3333,6 +3338,17 @@
     .predictor-dropdown-item-info { min-width: 0; }
     .predictor-dropdown-item-title { font-size: 0.82rem; color: var(--text-bright); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .predictor-dropdown-item-meta  { font-size: 0.7rem; color: var(--text-secondary); }
+    /* v1.0.251 — Predict "Try:" chips: mood-chip look, wrap at any width, long titles ellipsised.
+       Hidden while #predictor-results has content (the :has rule is kept separate so [hidden] still works without :has). */
+    .predictor-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -6px 0 16px; font-size: 0.78rem; }
+    .predictor-examples[hidden] { display: none; }
+    #predictor-section:has(#predictor-results:not(:empty)) .predictor-examples { display: none; }
+    .predictor-examples-label { color: var(--text-secondary); }
+    .predictor-examples .mood-chip {
+      background: rgba(88,166,255,0.06); border: 1px solid var(--border-default); color: var(--text-secondary);
+      border-radius: 14px; padding: 4px 12px; font-size: 0.78rem;
+      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
 
     #disagree-section { margin-top: 28px; overflow: hidden; }
     #disagree-section h3 { font-size: 1rem; color: var(--text-secondary); margin-bottom: 16px; }
@@ -4236,6 +4252,9 @@
       box-shadow: 0 1px 0 var(--border-default);
     }
     .tbl-rank  { color: var(--text-secondary); font-weight: 700; width: 36px; }
+    /* v1.0.251 — Unranked Tier cell: muted dash like the # column, centred in the
+       22px letter-badge slot (the "UNRANKED" pill overflowed the 56px column). */
+    .tbl-tier-none { display: inline-block; width: 22px; text-align: center; color: var(--text-secondary); font-weight: 700; }
     .tbl-title { font-weight: 600; color: var(--text-bright); cursor: pointer; }
     .tbl-title:hover { color: var(--accent-blue); text-decoration: underline; }
     #view-toggle-wrap { display: flex; gap: 6px; align-items: center; }
@@ -4302,8 +4321,10 @@
       text-transform: uppercase;
       margin-bottom: 2px;
     }
+    /* v1.0.251 — side padding 28px → 16px so "🔐 Log in with MyAnimeList" fits on one
+       line in the ~273px desktop card (text box was 183px, label is ~190-198px). */
     .login-card .btn-anilist-login,
-    .login-card .btn-mal-login { width: 100%; }
+    .login-card .btn-mal-login { width: 100%; padding-left: 16px; padding-right: 16px; }
     .login-card .auth-logged-in-row { width: 100%; }
     /* "Having trouble signing in?" disclosure */
     .login-trouble { width: 100%; margin-top: 4px; }
@@ -4431,6 +4452,14 @@
     .gap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
     @media (hover: hover) { .gap-card:hover { border-color: var(--accent-blue) !important; } }
     @media (max-width: 600px) { .gap-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; } }
+    /* v1.0.251 — Missing filters: on phones the checkboxes and chip rows hide behind
+       #gaps-filters-btn until opened; desktop shows them and never the button.
+       !important because those rows carry inline display:flex. */
+    #gaps-filters-btn { display: none; }
+    @media (max-width: 600px) {
+      #gaps-filters-btn { display: inline-flex; flex-shrink: 0; white-space: nowrap; }
+      #gaps-section:not(.gaps-filters-open) .gaps-filter-item { display: none !important; }
+    }
 
     /* RECOMMENDATIONS SECTION */
     #recs-section { margin: 24px 0; }

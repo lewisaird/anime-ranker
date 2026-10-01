@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.250" />
+  <meta name="version" content="1.0.251" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -734,7 +734,8 @@
         <p class="login-card-heading">📋 MyAnimeList</p>
 
         <div id="mal-upload-wrap">
-          <button class="btn-mal-login" id="mal-oauth-btn" onclick="startMALOAuthFlow()">🔐 Login with MyAnimeList</button>
+          <!-- v1.0.251 — "Log in" (verb), matching the AniList button -->
+          <button class="btn-mal-login" id="mal-oauth-btn" onclick="startMALOAuthFlow()">🔐 Log in with MyAnimeList</button>
           <p style="font-size:0.72rem;color:#8b949e;margin:-4px 0 0;text-align:center" id="mal-new-hint">New? <a href="https://myanimelist.net/register.php" target="_blank" rel="noopener" style="color:#58a6ff">Create a free MAL account ↗</a></p>
 
           <!-- Logged-in badge -->
@@ -771,9 +772,9 @@
 
     <p id="error-msg" style="color:#f85149;font-size:0.85rem;margin:4px 0 0">Could not load list. Check your username and try again.</p>
     <div class="or-divider">or</div>
-    <button class="btn-secondary" onclick="startGuestMode()" style="width:240px">
-      🎲 Guest Mode — top popular anime
-    </button>
+    <!-- v1.0.251 — "Guest Mode — top popular anime" wrapped to two lines in a fixed 240px box.
+         Shorter label (the subline covers the pool); min-width + nowrap keeps it on one line. -->
+    <button class="btn-secondary" onclick="startGuestMode()" style="min-width:240px;white-space:nowrap">🎲 Try it as a guest</button>
     <p class="warm-start-info" style="margin-top:4px">No account needed · 250 popular shows</p>
     <p style="margin-top:28px;font-size:0.72rem;color:#484f58">
       <a href="/privacy.html" style="color:#484f58;text-decoration:none" onmouseover="this.style.color='#8b949e'" onmouseout="this.style.color='#484f58'">Privacy Policy</a>
@@ -1315,12 +1316,15 @@
             </div>
             <div id="predictor-dropdown" class="predictor-dropdown" style="display:none"></div>
           </div>
+          <!-- v1.0.251 — "Try:" example chips, filled by _renderPredictorExamples(); CSS hides them while #predictor-results has content -->
+          <div id="predictor-examples" class="predictor-examples" role="group" aria-label="Example titles" hidden></div>
           <div id="predictor-results"></div>
         </div>
 
         <!-- ── Missing (franchise gaps) sub-tab — v1.0.237 ── -->
         <div id="gaps-section" style="display:none">
-          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Sequels, prequels, spin-offs and side stories from series you've completed but haven't watched yet — so a stealth spin-off like "Narumi's Week at Work" doesn't slip past.</p>
+          <!-- v1.0.251 — intro cut to one sentence; the old one ran to three lines on a phone. -->
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:12px">Unwatched sequels, prequels and spin-offs of series you've completed.</p>
           <!-- v1.0.237 — Row 1: Sort + view controls, mirrors Rankings'
                list-controls so Missing feels like the same app. Sort menu on
                the left uses the same sort-menu-btn / sort-menu-popover
@@ -1358,22 +1362,26 @@
             <input type="text" id="gaps-search-input" placeholder="🔍 Search missing titles…"
               oninput="onGapsFilterChange()"
               style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid var(--border-default);background:var(--bg-primary);color:var(--text-bright);font-size:0.82rem" />
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Hide anime already on your AniList Planning list from the gap results">
+            <!-- v1.0.251 — phones only (styles.css): the .gaps-filter-item checkboxes and chip
+                 rows collapse behind this button; desktop never shows it. Label set by _paintGapsFiltersBtn(). -->
+            <button type="button" class="view-btn" id="gaps-filters-btn" onclick="toggleGapsFilters()" aria-expanded="false" title="Show list, format and relation filters">Filters ▾</button>
+            <label class="gaps-filter-item" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Hide anime already on your AniList Planning list from the gap results">
               <input type="checkbox" id="gaps-include-planning" onchange="onGapsFilterChange()" />
               Hide items on my planning list
             </label>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <label class="gaps-filter-item" style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="gaps-include-upcoming" checked onchange="onGapsFilterChange()" />
               Include announced/upcoming
             </label>
           </div>
           <!-- Format filter chips — respect your Rankings hidden formats by default. -->
-          <div id="gaps-format-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;font-size:0.75rem;align-items:center">
+          <!-- v1.0.251 — .gaps-filter-item: this row and the relation row collapse behind Filters on phones. -->
+          <div id="gaps-format-chips" class="gaps-filter-item" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;font-size:0.75rem;align-items:center">
             <span style="color:#6b7280;margin-right:2px;min-width:104px">Formats shown:</span>
             <!-- populated by _paintGapFormatChips() -->
           </div>
           <!-- v1.0.247 — Relation filter chips (Sequel / Prequel / …), same toggle model. -->
-          <div id="gaps-relation-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;font-size:0.75rem;align-items:center">
+          <div id="gaps-relation-chips" class="gaps-filter-item" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;font-size:0.75rem;align-items:center">
             <span style="color:#6b7280;margin-right:2px;min-width:104px">Relations shown:</span>
             <!-- populated by _paintGapRelationChips() -->
           </div>

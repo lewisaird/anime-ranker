@@ -130,6 +130,7 @@ const IDS = Object.freeze({
   poolWarningBanner:      'pool-warning-banner',
   poolWarningText:        'pool-warning-text',
   predictorDropdown:      'predictor-dropdown',
+  predictorExamples:      'predictor-examples', // v1.0.251
   predictorInput:         'predictor-input',
   predictorResults:       'predictor-results',
   predictorSection:       'predictor-section',
@@ -404,6 +405,7 @@ const IDS = Object.freeze({
   gapsIncludeUpcoming:    'gaps-include-upcoming',
   gapsFormatChips:        'gaps-format-chips',
   gapsRelationChips:      'gaps-relation-chips', // v1.0.247
+  gapsFiltersBtn:         'gaps-filters-btn',    // v1.0.251 — phone Filters disclosure on Missing
   // v1.0.238 — daily streak badge + weekly summary card + For You mood chips
   dailyStreakBadge:       'daily-streak-badge',
   weeklySummaryCard:      'weekly-summary-card',
@@ -446,6 +448,9 @@ const byId = (id) => document.getElementById(id);
 const K = 32;           // ELO K-factor
 const ELO_FLOOR = 400;  // minimum ELO — prevents outliers from being buried indefinitely
 const TARGET_BATTLES_PER_ANIME = 10; // battles each anime needs to be "confident" — used for progress bar & confidence labels
+// v1.0.251 — below this an anime is "Uncertain" (confidenceLabel); tier / top-10
+// achievements only count anime with at least this many battles.
+const SETTLING_MIN_BATTLES = 3;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 let animeList    = [];
@@ -778,26 +783,60 @@ function anilistHeaders() {
   return h;
 }
 
+// v1.0.251 — sleep `ms`, calling tick(secondsLeft) about once a second for a live
+// countdown. Deadline-based, so background-tab timer throttling can't stretch it.
+async function _countdown(ms, tick) {
+  const end = Date.now() + ms;
+  for (let left = ms; left > 0; left = end - Date.now()) {
+    if (tick) tick(Math.ceil(left / 1000));
+    await new Promise(r => setTimeout(r, Math.min(1000, left)));
+  }
+}
+
+// v1.0.251 — start times of recent AniList requests (newest last), recorded by
+// _anilistFetch for every caller; only _anilistPace reads it.
+const _anilistSentAt = [];
+// v1.0.251 — opt-in pacing for long jobs (the Missing scan): wait, ticking onWait,
+// until fewer than `limit` AniList requests have started in the last 60s.
+async function _anilistPace(limit, onWait) {
+  const nth = _anilistSentAt[_anilistSentAt.length - limit];
+  const waitMs = nth ? nth + 60000 - Date.now() : 0;
+  if (waitMs > 0) await _countdown(waitMs, onWait);
+}
+
 // Central AniList fetch wrapper with 429 rate-limit retry.
 // Respects the Retry-After header; falls back to exponential backoff.
 // onStatus(msg): optional callback used to surface wait-time in the loading screen.
-async function _anilistFetch(body, { onStatus, maxRetries = 3 } = {}) {
+// v1.0.251 — opt-in (Missing scan only): treatNetworkErrorAsRateLimit retries a thrown fetch
+// (AniList's 429 has no CORS headers) after a 60s window; onWait(secondsLeft) ticks each second.
+async function _anilistFetch(body, { onStatus, maxRetries = 3, treatNetworkErrorAsRateLimit = false, onWait } = {}) {
   let attempt = 0;
   while (true) {
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: anilistHeaders(),
-      body: JSON.stringify(body),
-    });
-    if (res.status !== 429) return res;
-    if (attempt >= maxRetries) {
+    _anilistSentAt.push(Date.now()); // v1.0.251 — for _anilistPace
+    if (_anilistSentAt.length > 50) _anilistSentAt.shift();
+    let res = null;
+    try {
+      res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: anilistHeaders(),
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      // v1.0.251 — default callers rethrow exactly as before; being offline is never a rate limit
+      if (!treatNetworkErrorAsRateLimit || attempt >= maxRetries || navigator.onLine === false) throw err;
+    }
+    if (res && res.status !== 429) return res;
+    if (res && attempt >= maxRetries) {
       throw new Error('AniList rate limit reached — please wait a moment and try again.');
     }
-    const retryAfter = parseInt(res.headers.get('retry-after') || '0', 10);
-    const waitMs = retryAfter > 0 ? retryAfter * 1000 : Math.min(5000 * 2 ** attempt, 60000);
+    const retryAfter = res ? parseInt(res.headers.get('retry-after') || '0', 10) : 0;
+    const waitMs = retryAfter > 0 ? retryAfter * 1000
+                 : treatNetworkErrorAsRateLimit ? 60000 // v1.0.251 — AniList's full window
+                 : Math.min(5000 * 2 ** attempt, 60000);
     const secs = Math.ceil(waitMs / 1000);
     if (onStatus) onStatus(`⏳ AniList rate limit — retrying in ${secs}s…`);
-    await new Promise(r => setTimeout(r, waitMs));
+    if (onWait) await _countdown(waitMs, onWait); // v1.0.251
+    else await new Promise(r => setTimeout(r, waitMs));
     attempt++;
   }
 }
@@ -1080,6 +1119,7 @@ function _clearRankingState() {
   // Clear discover cache so a different user gets fresh recommendations
   Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
   _recsLoadedTab = null;
+  _discoverItems.clear(); // v1.0.251 — Predict's "Try:" chips read this; don't offer the previous user's recs
 
   // Return to the home screen
   hide('battle-screen');
@@ -1289,7 +1329,7 @@ function startOAuthFlow() {
         clearInterval(_oauthPollTimer);
         _oauthPopup = null;
         if (btn && btn.disabled) {
-          btn.textContent = '🔐 Login with AniList';
+          btn.textContent = '🔐 Log in with AniList'; // v1.0.251 — "Log in" (verb), same as the index.html label
           btn.disabled = false;
         }
       }
@@ -1327,15 +1367,17 @@ async function _handleOAuthCode(code) {
       };
       saveAuth();
       _updateAuthUI();
+      // v1.0.251 — reset the now-hidden button; an in-page logout used to reveal a stuck, disabled '⏳ Logging in…'
+      if (btn) { btn.textContent = '🔐 Log in with AniList'; btn.disabled = false; }
       startLoading();
     } else {
       authToken = null;
-      if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
+      if (btn) { btn.textContent = '🔐 Log in with AniList'; btn.disabled = false; } // v1.0.251 — "Log in" (verb), same as the index.html label
     }
   } catch (err) {
     console.error('AniList OAuth token exchange failed:', err);
     authToken = null;
-    if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
+    if (btn) { btn.textContent = '🔐 Log in with AniList'; btn.disabled = false; } // v1.0.251 — "Log in" (verb), same as the index.html label
     if (errEl) { errEl.textContent = 'Login failed: ' + _anilistErrMsg(err); errEl.style.display = 'block'; }
   }
 }
@@ -1360,7 +1402,7 @@ window.addEventListener('message', async event => {
   if (!expected || expected !== received) {
     console.warn('AniList OAuth state mismatch — refusing token exchange');
     const btn = byId(IDS.authLoginBtn);
-    if (btn) { btn.textContent = '🔐 Login with AniList'; btn.disabled = false; }
+    if (btn) { btn.textContent = '🔐 Log in with AniList'; btn.disabled = false; } // v1.0.251 — "Log in" (verb), same as the index.html label
     return;
   }
 
@@ -1580,7 +1622,7 @@ function startMALOAuthFlow() {
         clearInterval(_malOAuthPollTimer);
         _malOAuthPopup = null;
         if (btn && btn.disabled) {
-          btn.textContent = '🔐 Login with MyAnimeList';
+          btn.textContent = '🔐 Log in with MyAnimeList'; // v1.0.251 — "Log in" (verb), same as the index.html label
           btn.disabled = false;
         }
       }
@@ -1637,6 +1679,8 @@ async function _handleMALOAuthCode(code) {
     malAuthUser = { id: profileData.id || null, name: profileData.name, picture: profileData.picture || '' };
     saveMALAuth();
     _updateMALAuthUI();
+    // v1.0.251 — reset the now-hidden button; an in-page logout used to reveal a stuck, disabled '⏳ Logging in…'
+    if (btn) { btn.textContent = '🔐 Log in with MyAnimeList'; btn.disabled = false; }
 
     // 3. Load the anime list and start the session
     await _startMALOAuthSession();
@@ -1644,7 +1688,7 @@ async function _handleMALOAuthCode(code) {
   } catch (err) {
     console.error('MAL OAuth failed:', err);
     malAuthToken = null; malRefreshToken = null;
-    if (btn) { btn.textContent = '🔐 Login with MyAnimeList'; btn.disabled = false; }
+    if (btn) { btn.textContent = '🔐 Log in with MyAnimeList'; btn.disabled = false; } // v1.0.251 — "Log in" (verb), same as the index.html label
     if (errEl) { errEl.textContent = 'MAL login failed: ' + (err.message || 'unknown error'); errEl.style.display = 'block'; }
   }
 }
@@ -1667,7 +1711,7 @@ window.addEventListener('message', async event => {
   if (!legacyOk && (!expected || expected !== received)) {
     console.warn('MAL OAuth state mismatch — refusing token exchange');
     const btn = byId(IDS.malOauthBtn);
-    if (btn) { btn.textContent = '🔐 Login with MyAnimeList'; btn.disabled = false; }
+    if (btn) { btn.textContent = '🔐 Log in with MyAnimeList'; btn.disabled = false; } // v1.0.251 — "Log in" (verb), same as the index.html label
     return;
   }
 
@@ -3023,14 +3067,10 @@ function toast(msg, level) {
   showToast(msg, duration);
 }
 
-window.addEventListener('unhandledrejection', e => {
-  const msg   = e.reason?.message || String(e.reason) || 'Unhandled promise rejection';
-  const stack = e.reason?.stack ?? '';
-  const hash  = _errorHash(msg, stack);
-  if (_sentErrorHashes.has(hash)) return;
-  _sentErrorHashes.add(hash);
-  _sendIssueReport({ message: msg, error: stack || null, source: 'unhandledrejection' });
-});
+// v1.0.251 — the global 'unhandledrejection' reporter that lived here was removed.
+// Its helpers (_errorHash, _sentErrorHashes, _sendIssueReport) went with the
+// old issue-report feature (feedback is mailto: now), so every unhandled
+// rejection threw a second ReferenceError from inside the listener.
 
 // ─── DAILY STREAK helpers — v1.0.238 ──────────────────────────────────────
 // YYYY-MM-DD in the user's local time. Local is deliberate — a "day"
@@ -5967,7 +6007,8 @@ function showResults() {
 // Uses a.battles (actual picks only) so skips don't inflate confidence.
 // Thresholds are relative to TARGET_BATTLES_PER_ANIME (= 10).
 function confidenceLabel(battles) {
-  if (battles < 3)  return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${_nBattles(battles)} — fewer than 3, ranking not reliable yet` }; // v1.0.250 — singular at 1
+  // v1.0.251 — cutoff shared with the tier achievements (SETTLING_MIN_BATTLES)
+  if (battles < SETTLING_MIN_BATTLES) return { cls: 'uncertain', dot: '●', label: 'Uncertain', title: `${_nBattles(battles)} — fewer than ${SETTLING_MIN_BATTLES}, ranking not reliable yet` }; // v1.0.250 — singular at 1
   if (battles < TARGET_BATTLES_PER_ANIME) return { cls: 'settling',  dot: '●', label: 'Settling',  title: `${_nBattles(battles)} — ranking is stabilising` };
   return                                         { cls: 'confident', dot: '●', label: 'Confident', title: `${_nBattles(battles)} — ranking is well established` };
 }
@@ -6985,9 +7026,14 @@ let recsTab = 'foryou'; // 'foryou' | 'seasonal' | 'predict'
 // null means "not yet loaded".
 const _recsCache = {};   // tab → { html: string, gridDisplay: string }
 let _recsLoadedTab = null; // which tab's content is currently in the grid
+// v1.0.251 — bumped by every For You load and every mood run (applyMoodRec);
+// only the latest may paint the For You grid or write _recsCache.foryou.
+let _forYouGen = 0;
 
 function refreshDiscover() {
   if (recsTab === 'predict') return;
+  // v1.0.251 — Refresh leaves the mood filter; a mood run it supersedes no longer clears this itself
+  _moodRecActive = false;
   // Bust cache for the current tab and force a fresh fetch
   delete _recsCache[recsTab];
   _recsLoadedTab = null;
@@ -6999,8 +7045,11 @@ function refreshDiscover() {
   if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refreshing…</span>'; btn.disabled = true; }
   const tabAtLoad = recsTab;
   // v1.0.250 — cache this load's own result; the live grid may show another tab by now
+  // v1.0.251 — restore the button however the load ends (it was success-only, so a
+  // rejection left it disabled on "Refreshing…"); same .finally as refreshFranchiseGaps
   _loadRecsGrid().then(res => {
     _recsCache[tabAtLoad] = res;
+  }).finally(() => {
     if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refresh</span>'; btn.disabled = false; }
   });
 }
@@ -7060,6 +7109,7 @@ function setRecsTab(tab, fromMood = false) {
     renderFranchiseGaps();  // v1.0.237
     return;
   }
+  if (isPredict) _renderPredictorExamples(); // v1.0.251 — refresh the Predict "Try:" chips on each visit
 
   if (!isPredict) {
     if (tab === 'foryou') {
@@ -7154,6 +7204,8 @@ let _franchiseGapsGroupBy  = true;    // franchise (true) vs individual series (
 // default, but the user can diverge (e.g. hide MOVIE from Missing but
 // keep it visible in Rankings) via the format chips.
 let _franchiseGapsHiddenFormats = null;
+// v1.0.251 — copy of that first seed; the phone Filters button counts format changes against it.
+let _franchiseGapsFormatSeed = null;
 // All formats we let the user toggle. MUSIC is dropped at import time
 // (kessen never carries music videos) so it doesn't show up here.
 const FRANCHISE_GAP_FORMATS = [
@@ -7293,13 +7345,29 @@ async function _fetchPlanningIds() {
   return _planningIdsCache;
 }
 
+// v1.0.251 — AniList currently allows ~30 requests/min. The Missing scan keeps to
+// 25 per rolling minute (room for the rest of the app) and counts down when it waits.
+const GAP_SCAN_MAX_PER_MIN = 25;
+// v1.0.251 — one Missing-scan batch: paced, rate limits retried twice after 60s, and any
+// other failure thrown — so a scan with a batch missing is never cached as complete.
+async function _gapScanQuery(body, onWait) {
+  await _anilistPace(GAP_SCAN_MAX_PER_MIN, onWait);
+  const res = await _anilistFetch(body, { treatNetworkErrorAsRateLimit: true, maxRetries: 2, onWait });
+  if (!res.ok) throw new Error('AniList HTTP ' + res.status);
+  const j = await res.json();
+  if (!j?.data?.Page) throw new Error(j?.errors?.[0]?.message || 'AniList returned no data');
+  return j.data.Page.media ?? [];
+}
+
 // Batched fetch of relations for each anime in `sourceList`. Splits into
 // groups of 50 (AniList's per-page cap) and awaits sequentially with a
 // small pacing delay to avoid the 90-req/min rate limit on large lists.
-async function _fetchFranchiseRelations(sourceList, onProgress) {
+// v1.0.251 — onWait(secondsLeft) reports pacing / rate-limit waits; a failed batch throws.
+async function _fetchFranchiseRelations(sourceList, onProgress, onWait) {
   const BATCH = 50;
   const ids = sourceList.map(a => a.id).filter(id => Number.isFinite(id));
   const results = [];
+  if (onProgress && ids.length) onProgress(0, ids.length); // v1.0.251 — progress label from the start
   for (let i = 0; i < ids.length; i += BATCH) {
     const chunk = ids.slice(i, i + BATCH);
     const query = `
@@ -7323,14 +7391,9 @@ async function _fetchFranchiseRelations(sourceList, onProgress) {
           }
         }
       }`;
-    try {
-      const res = await _anilistFetch({ query, variables: { ids: chunk } });
-      const j   = await res.json();
-      const media = j?.data?.Page?.media ?? [];
-      results.push(...media);
-    } catch (e) {
-      console.warn('[_fetchFranchiseRelations] batch failed:', e?.message);
-    }
+    // v1.0.251 — no try/catch: a skipped batch used to be cached as a complete scan
+    const media = await _gapScanQuery({ query, variables: { ids: chunk } }, onWait);
+    results.push(...media);
     if (onProgress) onProgress(Math.min(ids.length, i + BATCH), ids.length);
     // small gap between batches — well under the rate limit
     if (i + BATCH < ids.length) await new Promise(r => setTimeout(r, 400));
@@ -7386,18 +7449,28 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
   return groups;
 }
 
+// v1.0.251 — full TV seasons (10+ eps) filed as sequel / prequel / parent skip the synopsis
+// check: for TV only the strong words can flag, and there they're a mention, not a recap.
+const _GAP_DESC_SKIP_RELS = new Set(['SEQUEL', 'PREQUEL', 'PARENT']);
+function _gapNeedsDescCheck(gap) {
+  return !(gap.format === 'TV' && gap.episodes >= 10 && _GAP_DESC_SKIP_RELS.has(gap.relationType));
+}
+
 // v1.0.248 — fetch AniList synopses for the unflagged gaps (50 per request,
 // same spacing as the relation scan) and set `recap` where the description
 // says so. Mutates the gap objects in place; failures leave them unflagged.
-async function _flagRecapsFromDescriptions(groups, onProgress) {
+// v1.0.251 — a failed batch now throws (see _gapScanQuery) instead of being skipped.
+async function _flagRecapsFromDescriptions(groups, onProgress, onWait) {
   const pending = new Map(); // id → [gap, …] (a gap id can sit under one parent only, but be safe)
   for (const g of groups) for (const gap of g.gaps) {
     if (gap.recap) continue;
+    if (!_gapNeedsDescCheck(gap)) continue; // v1.0.251
     if (!pending.has(gap.id)) pending.set(gap.id, []);
     pending.get(gap.id).push(gap);
   }
   const ids = [...pending.keys()];
   const BATCH = 50;
+  if (onProgress && ids.length) onProgress(0, ids.length); // v1.0.251
   for (let i = 0; i < ids.length; i += BATCH) {
     const chunk = ids.slice(i, i + BATCH);
     const query = `
@@ -7406,17 +7479,13 @@ async function _flagRecapsFromDescriptions(groups, onProgress) {
           media(id_in: $ids, type: ANIME) { id description(asHtml: false) }
         }
       }`;
-    try {
-      const res = await _anilistFetch({ query, variables: { ids: chunk } });
-      const j   = await res.json();
-      for (const m of j?.data?.Page?.media ?? []) {
-        const gaps = pending.get(m.id) || [];
-        for (const gap of gaps) {
-          if (_gapLooksLikeRecap(gap.relationType, gap.format, [gap.title], m.description)) gap.recap = true;
-        }
+    // v1.0.251 — no try/catch: an unchecked batch would let recaps through into the cache
+    const media = await _gapScanQuery({ query, variables: { ids: chunk } }, onWait);
+    for (const m of media) {
+      const gaps = pending.get(m.id) || [];
+      for (const gap of gaps) {
+        if (_gapLooksLikeRecap(gap.relationType, gap.format, [gap.title], m.description)) gap.recap = true;
       }
-    } catch (e) {
-      console.warn('[_flagRecapsFromDescriptions] batch failed:', e?.message);
     }
     if (onProgress) onProgress(Math.min(ids.length, i + BATCH), ids.length);
     if (i + BATCH < ids.length) await new Promise(r => setTimeout(r, 400));
@@ -7435,6 +7504,12 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
 
   _franchiseGapsLoading = true;
   const progressEl = byId(IDS.gapsProgress);
+  // v1.0.251 — pacing and rate-limit waits count down on the progress line with the
+  // last progress figure, so a long scan never looks frozen.
+  let waitLabel = '';
+  const onWait = s => {
+    if (progressEl) progressEl.textContent = `⏳ Waiting for AniList's rate limit — resuming in ${s}s${waitLabel ? ` (${waitLabel})` : ''}`;
+  };
   try {
     // Source list: completed anime always; planning-list entries only if
     // the toggle is on (kept separate because planning-list items don't
@@ -7449,16 +7524,19 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
       planningIds.forEach(id => excludeIds.add(id));
     }
     const media = await _fetchFranchiseRelations(source, (done, total) => {
-      if (progressEl) progressEl.textContent = `${done} / ${total} anime scanned`;
-    });
+      waitLabel = `${done} / ${total} anime scanned`; // v1.0.251
+      if (progressEl) progressEl.textContent = waitLabel;
+    }, onWait);
     const groups = _buildFranchiseGapGroups(media, excludeIds);
     // v1.0.248 — second pass: synopses for the gaps not already flagged, so
     // mis-filed recaps (Madoka's films are ALTERNATIVE with "a recap of the
     // first eight episodes" in the description) get caught. Only the gap
     // candidates are fetched — a few hundred at most — not every relation.
     await _flagRecapsFromDescriptions(groups, (done, total) => {
+      waitLabel = `${done} / ${total} checked for recaps`; // v1.0.251
       if (progressEl) progressEl.textContent = `Checking ${done} / ${total} for recaps…`;
-    });
+    }, onWait);
+    // v1.0.251 — only reached when every batch of both passes succeeded
     const data = { fetchedAt: Date.now(), groups };
     _saveFranchiseGapsCache(data);
     _franchiseGaps = data;
@@ -7560,6 +7638,41 @@ function onGapsFilterChange() {
   renderFranchiseGaps({ skipFetch: true });
 }
 
+// v1.0.251 — phones (≤600px, CSS): the Missing checkboxes and chip rows collapse
+// behind a "Filters" button. Open/closed is remembered for the session only.
+let _gapsFiltersOpen = false;
+function toggleGapsFilters() {
+  _gapsFiltersOpen = !_gapsFiltersOpen;
+  byId(IDS.gapsSection)?.classList.toggle('gaps-filters-open', _gapsFiltersOpen);
+  _paintGapsFiltersBtn();
+}
+// v1.0.251 — the label counts filters that differ from their defaults (HTML
+// checkbox defaults, Rankings' hidden formats, Recap off) so a collapsed change stays visible.
+function _paintGapsFiltersBtn() {
+  const btn = byId(IDS.gapsFiltersBtn);
+  if (!btn) return;
+  let changed = 0;
+  const upcoming = byId(IDS.gapsIncludeUpcoming);
+  if (upcoming && upcoming.checked !== upcoming.defaultChecked) changed++;
+  const planning = byId(IDS.gapsIncludePlanning);
+  if (planning && planning.checked !== planning.defaultChecked
+      && planning.closest('label')?.style.display !== 'none') changed++;
+  // v1.0.251 — compare with Missing's own session seed, not the live Rankings set, so a later
+  // Rankings toggle / cloud load / logout doesn't show changes the user never made here.
+  if (_franchiseGapsHiddenFormats && _franchiseGapsFormatSeed) {
+    for (const f of FRANCHISE_GAP_FORMATS) {
+      if (_franchiseGapsHiddenFormats.has(f.key) !== _franchiseGapsFormatSeed.has(f.key)) changed++;
+    }
+  }
+  const hiddenRel = _gapsHiddenRelations();
+  for (const r of FRANCHISE_GAP_RELATIONS) {
+    if (hiddenRel.has(r.key) !== _GAPS_HIDDEN_RELATIONS_DEFAULT.includes(r.key)) changed++;
+  }
+  btn.textContent = `Filters${changed ? ` · ${changed} changed` : ''} ${_gapsFiltersOpen ? '▴' : '▾'}`;
+  btn.classList.toggle('active', changed > 0);
+  btn.setAttribute('aria-expanded', _gapsFiltersOpen ? 'true' : 'false');
+}
+
 function refreshFranchiseGaps() {
   _metric('missing.rescan');  // v1.0.239 — usage metrics
   const btn = byId(IDS.gapsRefreshBtn);
@@ -7656,6 +7769,7 @@ function _paintGapFormatChips() {
   // here without extra config.
   if (_franchiseGapsHiddenFormats === null) {
     _franchiseGapsHiddenFormats = new Set(hiddenFormatsRanking);
+    _franchiseGapsFormatSeed = new Set(hiddenFormatsRanking); // v1.0.251 — Filters count baseline
   }
   _paintGapChipRow(byId(IDS.gapsFormatChips), FRANCHISE_GAP_FORMATS, _franchiseGapsHiddenFormats);
 }
@@ -7758,6 +7872,7 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
   const sortMode    = _franchiseGapsSortMode;
   _paintGapFormatChips();  // ensure chips are painted / reflect current state
   _paintGapRelationChips(); // v1.0.247
+  _paintGapsFiltersBtn();   // v1.0.251 — refresh the phone Filters button's changed-count
 
   if (!animeList.length) {
     if (loadingEl) loadingEl.style.display = 'none';
@@ -7767,21 +7882,43 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
     return;
   }
 
+  // v1.0.251 — a scan is already running (tab re-opened mid-scan): leave its progress
+  // line up; the call that started it paints the result.
+  if (!skipFetch && _franchiseGapsLoading) return;
+
   // Fetch if we don't have data yet, or if force requested
+  let scanFailed = false; // v1.0.251
   if (!skipFetch && (!_franchiseGaps || force)) {
     if (loadingEl) loadingEl.style.display = '';
     if (emptyEl)   emptyEl.style.display   = 'none';
     if (resultsEl) resultsEl.innerHTML     = '';
     if (metaEl)    metaEl.style.display    = 'none';
-    _franchiseGaps = await fetchFranchiseGaps({ force, includePlanning });
+    // v1.0.251 — a scan AniList cut short throws and saves nothing; keep the last complete one.
+    try {
+      _franchiseGaps = await fetchFranchiseGaps({ force, includePlanning });
+    } catch (e) {
+      scanFailed = true;
+      console.warn('[renderFranchiseGaps] scan failed:', e?.message);
+      _franchiseGaps = _franchiseGaps || _loadFranchiseGapsCache(); // so re-opening the tab doesn't auto-rescan
+    }
     if (loadingEl) loadingEl.style.display = 'none';
   }
 
   const data = _franchiseGaps || _loadFranchiseGapsCache();
   if (!data) {
-    if (emptyEl) { emptyEl.style.display = ''; emptyEl.textContent = 'Scan hasn\'t run yet — tap Rescan.'; }
+    // v1.0.251 — a filter toggled mid-scan re-renders with skipFetch; the
+    // running scan paints when it finishes, so leave its progress line alone.
+    if (_franchiseGapsLoading) return;
+    if (emptyEl) {
+      emptyEl.style.display = '';
+      emptyEl.textContent = scanFailed // v1.0.251
+        ? '⚠️ The scan couldn\'t finish — AniList is rate-limiting or unavailable, so nothing was saved. Wait a minute, then tap ↻ Rescan.'
+        : 'Scan hasn\'t run yet — tap Rescan.';
+    }
     return;
   }
+  // v1.0.251 — the older results stay on screen; say the new scan didn't replace them.
+  if (scanFailed) showToast('⚠️ The scan couldn\'t finish — AniList is rate-limiting or unavailable. Showing your last full scan.', 6000);
 
   // Apply live filters against the cached raw groups
   const excludeIds = new Set(animeList.map(a => a.id));
@@ -7937,6 +8074,12 @@ function getNextSeason(season, year) {
   return { season: order[nextIdx], year: nextIdx === 0 ? year + 1 : year };
 }
 
+// v1.0.251 — franchise keys for a recommended media: english + romaji through
+// _franchiseKey, the same two keys _getRelationNote compares against your list.
+function _recFranchiseKeys(media) {
+  return [media?.title?.english, media?.title?.romaji].filter(Boolean).map(t => _franchiseKey(t)).filter(Boolean);
+}
+
 async function fetchRecommendationsForYou() {
   // Returns { grouped: true, groups: [{seed, recs[]}] } or { grouped: false, items: [...] }
   // v1.0.241 — seeds come from ranked anime only. With nothing ranked, skip
@@ -7945,6 +8088,7 @@ async function fetchRecommendationsForYou() {
   const seeds  = _rankedEloOrder().ranked.slice(0, 3); // top 3 seeds — one group each
   const ownIds = new Set(animeList.map(a => a.id));
   const usedIds = new Set(); // dedup across groups
+  const usedFranchises = new Set(); // v1.0.251 — franchise keys already shown; one entry per franchise across all groups
   const groups = [];
 
   // v1.0.247 — two pages (50 candidates) per seed in one request, via field
@@ -7978,6 +8122,11 @@ async function fetchRecommendationsForYou() {
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        // v1.0.251 — skip a franchise already shown (e.g. a series next to its own sequel).
+        // Nodes are rating-sorted, so the entry kept is the best-recommended one.
+        const fKeys = _recFranchiseKeys(rec);
+        if (fKeys.some(k => usedFranchises.has(k))) continue;
+        fKeys.forEach(k => usedFranchises.add(k));
         recs.push({ media: rec, score: n.rating || 1 });
         usedIds.add(rec.id);
         if (recs.length >= 6) break; // v1.0.246 — six fills a desktop row at the new card size (was 4)
@@ -8395,7 +8544,11 @@ async function fetchGenreDeepDive() {
       .map(m => ({ media: m }))
       .slice(0, 4);
     return { genre: topGenre, items };
-  } catch (e) { console.warn('Genre dive fetch failed:', e); return { genre: topGenre, items: [] }; }
+  } catch (e) {
+    // v1.0.251 — rethrow (was: resolve empty) so _loadRecsGrid shows a retry hint, not "No results found."
+    console.warn('Genre dive fetch failed:', e);
+    throw e;
+  }
 }
 
 // Hidden gems: highly rated but under the radar (low popularity)
@@ -8455,8 +8608,9 @@ async function fetchHiddenGems() {
       .map(m => ({ media: m }))
       .slice(0, 4);
   } catch (e) {
+    // v1.0.251 — rethrow (was: resolve []) so _loadRecsGrid shows a retry hint, not "No hidden gems found."
     console.warn('Hidden gems fetch failed:', e);
-    return [];
+    throw e;
   }
 }
 
@@ -8595,8 +8749,13 @@ async function _loadRecsGrid() {
   grid.style.display = 'grid';
   grid.innerHTML = _recsSkeletonHtml();
   const tab  = recsTab;
+  // v1.0.251 — For You loads share _forYouGen with mood runs; once a newer one
+  // starts, this load stops painting and resolves to the cache as it stands.
+  const gen  = tab === 'foryou' ? ++_forYouGen : 0;
+  const superseded = () => tab === 'foryou' && gen !== _forYouGen;
   const work = document.createElement('div');
   const commit = (gridDisplay) => {
+    if (superseded()) return _recsCache[tab];
     if (recsTab === tab) {
       grid.style.display = gridDisplay;
       grid.innerHTML     = work.innerHTML;
@@ -8692,18 +8851,29 @@ async function _loadRecsGrid() {
       <div class="recs-subgrid" id="hidden-gems-grid"><p style="color:#8b949e;font-size:0.8rem">⏳ Loading…</p></div>
     </div>`;
   commit('block'); // v1.0.250 — main recs paint now (if still on For You); extras fill in below
+  if (superseded()) return _recsCache[tab]; // v1.0.251 — superseded: skip the extras' AniList requests
 
   // Load genre dive and hidden gems concurrently (non-blocking)
-  const [genreResult, gemItems] = await Promise.all([fetchGenreDeepDive(), fetchHiddenGems()]);
+  // v1.0.251 — allSettled: a failed extra shows a retry hint in its own section
+  // instead of rejecting the whole load (main recs, cache write and Refresh unaffected).
+  const [genreSettled, gemsSettled] = await Promise.allSettled([fetchGenreDeepDive(), fetchHiddenGems()]);
+  const genreFailed = genreSettled.status === 'rejected';
+  const gemsFailed  = gemsSettled.status === 'rejected';
+  const genreResult = genreFailed ? { genre: null, items: [] } : genreSettled.value;
+  const gemItems    = gemsFailed ? [] : gemsSettled.value;
+  const extraFailedHtml = '<p style="color:#8b949e;font-size:0.8rem;grid-column:1/-1">Couldn\'t load right now — try Refresh.</p>';
 
   // v1.0.250 — fill the placeholders in the detached copy and in the live
   // grid; the live grid only has them while it still shows this load's markup.
   const genreHtml = genreResult.items.length
     ? genreResult.items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
-    : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>';
+    : (genreFailed ? extraFailedHtml : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>');
   const gemsHtml = gemItems.length
     ? gemItems.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
-    : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>';
+    : (gemsFailed ? extraFailedHtml : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>');
+  // v1.0.251 — checked before the fill: a superseded load must not write its
+  // extras into a newer load's "⏳ Loading…" placeholders in the live grid.
+  if (superseded()) return _recsCache[tab]; // a newer For You load or mood run owns the grid and cache now
   for (const root of [work, grid]) {
     const genreHeading = root.querySelector('#' + IDS.genreDiveHeading);
     const genreGridEl  = root.querySelector('#' + IDS.genreDiveGrid);
@@ -14805,7 +14975,7 @@ const ACHIEVEMENT_DEFS = [
     // pool, not how many clicks you made. ELO 1400 is ~200 above the
     // default 1200 seed, which takes deliberate wins to reach.
     id: 'all-stars', name: 'All-Stars', emoji: '⭐',
-    desc: 'Build up a deep pool of highly-rated anime',
+    desc: `Build up a deep pool of highly-rated anime (only anime with ${SETTLING_MIN_BATTLES}+ battles count)`, // v1.0.251 — 3-battle rule
     tiers: [
       { id: 'all-stars-bronze', tier: 'bronze', label: 'Bronze', req: '10 anime at ELO 1400+' },
       { id: 'all-stars-silver', tier: 'silver', label: 'Silver', req: '25 anime at ELO 1400+' },
@@ -14844,7 +15014,7 @@ const ACHIEVEMENT_DEFS = [
     // genre only. Each anime contributes to exactly one genre, so the
     // achievement measures genuine cross-genre taste at the high end.
     id: 'tastemaker', name: 'Tastemaker', emoji: '🎭',
-    desc: 'Have favourites across many different genres',
+    desc: `Have favourites across many different genres (only anime with ${SETTLING_MIN_BATTLES}+ battles count)`, // v1.0.251 — 3-battle rule
     tiers: [
       { id: 'tastemaker-bronze', tier: 'bronze', label: 'Bronze', req: 'S-tier anime in 3 primary genres' },
       { id: 'tastemaker-silver', tier: 'silver', label: 'Silver', req: 'S-tier anime in 5 primary genres' },
@@ -14857,7 +15027,7 @@ const ACHIEVEMENT_DEFS = [
     // the breadth of your TOP picks across eras, not whether you happened
     // to touch one '70s anime on the way to ranking a 2020s favourite.
     id: 'era-curator', name: 'Era Curator', emoji: '🕰️',
-    desc: 'Have top picks from many different eras',
+    desc: `Have top picks from many different eras (only anime with ${SETTLING_MIN_BATTLES}+ battles count)`, // v1.0.251 — 3-battle rule
     tiers: [
       { id: 'era-curator-bronze', tier: 'bronze', label: 'Bronze', req: 'A-tier+ anime in 3 decades' },
       { id: 'era-curator-silver', tier: 'silver', label: 'Silver', req: 'A-tier+ anime in 4 decades' },
@@ -14908,12 +15078,12 @@ const ACHIEVEMENT_DEFS = [
   },
   {
     id: 'hidden-gem-fan', name: 'Hidden Gem Fan', emoji: '💎',
-    desc: 'Appreciate an anime the masses overlooked',
+    desc: `Appreciate an anime the masses overlooked (only anime with ${SETTLING_MIN_BATTLES}+ battles count)`, // v1.0.251 — 3-battle rule
     tiers: [{ id: 'hidden-gem-fan', tier: 'gold', label: '', req: 'Sub-50k anime in your top 10' }]
   },
   {
     id: 'old-soul', name: 'Old Soul', emoji: '📼',
-    desc: 'Appreciate the classics from before the modern era',
+    desc: `Appreciate the classics from before the modern era (only anime with ${SETTLING_MIN_BATTLES}+ battles count)`, // v1.0.251 — 3-battle rule
     tiers: [{ id: 'old-soul', tier: 'gold', label: '', req: 'Pre-1990 anime in your top 10' }]
   },
   {
@@ -14968,7 +15138,9 @@ function _checkAchievements() {
   // 1200 default seed). These are the anime you've actively favoured
   // through wins, not just touched once — so a score-seeded 1400 with no
   // battles doesn't count.
-  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400 && (a.battles || 0) > 0).length;
+  // v1.0.251 — was battles > 0: a score-seeded 1400+ (a 9 or 10/10) qualified
+  // after one battle. Now needs SETTLING_MIN_BATTLES, like the tier badges.
+  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400 && (a.battles || 0) >= SETTLING_MIN_BATTLES).length;
   _tryUnlock('all-stars-bronze', rankingReady && allStarsCount >= 10, '⭐ All-Stars (Bronze)');
   _tryUnlock('all-stars-silver', rankingReady && allStarsCount >= 25, '⭐ All-Stars (Silver)');
   _tryUnlock('all-stars-gold',   rankingReady && allStarsCount >= 50, '⭐ All-Stars (Gold)');
@@ -15001,9 +15173,12 @@ function _checkAchievements() {
   byEloDesc.forEach((a, i) => tierOf.set(a.id, getTier(i, totalRanked)));
 
   // Tastemaker — distinct PRIMARY genres represented in S-tier (top 10%).
+  // v1.0.251 — tier is still position among all ranked anime, but only anime
+  // with SETTLING_MIN_BATTLES+ battles count (one lucky win could reach S).
   const sTierPrimaryGenres = new Set();
   for (const a of animeList) {
     if (tierOf.get(a.id) !== 'S') continue;
+    if ((a.battles || 0) < SETTLING_MIN_BATTLES) continue;
     const primary = (a.genres || [])[0];
     if (primary) sTierPrimaryGenres.add(primary);
   }
@@ -15017,6 +15192,7 @@ function _checkAchievements() {
   for (const a of animeList) {
     const t = tierOf.get(a.id);
     if (t !== 'S' && t !== 'A') continue;
+    if ((a.battles || 0) < SETTLING_MIN_BATTLES) continue; // v1.0.251 — same rule as Tastemaker
     if (!a.seasonYear) continue;
     topDecades.add(Math.floor(a.seasonYear / 10) * 10);
   }
@@ -15055,12 +15231,15 @@ function _checkAchievements() {
   _tryUnlock('social-gold',   friendCount >= 10, '🦋 Social Butterfly (Gold)');
 
   // Hidden Gem Fan — sub-50k popularity anime in top 10
+  // v1.0.251 — top 10 is still by position, but the qualifying anime needs
+  // SETTLING_MIN_BATTLES+ battles (one win or a seeded score could put it there).
   const top10 = byElo.slice(0, 10);
-  const hasHiddenGem = top10.some(a => a.popularity > 0 && a.popularity < 50000);
+  const top10Settled = top10.filter(a => (a.battles || 0) >= SETTLING_MIN_BATTLES);
+  const hasHiddenGem = top10Settled.some(a => a.popularity > 0 && a.popularity < 50000);
   _tryUnlock('hidden-gem-fan', rankingReady && hasHiddenGem, '💎 Hidden Gem Fan');
 
   // Old Soul — pre-1990 anime in top 10
-  const hasOldSoul = top10.some(a => a.seasonYear && a.seasonYear < 1990);
+  const hasOldSoul = top10Settled.some(a => a.seasonYear && a.seasonYear < 1990); // v1.0.251 — same rule
   _tryUnlock('old-soul', rankingReady && hasOldSoul, '📼 Old Soul');
 
   // Rival — franchise-vs-franchise rivalries with 3+ battles + at least one
@@ -15100,6 +15279,7 @@ function _achievementProgress() {
   // card can't show "4/4" progress for a tier it isn't allowed to earn yet.
   const { ranked: byElo, total: totalRanked } = _rankedEloOrder();
   const top10 = byElo.slice(0, 10);
+  const top10Settled = top10.filter(a => (a.battles || 0) >= SETTLING_MIN_BATTLES); // v1.0.251 — as _checkAchievements
   const top25cutoff = Math.floor(byElo.length * 0.25);
   const top25ids    = new Set(byElo.slice(0, Math.max(1, top25cutoff)).map(a => a.id));
 
@@ -15109,12 +15289,15 @@ function _achievementProgress() {
   const tierOf = new Map();
   byEloDesc.forEach((a, i) => tierOf.set(a.id, getTier(i, totalRanked)));
 
-  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400 && (a.battles || 0) > 0).length;
+  // v1.0.251 — All-Stars, Tastemaker and Era Curator only count anime with
+  // SETTLING_MIN_BATTLES+ battles, exactly as _checkAchievements does.
+  const allStarsCount = animeList.filter(a => (a.elo || 0) >= 1400 && (a.battles || 0) >= SETTLING_MIN_BATTLES).length;
   const loyalistCount = animeList.filter(a => (a.battles || 0) >= 20).length;
 
   const sTierPrimaryGenres = new Set();
   for (const a of animeList) {
     if (tierOf.get(a.id) !== 'S') continue;
+    if ((a.battles || 0) < SETTLING_MIN_BATTLES) continue;
     const primary = (a.genres || [])[0];
     if (primary) sTierPrimaryGenres.add(primary);
   }
@@ -15122,6 +15305,7 @@ function _achievementProgress() {
   for (const a of animeList) {
     const t = tierOf.get(a.id);
     if (t !== 'S' && t !== 'A') continue;
+    if ((a.battles || 0) < SETTLING_MIN_BATTLES) continue;
     if (!a.seasonYear) continue;
     topDecades.add(Math.floor(a.seasonYear / 10) * 10);
   }
@@ -15143,8 +15327,9 @@ function _achievementProgress() {
     // computed because _checkAchievements / _getClosestUnlockableAchievement
     // ignore them by way of the same flag.
     undefeated: { current: animeList.some(a => (a.wins || 0) >= 10 && (a.losses || 0) === 0) ? 1 : 0, hideProgress: true },
-    'hidden-gem-fan': { current: top10.some(a => a.popularity > 0 && a.popularity < 50000) ? 1 : 0, hideProgress: true },
-    'old-soul': { current: top10.some(a => a.seasonYear && a.seasonYear < 1990) ? 1 : 0, hideProgress: true },
+    // v1.0.251 — top10Settled, matching the unlock rule in _checkAchievements
+    'hidden-gem-fan': { current: top10Settled.some(a => a.popularity > 0 && a.popularity < 50000) ? 1 : 0, hideProgress: true },
+    'old-soul': { current: top10Settled.some(a => a.seasonYear && a.seasonYear < 1990) ? 1 : 0, hideProgress: true },
     'comeback-kid': { current: animeList.some(a => {
       if (!top25ids.has(a.id)) return false;
       const seed = (typeof a.seedElo === 'number') ? a.seedElo
@@ -15379,7 +15564,8 @@ function renderDiscoverTab() {
   const recsHeading = byId(IDS.foryouRecsHeading);
   if (recsHeading) recsHeading.style.display = (recsTab === 'foryou') ? '' : 'none';
 
-  if (recsTab === 'predict') return; // predictor is search-driven, no pre-loading needed
+  // v1.0.251 — still no pre-loading; only the "Try:" chips are refreshed (no requests)
+  if (recsTab === 'predict') { _renderPredictorExamples(); return; } // predictor is search-driven, no pre-loading needed
   if (recsTab === 'gaps') { renderFranchiseGaps(); return; } // v1.0.237
   if (_moodRecActive) return; // mood rec will populate the grid itself
 
@@ -17359,6 +17545,8 @@ async function applyMoodRec(moodKey) {
   _metric('mood.' + moodKey);  // v1.0.239 — usage metrics
 
   _moodRecActive = true;
+  // v1.0.251 — a later chip tap or For You load bumps _forYouGen; this run then stops without painting
+  const gen = ++_forYouGen;
   // Clear foryou cache so normal recs don't flash in
   delete _recsCache['foryou'];
 
@@ -17411,7 +17599,8 @@ async function applyMoodRec(moodKey) {
   if (!grid) return;
   // Use block so groups stack vertically; cards inside use flex rows
   grid.style.display = 'block';
-  grid.style.gridTemplateColumns = 'none';
+  // v1.0.251 — no gridTemplateColumns override: block layout ignores it, and a run
+  // that stops early would leave it on the shared grid (single-column skeletons).
   grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
     ${mood.emoji} Finding ${mood.label.toLowerCase()} recommendations…</p>`;
 
@@ -17432,6 +17621,7 @@ async function applyMoodRec(moodKey) {
 
   const ownIds  = new Set(animeList.map(a => a.id));
   const usedIds = new Set();
+  const usedFranchises = new Set(); // v1.0.251 — one entry per franchise across the mood groups, as in fetchRecommendationsForYou
   const groups  = [];
   // v1.0.247 — same two-page (50 candidate) query and six-per-row cap as
   // fetchRecommendationsForYou; the mood path had kept the old 25 / 4.
@@ -17453,6 +17643,7 @@ async function applyMoodRec(moodKey) {
     }`;
 
   for (const seed of seeds) {
+    if (gen !== _forYouGen) return; // v1.0.251 — superseded: stop spending AniList requests
     try {
       const res  = await _anilistFetch({ query, variables: { id: seed.id } });
       const json = await res.json();
@@ -17462,6 +17653,10 @@ async function applyMoodRec(moodKey) {
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        // v1.0.251 — same franchise dedupe as fetchRecommendationsForYou (no series next to its sequel).
+        const fKeys = _recFranchiseKeys(rec);
+        if (fKeys.some(k => usedFranchises.has(k))) continue;
+        fKeys.forEach(k => usedFranchises.add(k));
         // Prefer recs that also match the mood genres
         recs.push({ media: rec, score: n.rating || 1 });
         usedIds.add(rec.id);
@@ -17471,9 +17666,13 @@ async function applyMoodRec(moodKey) {
     } catch { /* skip */ }
   }
 
+  if (gen !== _forYouGen) return; // v1.0.251 — superseded during the last request
   if (!groups.length) {
-    grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
+    // v1.0.251 — paint only while For You is still the active sub-tab
+    if (recsTab === 'foryou') {
+      grid.innerHTML = `<p style="color:#8b949e;text-align:center;padding:24px">
       Couldn't find recommendations right now. Try again later.</p>`;
+    }
     _moodRecActive = false;
     return;
   }
@@ -17483,6 +17682,7 @@ async function applyMoodRec(moodKey) {
   if (allRecIds.length) {
     try { await _fetchRecRelations(allRecIds); } catch { /* non-critical */ }
   }
+  if (gen !== _forYouGen) return; // v1.0.251 — a newer chip tap or For You load took over meanwhile
 
   // Render with mood header
   const titleHtml = `<div style="margin-bottom:16px">
@@ -17502,10 +17702,12 @@ async function applyMoodRec(moodKey) {
       </div>
     </div>`).join('');
 
-  grid.innerHTML = titleHtml + cardsHtml;
-  _recsCache['foryou'] = { html: grid.innerHTML, gridDisplay: grid.style.display };
+  // v1.0.251 — cache the picks for For You's restore even if the user moved to
+  // another sub-tab meanwhile; paint only while For You is still showing.
+  const html = titleHtml + cardsHtml;
+  _recsCache['foryou'] = { html, gridDisplay: 'block' };
   _moodRecActive = false;
-  grid.style.gridTemplateColumns = '';
+  if (recsTab === 'foryou') grid.innerHTML = html;
 }
 
 // ── Taste snapshots (for drift tracking) ────────────────────────────────────
@@ -18384,6 +18586,8 @@ function predictorOnInput(val) {
   _predictorFocusIdx = -1;
   clearTimeout(_predictorDebounce);
   const dd = byId(IDS.predictorDropdown);
+  // v1.0.251 — emptying the box clears the last result, which brings the "Try:" chips back
+  if (!val.trim()) { byId(IDS.predictorResults).innerHTML = ''; _renderPredictorExamples(); }
   if (val.trim().length < 2) { dd.style.display = 'none'; return; }
   dd.style.display = 'none';
   _predictorDebounce = setTimeout(() => _predictorSearch(val.trim()), 320);
@@ -18467,6 +18671,62 @@ function predictorPick(mediaId) {
   runPredictor(item); // pass the full media object — skip the extra lookup
 }
 
+// v1.0.251 — Predict empty state: "Try:" chips of up to 5 titles not in animeList.
+// Discover cards already painted this session come first (no requests), then this fixed list.
+const PREDICTOR_EXAMPLES = [
+  { id: 154587, title: "Frieren: Beyond Journey's End" },
+  { id: 199,    title: 'Spirited Away' },
+  { id: 9253,   title: 'Steins;Gate' },
+  { id: 1,      title: 'Cowboy Bebop' },
+  { id: 127230, title: 'Chainsaw Man' },
+  { id: 5114,   title: 'Fullmetal Alchemist: Brotherhood' },
+  { id: 21519,  title: 'Your Name.' },
+  { id: 16498,  title: 'Attack on Titan' },
+  { id: 101348, title: 'Vinland Saga' },
+  { id: 97986,  title: 'Made in Abyss' },
+  { id: 21827,  title: 'Violet Evergarden' },
+  { id: 20954,  title: 'A Silent Voice' },
+  { id: 21507,  title: 'Mob Psycho 100' },
+  { id: 1535,   title: 'Death Note' },
+  { id: 11061,  title: 'Hunter x Hunter (2011)' },
+  { id: 30,     title: 'Neon Genesis Evangelion' },
+  { id: 19,     title: 'Monster' },
+];
+
+// v1.0.251 — CSS hides the row while #predictor-results has content, so this only picks titles.
+function _renderPredictorExamples() {
+  const row = byId(IDS.predictorExamples);
+  if (!row) return;
+  const skip  = new Set(animeList.map(a => a.id)); // runPredictor answers "already in your list" for these
+  const picks = [];
+  for (const it of [..._discoverItems.values(), ...PREDICTOR_EXAMPLES]) {
+    if (picks.length >= 5) break;
+    if (!it.id || !it.title || skip.has(it.id)) continue;
+    skip.add(it.id);
+    picks.push(it);
+  }
+  row.textContent = '';
+  row.hidden = !picks.length;
+  if (!picks.length) return;
+  const label = document.createElement('span');
+  label.className = 'predictor-examples-label';
+  label.textContent = 'Try:';
+  row.appendChild(label);
+  for (const it of picks) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'mood-chip';
+    chip.textContent = it.title;
+    chip.title = it.title;
+    // Same as picking it from the dropdown, but by AniList id so it is exactly this entry
+    chip.addEventListener('click', () => {
+      byId(IDS.predictorInput).value = it.title;
+      runPredictor(Number(it.id));
+    });
+    row.appendChild(chip);
+  }
+}
+
 async function runPredictor(prefetched = null) {
   _metric('discover.predict.run');  // v1.0.239 — usage metrics (distinct from just opening the tab)
   const q = byId(IDS.predictorInput).value.trim();
@@ -18475,18 +18735,20 @@ async function runPredictor(prefetched = null) {
   const resultsEl = byId(IDS.predictorResults);
   resultsEl.innerHTML = '<p style="color:#8b949e;font-size:0.85rem">⏳ Predicting…</p>';
 
-  let media = prefetched;
+  // v1.0.251 — a number is an AniList id from a "Try:" chip: look up that exact entry, not a title search
+  const lookupId = typeof prefetched === 'number' ? prefetched : null;
+  let media = lookupId ? null : prefetched;
   if (!media) {
     const searchQuery = `
-      query($search: String) {
-        Media(search: $search, type: ANIME) {
+      query($search: String, $id: Int) {
+        Media(search: $search, id: $id, type: ANIME) {
           id title { romaji english }
           coverImage { large medium }
           genres averageScore seasonYear format
         }
       }`;
     try {
-      const res  = await _anilistFetch({ query: searchQuery, variables: { search: q } });
+      const res  = await _anilistFetch({ query: searchQuery, variables: lookupId ? { id: lookupId } : { search: q } }); // v1.0.251
       const json = await res.json();
       media = json?.data?.Media;
     } catch (e) {
@@ -18681,13 +18943,14 @@ function _renderPrediction(media, pred, container) {
   const cover = media.coverImage?.large || media.coverImage?.medium;
   const tierClass = 't-' + pred.tier.toLowerCase();
 
+  // v1.0.251 — escape titles in the prediction card
   const reasons = pred.components.map(c => {
     if (c.isKnn && c.detail?.length) {
-      const examples = c.detail.map(x => `${x.name} <span style="color:#6e7681">(${x.elo})</span>`).join(', ');
+      const examples = c.detail.map(x => `${esc(x.name)} <span style="color:#6e7681">(${x.elo})</span>`).join(', ');
       return `<div>• <span>${c.label}</span>: ${examples}</div>`;
     }
     const detail = c.detail
-      ? ' (' + c.detail.slice(0, 3).map(g => g.genre).join(', ') + ')'
+      ? ' (' + c.detail.slice(0, 3).map(g => esc(g.genre)).join(', ') + ')'
       : '';
     return `<div>• <span>${c.label}${detail}</span>: avg ELO ${Math.round(c.value)}</div>`;
   }).join('');
@@ -18699,7 +18962,7 @@ function _renderPrediction(media, pred, container) {
     <div class="predictor-result">
       <img class="predictor-cover"${coverCors(cover)} src="${safeUrl(cover)}" alt="${esc(title)}" />
       <div class="predictor-body">
-        <div class="predictor-title">${title}</div>
+        <div class="predictor-title">${esc(title)}</div>
         <div class="predictor-tier-badge ${tierClass}">${pred.tier} tier</div>
         <div style="margin:6px 0 8px">
           <span style="font-size:0.78rem;color:${confColour};font-weight:600">${conf.text}</span>
@@ -20356,6 +20619,8 @@ function _vsRenderTableSlice() {
     const fuzzyPill = anime.fuzzy
       ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
       : '';
+    // v1.0.251 — Tier cell: Unranked shows a muted '–' like the # column; the
+    // "UNRANKED" pill is wider than the 56px Tier column and was clipped.
     html += `<tr class="ranking-table-row${anime.fuzzy ? ' is-fuzzy' : ''}">
       <td class="tbl-rank">${displayIdx}</td>
       <td><img class="tbl-cover"${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
@@ -20364,7 +20629,7 @@ function _vsRenderTableSlice() {
       <td>${wr}</td>
       <td>${anime.battles || 0}</td>
       <td>${anime.globalScore ? anime.globalScore + '%' : '–'}</td>
-      <td><span class="tier-badge t-${tier.toLowerCase()}">${tier === 'unranked' ? 'Unranked' : tier}</span></td>
+      <td>${tier === 'unranked' ? '<span class="tbl-tier-none" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>' : `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>`}</td>
       <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
     </tr>`;
   }
@@ -20380,6 +20645,8 @@ function renderFranchiseTable() {
   let groups = _buildFranchiseGroups(sorted);
   let html = '';
   const { rankMap: memberRankMap, total: memberRankTotal } = _rankedEloOrder(); // v1.0.241
+  // v1.0.251 — Unranked group/member Tier cells show a muted '–' like the #
+  // column; the "UNRANKED" pill is wider than the 56px Tier column.
   groups.forEach((group, rank) => {
     const tier     = _franchiseTier(group); // null = Unranked (v1.0.241)
     const isSingle = group.members.length === 1;
@@ -20414,7 +20681,7 @@ function renderFranchiseTable() {
         <td>${wrStr}</td>
         <td>${group.totalBattles || 0}</td>
         <td>${scoreStr}</td>
-        <td>${tier ? `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}</td>
+        <td>${tier ? `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>` : '<span class="tbl-tier-none" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>'}</td>
         <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
       </tr>`;
     if (!isSingle) {
@@ -20440,7 +20707,7 @@ function renderFranchiseTable() {
           <td>${wr}</td>
           <td>${a.battles || 0}</td>
           <td>${a.globalScore ? a.globalScore + '%' : '–'}</td>
-          <td>${memberTier ? `<span class="tier-badge t-${memberTier.toLowerCase()}">${memberTier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}</td>
+          <td>${memberTier ? `<span class="tier-badge t-${memberTier.toLowerCase()}">${memberTier}</span>` : '<span class="tbl-tier-none" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>'}</td>
           <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
         </tr>`;
       });
@@ -21643,22 +21910,23 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.250 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.251 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🧭 Switching Discover tabs while recommendations are still loading no longer drops For You or This Season cards on top of Missing or Predict, and the finished results are ready when you switch back.',
-    '🖼 Battle cards and the detail popup now load covers the same way as your Rankings, so an anime you just battled no longer flashes in late there and its cover is kept for offline use like the rest.',
-    '🔗 The share modal now shows your link above the Copy link button — it reads kessen.co.uk/s/… once the short link is ready, and you can click it to copy.',
-    '🔢 Battle counts read properly at one ("1 battle", not "1 battles") on anime and franchise details, the Battles sort, Tower results and the cloud and backup prompts.',
-    '🗑 In Guest Mode the Delete all my data warning now says it only clears this device, instead of promising a cloud wipe and logout that guests don\'t have.',
-    '📱 On phones the header now shows your battle count in full ("16 battles") instead of cutting it off mid-word as "16 battle…"; the anime count still shows on wider screens.',
-    '🏆 The Taste / Achievements switch on the Profile tab now fits both labels on one line on phones and desktop, so the Achievements tab no longer wraps onto two lines.',
-    '📋 In list view the AniList Avg column header is no longer cut off — the full label and its sort arrow now fit.',
-    '⌨️ The first-run keyboard shortcuts tip now hides while the Mode or Filter menu is open instead of sitting on top of it, and comes back when the menu closes.',
+    '🎯 For You and mood recommendations now show each series only once, so you won\'t see a show right next to its own sequel (like Wistoria Season 1 and 2) and the freed spot goes to another pick.',
+    '📱 On phones the Missing tab is much shorter above your results: the intro is now one short sentence, and the upcoming, planning, format and relation filters sit behind a Filters button that shows how many you\'ve changed.',
+    '⏳ The Missing scan now spaces out its AniList requests and counts down on screen whenever it has to wait for AniList\'s rate limit, retrying instead of quietly skipping anime, and if it still can\'t finish it keeps your last full scan rather than saving an incomplete list.',
+    '🖼 On wider screens the two battle covers are now bigger, filling more of each card instead of sitting small in the middle, while phones and Trio mode look the same as before.',
+    '🔮 Predict no longer opens on just an empty search box: a "Try:" row suggests a few anime you haven\'t added yet, and tapping one runs the prediction straight away.',
+    '🏅 Tastemaker, Era Curator, All-Stars, Hidden Gem Fan and Old Soul now only count anime with at least 3 battles, so they no longer unlock after one lucky win, and badges you\'ve already earned stay unlocked.',
+    '🔐 The landing page buttons now all read "Log in with…" and fit on one line on phones and desktop, the guest button is simply "Try it as a guest", and logging out after signing in no longer leaves the login button stuck on "Logging in…".',
+    '↻ If Genre picks or Hidden Gems on Discover can\'t load (for example when AniList is busy), just that section says so and suggests Refresh while your other recommendations still show, and the Refresh button no longer gets stuck on "Refreshing…".',
+    '🎭 Tapping a mood chip on For You and then switching Discover tabs, tapping another mood or hitting Clear no longer drops the old mood picks on top of what you\'re looking at, and finished mood picks are waiting when you come back to For You.',
+    '📋 In list view, anime you haven\'t battled yet now show a dash in the Tier column like the # column, instead of a clipped "UNRANKE" tag running into Confidence, and hovering the dash shows "Unranked".',
   ],
 };
 
