@@ -827,7 +827,8 @@
       -webkit-user-drag: none;
     }
     /* v1.0.251 — wide screens: the two battle covers sat small in ~450px cards;
-       200×281 keeps the 160:225 ratio. Phone and trio sizes are unchanged. */
+       200×281 keeps the 160:225 ratio. Phone sizes are unchanged. Trio gets
+       the same size from 1.0.252 (its rule sits after the base trio rule). */
     @media (min-width: 1000px) {
       .battle-arena .anime-card img { width: 200px; height: 281px; }
     }
@@ -5960,6 +5961,11 @@
     .trio-grid .anime-card img {
       width: 160px;
       height: 225px;
+    }
+    /* v1.0.252 — keep matching the arena at wide widths (200×281 since 1.0.251).
+       ~315px columns leave ~288px inside the card, so 200px still has room. */
+    @media (min-width: 1000px) {
+      .trio-grid .anime-card img { width: 200px; height: 281px; }
     }
 
     /* Gold/silver/bronze border when ranked */

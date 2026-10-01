@@ -666,7 +666,11 @@ function renderErrorInto(el, message, extraStyle = '') {
   while (el.firstChild) el.removeChild(el.firstChild);
   const p = document.createElement('p');
   p.style.cssText = 'color:#f85149;text-align:center' + (extraStyle ? ';' + extraStyle : '');
-  p.textContent = 'Error: ' + (message || 'unknown');
+  // v1.0.253 — a thrown fetch is almost always AniList rate-limiting (its 429s carry
+  // no CORS headers) or a dropped connection; say that instead of "Failed to fetch".
+  p.textContent = /failed to fetch|networkerror|load failed/i.test(String(message || ''))
+    ? 'Couldn\'t reach AniList. It may be busy or rate-limiting, so wait a minute and try again.'
+    : 'Error: ' + (message || 'unknown');
   el.appendChild(p);
 }
 // Validate a URL is safe to interpolate into an attribute (href/src).
@@ -1120,6 +1124,12 @@ function _clearRankingState() {
   Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
   _recsLoadedTab = null;
   _discoverItems.clear(); // v1.0.251 — Predict's "Try:" chips read this; don't offer the previous user's recs
+  // v1.0.253 — forget the selected mood and bump _forYouGen so a For You or mood run still
+  // loading can't write the previous list's picks into the cleared cache.
+  _activeMoodKey = null;
+  _moodRecActive = false;
+  _forYouGen++;
+  _resetMoodChipUI();
 
   // Return to the home screen
   hide('battle-screen');
@@ -3362,6 +3372,13 @@ function pickOpponents() {
   // confusing and arguably broken (those anime weren't supposed to appear).
   if (activeCount < 2) return null;
 
+  // v1.0.253 — Battle Within: pick only from pairs not yet battled this run
+  // (_pickBattleWithinPair); the random pick below runs only if none are left.
+  if (battleWithinFranchise) {
+    const fresh = _pickBattleWithinPair(weights);
+    if (fresh) return fresh;
+  }
+
   function weightedPick(exclude) {
     let r = Math.random() * totalW;
     for (let i = 0; i < n; i++) {
@@ -3428,6 +3445,33 @@ function pickOpponents() {
   }
 
   return [idxA, idxB];
+}
+
+// v1.0.253 — "minId-maxId", the same key shape pickWinner builds for matchupStats.
+function _battleWithinKey(idA, idB) {
+  return [Math.min(idA, idB), Math.max(idA, idB)].join('-');
+}
+
+// v1.0.253 — Battle Within picker: a random unbattled pair of eligible members, preferring ones
+// sharing no anime with the on-screen pair, then any other, then the on-screen pair; null if none.
+function _pickBattleWithinPair(weights) {
+  const done = battleWithinFranchise.battledPairs;
+  const members = [];
+  weights.forEach((w, i) => { if (w > 0) members.push(i); });
+  const onScreen = i => (i === currentA || i === currentB ? 1 : 0);
+  const apart = [], touching = [], same = [];
+  for (let x = 0; x < members.length; x++) {
+    for (let y = x + 1; y < members.length; y++) {
+      const i = members[x], j = members[y];
+      if (done.has(_battleWithinKey(animeList[i].id, animeList[j].id))) continue;
+      const hits = onScreen(i) + onScreen(j);
+      (hits === 0 ? apart : hits === 1 ? touching : same).push([i, j]);
+    }
+  }
+  const pool = apart.length ? apart : touching.length ? touching : same;
+  if (!pool.length) return null;
+  const [i, j] = pool[Math.floor(Math.random() * pool.length)];
+  return Math.random() < 0.5 ? [i, j] : [j, i];
 }
 
 // ─── BATTLE RENDERING ────────────────────────────────────────────────────────
@@ -3653,7 +3697,9 @@ function renderBattle() {
     // pickWsoPair has its own deterministic rules and the preloader picks
     // randomly via pickOpponents.
     pair = pickWsoPair();
-  } else if (settleMode) {
+  } else if (settleMode && !battleWithinFranchise) {
+    // v1.0.253 — with Battle Within on, Settle uses the Battle Within picker below
+    // (Settle's nearest-ELO pairing repeats pairs, so the run could never finish).
     pair = pickSettlePair() ?? pickOpponents();
   } else {
     pair = _takeValidPreloadedPair() ?? pickOpponents();
@@ -3707,7 +3753,16 @@ function _takeValidPreloadedPair() {
   const ok = i => Number.isInteger(i) && i >= 0 && i < animeList.length
     && !excludedIds.has(animeList[i].id)
     && !hiddenFormatsBattle.has(animeList[i].format) && !hiddenStatusesBattle.has(animeList[i].status);
-  return (a !== b && ok(a) && ok(b)) ? pair : null;
+  if (a === b || !ok(a) || !ok(b)) return null;
+  // v1.0.253 — Battle Within: only an in-franchise pair not yet battled this run
+  // and not the pair on screen; anything else is dropped and picked fresh.
+  const bw = battleWithinFranchise;
+  if (bw) {
+    const idA = animeList[a].id, idB = animeList[b].id;
+    if (!bw.ids.has(idA) || !bw.ids.has(idB) || bw.battledPairs.has(_battleWithinKey(idA, idB))) return null;
+    if ((a === currentA && b === currentB) || (a === currentB && b === currentA)) return null;
+  }
+  return pair;
 }
 
 // v1.0.203 — pick the next pair now and start fetching its covers in the
@@ -3941,6 +3996,8 @@ function pickWinner(side) {
     pairB: currentB,
     matchupKey:  _mKey,
     matchupSnap: matchupStats[_mKey] ? { ...matchupStats[_mKey], wins: { ...matchupStats[_mKey].wins } } : null,
+    // v1.0.253 — Battle Within: this run's battledPairs when this pick is the pair's first battle, so undo can un-tick it.
+    withinPairs: battleWithinFranchise && !battleWithinFranchise.battledPairs.has(_mKey) ? battleWithinFranchise.battledPairs : null,
     // v1.0.207 — preserve WSO state so undo restores champion + streak + faced list
     wsoState: wsoMode ? {
       winnerIdx:    wsoWinnerIdx,
@@ -4100,6 +4157,7 @@ function undoLast() {
     // restore the pair the user was looking at. No ELO change to revert
     // because exclusion doesn't run a battle.
     excludedIds.delete(snap.excludedId);
+    _battleWithinProgress(); // v1.0.253 — the re-included member's pairs count again in the Battle Within banner
     if (typeof snap.prevA === 'number' && typeof snap.prevB === 'number'
         && snap.prevA < animeList.length && snap.prevB < animeList.length) {
       renderPair(snap.prevA, snap.prevB);
@@ -4172,6 +4230,8 @@ function undoLast() {
       if (matchupSnap) matchupStats[matchupKey] = matchupSnap;
       else delete matchupStats[matchupKey];
     }
+    // v1.0.253 — Battle Within: un-tick the pair this pick added and refresh the banner count.
+    if (snap.withinPairs) { snap.withinPairs.delete(matchupKey); _battleWithinProgress(); }
 
     // Restore battle count and remove last history entry
     battleCount = savedCount;
@@ -5536,7 +5596,7 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
   } else {
     // v1.0.250 — singular "battle" at 1 (franchise-elo WR span below)
     card.innerHTML = `
-      <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))" ondblclick="event.stopPropagation();showFranchiseDetail('${esc(group.name)}')" title="Double-click for franchise overview">
+      <div class="franchise-header" onclick="toggleFranchiseExpand(this.closest('.franchise-group'))" data-franchise="${esc(group.name)}" ondblclick="event.stopPropagation();showFranchiseDetail(this.dataset.franchise)" title="Double-click for franchise overview"><!-- v1.0.253 — data attribute, see franchise-detail-member -->
         <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
         <div class="franchise-info">
           <div class="franchise-name rank-title">${esc(group.name)}</div>
@@ -5589,8 +5649,9 @@ function showFranchiseDetail(groupName, opts) {
     // v1.0.211 — Stash the franchise name so the resulting anime detail modal
     // can show a "← Back" button that returns to this franchise overview
     // instead of dumping the user back at the Rankings screen with no context.
-    const backName = esc(group.name).replace(/'/g, "\\'");
-    return `<div class="franchise-detail-member${fuzzyCls}" onclick="navigateToFranchiseMember(${a.id}, '${backName}')">
+    // v1.0.253 — name rides in a data attribute: esc() turns ' into &#39;, which the
+    // browser decodes back inside onclick, so "JoJo's …" broke the quoted JS string.
+    return `<div class="franchise-detail-member${fuzzyCls}" data-franchise="${esc(group.name)}" onclick="navigateToFranchiseMember(${a.id}, this.dataset.franchise)">
       <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
@@ -5719,15 +5780,17 @@ function showFranchiseDetail(groupName, opts) {
   // name as a string parameter so they re-look-up the current member set
   // (the franchise grouping is recomputed at call time and the member list
   // could have changed since modal-open if the user excluded an entry).
-  const safeName = esc(group.name).replace(/'/g, "\\'");
+  // v1.0.253 — the name now rides in an esc()'d data-franchise attribute. The old
+  // '${…}' JS string broke on an apostrophe (esc's &#39; decodes back to ') — e.g. JoJo's.
+  const safeName = esc(group.name);
   const canBattle = group.members.length >= 2;
   const actionsHtml = `
     <div class="franchise-detail-actions">
-      <button type="button" class="franchise-action-btn"
+      <button type="button" class="franchise-action-btn" data-franchise="${safeName}"
               ${canBattle ? '' : 'disabled title="Need ≥2 entries to battle"'}
-              onclick="startBattleWithinFranchise('${safeName}')">⚔ Battle within</button>
-      <button type="button" class="franchise-action-btn franchise-action-danger"
-              onclick="bulkExcludeFranchise('${safeName}')">🚫 Exclude all from battles</button>
+              onclick="startBattleWithinFranchise(this.dataset.franchise)">⚔ Battle within</button>
+      <button type="button" class="franchise-action-btn franchise-action-danger" data-franchise="${safeName}"
+              onclick="bulkExcludeFranchise(this.dataset.franchise)">🚫 Exclude all from battles</button>
     </div>`;
 
   // Replace description with the member list
@@ -6228,39 +6291,37 @@ function exportCSV() {
 }
 
 // ─── TIER LIST IMAGE EXPORT ──────────────────────────────────────────────────
-// Load a cover image for canvas drawing.
-// First attempts fetch() → blob URL (avoids canvas tainting on CORS-enabled CDNs).
-// Falls back to img.crossOrigin = 'anonymous' if the CDN doesn't return CORS
-// headers on the fetch — AniList's CDN occasionally skips them on cache misses.
+// Load an image for canvas drawing: an ImageBitmap (CORS fetch), else a
+// crossOrigin <img>, else null. drawImage takes either; both have .width/.height.
+// v1.0.253 — decode with createImageBitmap, not a blob: URL <img> (the live CSP
+// img-src has no blob:, so every cover failed); timeoutMs now caps the whole load.
 async function _loadCoverForCanvas(url, timeoutMs = 4000) {
   if (!url) return null;
+  const deadline = Date.now() + timeoutMs;
 
-  // ── Primary: fetch → blob URL ─────────────────────────────────────────────
+  // ── Primary: CORS fetch → ImageBitmap ─────────────────────────────────────
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetch(url, { mode: 'cors', cache: 'no-store', signal: controller.signal });
-    clearTimeout(timer);
-    if (resp.ok) {
-      const blob = await resp.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      return new Promise(resolve => {
-        const img = new Image();
-        img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
-        img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(null); };
-        img.src = objectUrl;
-      });
-    }
+    if (resp.ok) return await createImageBitmap(await resp.blob());
   } catch {
+    // v1.0.253 — network error, timeout or failed decode: try the <img> fallback.
+  } finally {
     clearTimeout(timer);
   }
 
-  // ── Fallback: crossOrigin img (may taint canvas, but better than blank) ───
+  // ── Fallback: crossOrigin img (a non-CORS response just errors; never taints) ──
+  // v1.0.253 — gets only the time left; _cb stays so it skips the HTTP cache's
+  // stale no-CORS entry for the same URL (the v1.0.201 trap).
+  const left = deadline - Date.now();
+  if (left <= 0) return null;
   return new Promise(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload  = () => resolve(img);
     img.onerror = () => resolve(null);
+    setTimeout(() => resolve(null), left);
     img.src = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now();
   });
 }
@@ -6372,8 +6433,12 @@ async function _buildShareImageBlob(kind = _shareImageKind) {
   const picks  = ranked.slice(0, kind === 'grid3' ? 9 : 10);
   if (!picks.length) throw new Error('Nothing ranked yet');
 
-  // Load covers via fetch → blob URL so the canvas is never tainted.
-  const imgs = await Promise.all(picks.map(a => a.cover ? _loadCoverForCanvas(a.cover) : Promise.resolve(null)));
+  // v1.0.253 — logo (same-origin, SW-precached) + covers load in parallel, each capped at
+  // 3.5 s (late covers get the title placeholder) so navigator.share runs inside the tap's ~5 s window.
+  const [logo, ...imgs] = await Promise.all([
+    _loadCoverForCanvas('/icon-512.png', 3500),
+    ...picks.map(a => a.cover ? _loadCoverForCanvas(a.cover, 3500) : Promise.resolve(null)),
+  ]);
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -6397,6 +6462,11 @@ async function _buildShareImageBlob(kind = _shareImageKind) {
     ctx.textAlign = 'right';
     ctx.fillStyle = '#6e7681';
     ctx.fillText('kessen.co.uk', canvas.width - 12, canvas.height - FOOT / 2);
+    // v1.0.253 — small Kessen logo before the site name (text only if it didn't load).
+    if (logo) {
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(logo, canvas.width - 12 - ctx.measureText('kessen.co.uk').width - 30, canvas.height - FOOT / 2 - 12, 24, 24);
+    }
   } else {
     // ── Top 10 card: 1200×720, two rows of five ────────────────────────────
     // TEXT_H fits two 17px title lines + the ELO line with room to spare;
@@ -6422,10 +6492,17 @@ async function _buildShareImageBlob(kind = _shareImageKind) {
     ctx.textAlign = 'right';
     ctx.fillStyle = '#58a6ff';
     ctx.font = `700 22px ${_SHARE_FONT}`;
-    ctx.fillText('⚔️ Kessen', W - 40, 42);
+    // v1.0.253 — plain wordmark with the real logo (icon-512.png) to its left instead of
+    // the platform ⚔️ emoji; wordmark only if the logo didn't load.
+    ctx.fillText('Kessen', W - 40, 42);
+    const brandW = ctx.measureText('Kessen').width;
     ctx.fillStyle = '#6e7681';
     ctx.font = `14px ${_SHARE_FONT}`;
     ctx.fillText('kessen.co.uk', W - 40, 70);
+    if (logo) {
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(logo, W - 40 - Math.max(brandW, ctx.measureText('kessen.co.uk').width) - 60, 32, 48, 48);
+    }
 
     // Grid
     const gridW = COLS * CW + (COLS - 1) * GAPX;
@@ -6467,6 +6544,7 @@ async function _buildShareImageBlob(kind = _shareImageKind) {
     ctx.fillText('Make your own — rank your AniList or MAL list head-to-head at kessen.co.uk', 40, H - FOOT / 2 + 2);
   }
 
+  [logo, ...imgs].forEach(b => b?.close?.()); // v1.0.253 — free drawn ImageBitmaps (an <img> has no close)
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('Canvas.toBlob returned null');
   const filename = `kessen-${kind === 'grid3' ? '3x3' : 'top10'}${user ? '-' + user : ''}.png`;
@@ -7032,6 +7110,16 @@ let _forYouGen = 0;
 
 function refreshDiscover() {
   if (recsTab === 'predict') return;
+  // v1.0.253 — with a mood chip selected, Refresh re-runs that mood (seeds rebuilt from current
+  // rankings) instead of plain For You under the still-lit chip; same button .finally as below.
+  if (recsTab === 'foryou' && _activeMoodKey) {
+    const btn = byId(IDS.discoverRefreshBtn);
+    if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refreshing…</span>'; btn.disabled = true; }
+    applyMoodRec(_activeMoodKey).finally(() => {
+      if (btn) { btn.innerHTML = '↻<span class="discover-refresh-label"> Refresh</span>'; btn.disabled = false; }
+    });
+    return;
+  }
   // v1.0.251 — Refresh leaves the mood filter; a mood run it supersedes no longer clears this itself
   _moodRecActive = false;
   // Bust cache for the current tab and force a fresh fetch
@@ -7127,6 +7215,10 @@ function setRecsTab(tab, fromMood = false) {
       grid.innerHTML     = _recsCache[tab].html;
       grid.style.display = _recsCache[tab].gridDisplay;
       _recsLoadedTab     = tab;
+    } else if (tab === 'foryou' && _activeMoodKey) {
+      // v1.0.253 — a mood is still selected but its picks aren't cached (run cut short by a
+      // sub-tab switch, or failed): reload the mood, not plain For You under the lit chip
+      applyMoodRec(_activeMoodKey);
     } else {
       // First visit to this sub-tab: fetch and then cache the result
       const tabAtLoad = tab;
@@ -8243,14 +8335,15 @@ function recCardHtml(media, opts = {}) {
   // v1.0.248 — `friendBadge` ("Nat: 9.0") overlays the friend's score; the
   // Social tab's friend recommendations now use this card too, so they open
   // the in-app detail like every other Discover card instead of leaving the app.
-  const { seasonLabel = '', watched = false, tasteScore = null, friendBadge = '' } = opts;
+  const { seasonLabel = '', watched = false, strongMatch = false, friendBadge = '' } = opts; // v1.0.253 — strongMatch (from _strongMatchTest) replaces tasteScore
   const title        = media.title.english || media.title.romaji;
   const cover        = media.coverImage?.large || media.coverImage?.medium;
   const avg          = media.averageScore ? (media.averageScore / 10).toFixed(1) : '–';
   const relationNote = _getRelationNote(media);
   const watchedTag   = watched ? '<span class="rec-badge-watched">✓ Watched</span>' : '';
   // Show a taste badge on cards that match the user's genres well
-  const tasteTag = (tasteScore !== null && tasteScore >= 0.65 && !watched)
+  // v1.0.253 — was tasteScore >= 0.65 on a min-max ELO scale, which a mixed list practically never reached.
+  const tasteTag = (strongMatch && !watched)
     ? '<span class="rec-badge-strong-match" title="Closely matches your top-rated genres">🎯 Strong match</span>'
     : '';
   // v1.0.248 — an entry with no AniList id (a MAL-only friend pick AniList
@@ -8620,6 +8713,8 @@ async function fetchSeasonalRecommendations() {
   const next = getNextSeason(season, year);
   const genreAffinityMap = _buildGenreAffinity();
   const { eloMin, eloRange } = _tasteEloRange();
+  // v1.0.253 — the badge uses the ranked-list test; the sort below keeps the old score so ordering is unchanged.
+  const isStrong = _strongMatchTest();
 
   const seasons = [
     { s: season,      y: year,      label: `${season} ${year}` },
@@ -8655,6 +8750,7 @@ async function fetchSeasonalRecommendations() {
     // Score each item by taste + community
     items.forEach(r => {
       r._tasteScore = _computeTasteScore(r.media, genreAffinityMap, eloMin, eloRange);
+      r._strong = isStrong(r.media); // v1.0.253 — Strong match flag for the card
       // For ranking we still need a number — fall back to 0.5 (median) when
       // tasteScore is null so unscored items don't sink to the bottom.
       const tasteForRanking = r._tasteScore == null ? 0.5 : r._tasteScore;
@@ -8683,10 +8779,11 @@ async function fetchSeasonalRecommendations() {
 }
 
 // Build a Map of genre → user's average ELO for anime with that genre
-function _buildGenreAffinity() {
+// v1.0.253 — list/minCount params so _strongMatchTest can reuse it on ranked anime with count >= 3; defaults keep the old behaviour.
+function _buildGenreAffinity(list = animeList, minCount = 2) {
   const map = new Map();
   const genreMap = {};
-  animeList.forEach(a => {
+  list.forEach(a => {
     if (!Array.isArray(a.genres)) return;
     a.genres.forEach(g => {
       if (!genreMap[g]) genreMap[g] = { sum: 0, count: 0 };
@@ -8695,7 +8792,7 @@ function _buildGenreAffinity() {
     });
   });
   Object.entries(genreMap).forEach(([g, v]) => {
-    if (v.count >= 2) map.set(g, v.sum / v.count);
+    if (v.count >= minCount) map.set(g, v.sum / v.count);
   });
   return map;
 }
@@ -8709,14 +8806,19 @@ function _buildGenreAffinity() {
 // Encapsulated so we don't have four copies of the same formula across
 // For You / Seasonal / Genre Dive / Hidden Gems. Pass a precomputed
 // affinity map + elo range to avoid rebuilding them per-item.
+// v1.0.253 — now used only by the This Season sort; the 🎯 badge uses _strongMatchTest.
 function _computeTasteScore(media, genreAffinityMap, eloMin, eloRange) {
   if (!genreAffinityMap || genreAffinityMap.size === 0) return null;
-  const genres = Array.isArray(media.genres) ? media.genres : null;
-  if (!genres || !genres.length) return null;
+  const meanGenreElo = _meanGenreElo(media, genreAffinityMap); // v1.0.253 — shared with _strongMatchTest
+  return meanGenreElo === null ? null : (meanGenreElo - eloMin) / eloRange;
+}
+
+// v1.0.253 — mean of the affinity values for the media's known genres; null when
+// it has no genres or none of them are in the map.
+function _meanGenreElo(media, genreAffinityMap) {
+  const genres = Array.isArray(media?.genres) ? media.genres : [];
   const hits = genres.map(g => genreAffinityMap.get(g)).filter(v => v !== undefined);
-  if (!hits.length) return null;
-  const meanGenreElo = hits.reduce((s, v) => s + v, 0) / hits.length;
-  return (meanGenreElo - eloMin) / eloRange;
+  return hits.length ? hits.reduce((s, v) => s + v, 0) / hits.length : null;
 }
 
 // Shared elo-range derivation. Same min/max-min math the seasonal code uses.
@@ -8726,6 +8828,24 @@ function _tasteEloRange() {
   const eloMin = Math.min(...vals);
   const eloMax = Math.max(...vals);
   return { eloMin, eloRange: (eloMax - eloMin) || 1 };
+}
+
+// v1.0.253 — 🎯 Strong match: a rec's genres must fit better than 80% of the
+// user's own ranked anime (scored the same way) and beat their mean ELO.
+// Ranked, non-excluded anime only; no badge below MIN_RANKED_FOR_INSIGHTS.
+const STRONG_MATCH_PERCENTILE = 0.8;
+function _strongMatchTest(list = animeList) {
+  const ranked = list.filter(a => _isRanked(a) && !excludedIds.has(a.id));
+  if (ranked.length < MIN_RANKED_FOR_INSIGHTS) return () => false;
+  const affinity = _buildGenreAffinity(ranked, 3);
+  const own = ranked.map(a => _meanGenreElo(a, affinity)).filter(v => v !== null).sort((x, y) => x - y);
+  if (!own.length) return () => false;
+  const cut   = own[Math.min(own.length - 1, Math.floor(own.length * STRONG_MATCH_PERCENTILE))];
+  const floor = ranked.reduce((s, a) => s + a.elo, 0) / ranked.length;
+  return (media) => {
+    const m = _meanGenreElo(media, affinity);
+    return m !== null && m >= cut && m > floor;
+  };
 }
 
 function _recsSkeletonHtml(count = 8) {
@@ -8784,8 +8904,9 @@ async function _loadRecsGrid() {
 
     const renderSection = (items, label) => {
       if (!items.length) return '';
-      const cards = items.map(({ media, watched, _tasteScore }) =>
-        recCardHtml(media, { watched, tasteScore: _tasteScore ?? null })).join('');
+      // v1.0.253 — badge from the ranked-list test, not the sort score
+      const cards = items.map(({ media, watched, _strong }) =>
+        recCardHtml(media, { watched, strongMatch: !!_strong })).join('');
       return `
         <div class="recs-extra-section">
           <h4 class="recs-extra-heading">📅 ${label}</h4>
@@ -8818,16 +8939,15 @@ async function _loadRecsGrid() {
   // every rendered card. Previously only Seasonal carried this score; For
   // You / Genre Dive / Hidden Gems all called recCardHtml without it so the
   // 🎯 Strong match badge was invisible on the tab most users default to.
-  const tasteAffinity = _buildGenreAffinity();
-  const tasteRange    = _tasteEloRange();
-  const ts = (media) => _computeTasteScore(media, tasteAffinity, tasteRange.eloMin, tasteRange.eloRange);
+  // v1.0.253 — Strong match now compares each rec with the user's own ranked list (was a fixed 0.65 that practically never hit).
+  const isStrong = _strongMatchTest();
 
   let mainHtml;
   if (result.grouped && result.groups.length) {
     mainHtml = result.groups.map(({ seed, recs }) => `
       <div class="recs-group">
         <h4 class="recs-group-heading">Because you loved <em>${esc(displayTitle(seed))}</em></h4>
-        <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')}</div>
+        <div class="recs-subgrid">${recs.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')}</div>
       </div>`).join('');
   } else {
     const items = result.items || [];
@@ -8835,7 +8955,7 @@ async function _loadRecsGrid() {
       work.innerHTML = '<p style="color:#8b949e;text-align:center">No recommendations yet — keep ranking!</p>';
       return commit('block');
     }
-    mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')}</div>`;
+    mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')}</div>`;
   }
 
   // Render main recs + placeholder sections for async extras
@@ -8865,11 +8985,12 @@ async function _loadRecsGrid() {
 
   // v1.0.250 — fill the placeholders in the detached copy and in the live
   // grid; the live grid only has them while it still shows this load's markup.
+  // v1.0.253 — genre dive and hidden gems use the same Strong match test as the main recs
   const genreHtml = genreResult.items.length
-    ? genreResult.items.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
+    ? genreResult.items.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')
     : (genreFailed ? extraFailedHtml : '<p style="color:#8b949e;font-size:0.8rem">No results found.</p>');
   const gemsHtml = gemItems.length
-    ? gemItems.map(({ media }) => recCardHtml(media, { tasteScore: ts(media) })).join('')
+    ? gemItems.map(({ media }) => recCardHtml(media, { strongMatch: isStrong(media) })).join('')
     : (gemsFailed ? extraFailedHtml : '<p style="color:#8b949e;font-size:0.8rem">No hidden gems found.</p>');
   // v1.0.251 — checked before the fill: a superseded load must not write its
   // extras into a newer load's "⏳ Loading…" placeholders in the live grid.
@@ -13596,6 +13717,17 @@ function pickOneOpponent(keepIdx) {
   // franchise filter if zero eligible opponents remain (best-effort, same
   // pattern as pickOpponents).
   const keepAnime = animeList[keepIdx];
+  // v1.0.253 — Battle Within: replace only with a member keepIdx hasn't battled
+  // this run; null when there is none (excludeAnime then draws a fresh pair).
+  if (battleWithinFranchise) {
+    const opts = [];
+    animeList.forEach((a, i) => {
+      if (i !== keepIdx && battleWithinFranchise.ids.has(a.id) && !excludedIds.has(a.id)
+        && !hiddenFormatsBattle.has(a.format) && !hiddenStatusesBattle.has(a.status)
+        && !battleWithinFranchise.battledPairs.has(_battleWithinKey(keepAnime.id, a.id))) opts.push(i);
+    });
+    return opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
+  }
   const weights = animeList.map(a => {
     if (excludedIds.has(a.id) || hiddenFormatsBattle.has(a.format) || hiddenStatusesBattle.has(a.status)) return 0;
     if (battleWithinFranchise && !battleWithinFranchise.ids.has(a.id)) return 0;
@@ -13672,8 +13804,12 @@ function excludeAnime(event, side) {
     prevB:      currentB,
   });
 
+  // v1.0.253 — Battle Within: recount without the excluded member (auto-stops if
+  // no unbattled pair is left); if the survivor has no unbattled partner, draw a fresh pair.
+  if (battleWithinFranchise && _battleWithinCheckDone()) { saveState(); return; }
   // Keep the surviving anime in its position; replace only the excluded slot
   const newIdx = pickOneOpponent(keepIdx);
+  if (newIdx == null) { renderBattle(); saveState(); return; }
   if (side === 0) {
     renderPair(newIdx, keepIdx);
   } else {
@@ -15553,6 +15689,9 @@ function renderManageTab() {
 }
 
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
+// v1.0.253 — the mood chip the user picked (null = none); _moodRecActive only means a run is loading.
+// Set by applyMoodRec, cleared by clearMoodRec and _clearRankingState; Refresh re-runs it.
+let _activeMoodKey = null;
 
 function renderDiscoverTab() {
   // v1.0.238 — Mood chip visibility toggle. setRecsTab handles this when the
@@ -15578,6 +15717,9 @@ function renderDiscoverTab() {
     _recsLoadedTab     = recsTab;
     return;
   }
+  // v1.0.253 — mood still selected but nothing cached (its run found nothing): reload the mood,
+  // not plain For You under the lit chip
+  if (recsTab === 'foryou' && _activeMoodKey) { applyMoodRec(_activeMoodKey); return; }
 
   // v1.0.238 — Auto-load recs on Discover open. Previously the grid was
   // hidden until the user actively clicked a sub-tab, which read as "there
@@ -15890,8 +16032,16 @@ function tryLoadSharedView() {
   (async () => {
     let ok = false;
     try {
-      const res = await fetch(`/.netlify/functions/share?id=${encodeURIComponent(m[1])}`, { cache: 'no-store' });
-      if (res.ok) ok = _renderSharedPayload(await res.json());
+      // v1.0.253 — a just-created link can 404 briefly while Netlify Blobs catches up: retry a 404
+      // three times (~1.5 s, 3 s, 5 s) under "Loading…"; any other failure ends at once, as before.
+      const retryWaits = [1500, 3000, 5000];
+      for (let attempt = 0; attempt <= retryWaits.length; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, retryWaits[attempt - 1]));
+        const res = await fetch(`/.netlify/functions/share?id=${encodeURIComponent(m[1])}`, { cache: 'no-store' });
+        if (res.status === 404) continue;
+        if (res.ok) ok = _renderSharedPayload(await res.json());
+        break;
+      }
     } catch { ok = false; }
     if (!ok) {
       byId(IDS.sharedTitle).textContent = 'This share link isn\'t available';
@@ -17525,6 +17675,15 @@ function _paintTasteMoods(el) {
 // recs pipeline runs.
 function clearMoodRec() {
   _moodRecActive = false;
+  _activeMoodKey = null; // v1.0.253 — no mood selected: Refresh and For You load plain recs again
+  _resetMoodChipUI();    // v1.0.253 — moved to a helper so _clearRankingState can reuse it
+  delete _recsCache['foryou'];
+  setRecsTab('foryou');
+}
+
+// v1.0.253 — un-highlights the mood chips, hides ✕ Clear and restores the "Recommended for you"
+// heading; split out of clearMoodRec (unchanged) so _clearRankingState resets them too.
+function _resetMoodChipUI() {
   document.querySelectorAll('#foryou-mood-chips .mood-chip').forEach(el => {
     el.classList.remove('active');
     el.style.borderColor = '#30363d';
@@ -17535,8 +17694,6 @@ function clearMoodRec() {
   if (clearBtn) clearBtn.style.display = 'none';
   const recsHeading = byId(IDS.foryouRecsHeading);
   if (recsHeading) recsHeading.style.display = '';   // restore neutral "Recommended for you"
-  delete _recsCache['foryou'];
-  setRecsTab('foryou');
 }
 
 async function applyMoodRec(moodKey) {
@@ -17545,13 +17702,15 @@ async function applyMoodRec(moodKey) {
   _metric('mood.' + moodKey);  // v1.0.239 — usage metrics
 
   _moodRecActive = true;
+  _activeMoodKey = moodKey; // v1.0.253 — remembered so Refresh (and For You with no cached picks) re-runs it
   // v1.0.251 — a later chip tap or For You load bumps _forYouGen; this run then stops without painting
   const gen = ++_forYouGen;
   // Clear foryou cache so normal recs don't flash in
   delete _recsCache['foryou'];
 
-  showResults();
-  switchResultsTab('discover');
+  // v1.0.253 — chips and Refresh sit on Discover, so only switch screens from elsewhere;
+  // showResults() re-rendered Rankings and cleared its search box on every chip tap.
+  if (activeResultsTab !== 'discover') { showResults(); switchResultsTab('discover'); }
   // v1.0.238 — Moods is no longer a tab; the mood chips at the top of
   // For You are the entry point. Keep For You visually active and the
   // chip strip visible so the user sees which mood they've chosen.
@@ -17568,12 +17727,11 @@ async function applyMoodRec(moodKey) {
   const chipsWrap = byId(IDS.foryouMoodChips);
   if (chipsWrap) chipsWrap.style.display = 'flex';
   byId(IDS.recsSubText).style.display = 'none';
-  byId(IDS.discoverRefreshBtn).style.display = '';    // let the user Refresh out of the mood filter
+  byId(IDS.discoverRefreshBtn).style.display = '';    // v1.0.253 — Refresh now re-runs the selected mood
 
-  // Ensure the discover mood grid is populated for cache seeding (may be
-  // empty if arriving from taste tab). Rendered into the hidden container.
-  const discoverMoodGrid = byId(IDS.discoverMoodGrid);
-  if (discoverMoodGrid && !discoverMoodGrid.hasChildNodes()) _paintTasteMoods(discoverMoodGrid);
+  // v1.0.253 — rebuild the mood seeds from the current rankings on every run (was first run
+  // only, so battles never reached the mood picks until a reload). Hidden container.
+  _paintTasteMoods(byId(IDS.discoverMoodGrid) || document.createElement('div'));
 
   // Highlight the active mood chip in the strip
   document.querySelectorAll('#foryou-mood-chips .mood-chip').forEach(el => {
@@ -17605,12 +17763,7 @@ async function applyMoodRec(moodKey) {
     ${mood.emoji} Finding ${mood.label.toLowerCase()} recommendations…</p>`;
 
   // Seed from exactly the anime shown in the cover tiles.
-  // If the mood grid hasn't rendered yet, fall back to painting it now so the
-  // cache is populated before we read from it.
-  if (!_moodCoverCache[moodKey]?.length) {
-    const discoverMoodGrid = byId(IDS.discoverMoodGrid);
-    _paintTasteMoods(discoverMoodGrid || document.createElement('div'));
-  }
+  // v1.0.253 — painted above on every run, so the "paint if empty" fallback is gone
   const seeds = _moodCoverCache[moodKey] || [];
 
   if (!seeds.length) {
@@ -17690,15 +17843,13 @@ async function applyMoodRec(moodKey) {
     <p style="color:#8b949e;font-size:0.82rem;margin:0">
       Based on your top-ranked ${mood.label.toLowerCase()} anime</p>
   </div>`;
-  // v1.0.211 — precompute taste scoring once for the mood section.
-  const _moodAffinity = _buildGenreAffinity();
-  const _moodRange    = _tasteEloRange();
-  const _moodTs = (media) => _computeTasteScore(media, _moodAffinity, _moodRange.eloMin, _moodRange.eloRange);
+  // v1.0.253 — Strong match: same ranked-list test as For You (was a fixed 0.65 cut).
+  const _moodStrong = _strongMatchTest();
   const cardsHtml = groups.map(({ seed, recs }) => `
     <div class="recs-group">
       <div class="recs-group-label">Because you liked <strong>${esc(displayTitle(seed))}</strong></div>
       <div class="recs-row">
-        ${recs.map(r => recCardHtml(r.media, { tasteScore: _moodTs(r.media) })).join('')}
+        ${recs.map(r => recCardHtml(r.media, { strongMatch: _moodStrong(r.media) })).join('')}
       </div>
     </div>`).join('');
 
@@ -18727,6 +18878,22 @@ function _renderPredictorExamples() {
   }
 }
 
+// v1.0.253 — typed title: an exact English/romaji/preferred title wins, then a title starting with
+// the query, then the most popular (AniList order breaks ties). Media(search:) alone gave a Frieren spin-off.
+function _predictorBestMatch(items, q) {
+  const norm = s => String(s || '').normalize('NFKD').replace(/\p{M}|['’]/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const nq = norm(q);
+  const closeness = m => {
+    const titles = [m.title?.english, m.title?.romaji, m.title?.userPreferred].map(norm).filter(Boolean);
+    return titles.includes(nq) ? 2 : titles.some(t => t.startsWith(nq + ' ')) ? 1 : 0;
+  };
+  return (Array.isArray(items) ? items : [])
+    .map((m, i) => ({ m, i, c: closeness(m) }))
+    // v1.0.253 — popularity only breaks ties among real title matches; with no match keep
+    // AniList's order, so 'frieren season 2' finds season 2 rather than the more popular season 1.
+    .sort((a, b) => b.c - a.c || (a.c ? (b.m.popularity || 0) - (a.m.popularity || 0) : 0) || a.i - b.i)[0]?.m || null;
+}
+
 async function runPredictor(prefetched = null) {
   _metric('discover.predict.run');  // v1.0.239 — usage metrics (distinct from just opening the tab)
   const q = byId(IDS.predictorInput).value.trim();
@@ -18747,10 +18914,21 @@ async function runPredictor(prefetched = null) {
           genres averageScore seasonYear format
         }
       }`;
+    // v1.0.253 — a typed title fetches up to 8 matches (still one request) and keeps the closest
+    const listQuery = `
+      query($search: String) {
+        Page(perPage: 8) {
+          media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+            id title { romaji english userPreferred } popularity
+            coverImage { large medium }
+            genres averageScore seasonYear format
+          }
+        }
+      }`;
     try {
-      const res  = await _anilistFetch({ query: searchQuery, variables: lookupId ? { id: lookupId } : { search: q } }); // v1.0.251
+      const res  = await _anilistFetch(lookupId ? { query: searchQuery, variables: { id: lookupId } } : { query: listQuery, variables: { search: q } }); // v1.0.253
       const json = await res.json();
-      media = json?.data?.Media;
+      media = lookupId ? json?.data?.Media : _predictorBestMatch(json?.data?.Page?.media, q); // v1.0.253
     } catch (e) {
       renderErrorInto(resultsEl, e.message, 'font-size:0.85rem;text-align:left'); return;
     }
@@ -18777,6 +18955,9 @@ async function runPredictor(prefetched = null) {
     return;
   }
 
+  // v1.0.253 — let "⏳ Predicting…" paint first: the first prediction after a battle also scores the
+  // user's own list, and a dropdown pick reaches this point without any await.
+  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
   const prediction = _predictElo(media);
   if (!prediction) {
     resultsEl.innerHTML = `<p style="color:#8b949e;font-size:0.85rem">Not enough to go on yet — Predict needs at least ${MIN_RANKED_FOR_INSIGHTS} ranked anime. Keep battling and come back.</p>`;
@@ -18785,20 +18966,15 @@ async function runPredictor(prefetched = null) {
   _renderPrediction(media, prediction, resultsEl);
 }
 
-function _predictElo(media) {
+// v1.0.253 — the scoring half of the old _predictElo, split out so the same model can also score the
+// user's own anime (_predictCalibration). Reads only its arguments; eloSorted = active by ELO, ascending.
+function _predictRaw(media, active, eloSorted = [...active].sort((a, b) => a.elo - b.elo)) {
   const targetGenres = media.genres  || [];
   const targetYear   = media.seasonYear;
   const targetScore  = media.averageScore;  // 0–100
   const targetFormat = media.format;
-  // v1.0.241 — only ranked anime carry taste signal. Unranked entries all sit
-  // at ELO 1200, so including them dragged every prediction to the median
-  // and, at cold start, "predicted" any title into D tier with high
-  // confidence because a 1200 tie sorts last.
-  const active       = animeList.filter(a => !excludedIds.has(a.id) && _isRanked(a));
-  if (active.length < MIN_RANKED_FOR_INSIGHTS) return null;
 
   // ── User baseline ──────────────────────────────────────────────────────────
-  const eloSorted  = [...active].sort((a, b) => a.elo - b.elo);
   const userMedian = eloSorted[Math.floor(eloSorted.length / 2)].elo;
 
   // ── Signal 1: KNN — weighted average of most-similar ranked anime ──────────
@@ -18829,11 +19005,10 @@ function _predictElo(media) {
   }).filter(x => x.sim > 0.3).sort((a, b) => b.sim - a.sim);
 
   const components = [];
-  let knnK = 0;
+  let topK = []; // v1.0.253 — returned so confidence can count settled neighbours
 
   if (simScored.length >= 2) {
-    knnK = Math.min(12, simScored.length);
-    const topK     = simScored.slice(0, knnK);
+    topK = simScored.slice(0, 12);
     const totalSim = topK.reduce((s, x) => s + x.sim, 0);
     const knnElo   = topK.reduce((s, x) => s + x.anime.elo * x.sim, 0) / totalSim;
     components.push({
@@ -18842,6 +19017,7 @@ function _predictElo(media) {
       weight: 0.50,
       detail: topK.slice(0, 3).map(x => ({ name: x.anime.title, elo: x.anime.elo })),
       isKnn:  true,
+      kind:   'knn', // v1.0.253 — which calibration list this signal is compared against
     });
   }
 
@@ -18866,6 +19042,7 @@ function _predictElo(media) {
       value:  userMedian + weightedDev,
       weight: 0.25,
       detail: genreHits,
+      kind:   'genre', // v1.0.253
     });
   }
 
@@ -18874,16 +19051,16 @@ function _predictElo(media) {
   // where the community score falls as a percentile within the user's own
   // ranked list and map it to the corresponding ELO percentile.
   if (targetScore) {
-    const withScores = active.filter(a => a.globalScore > 0).sort((a, b) => a.globalScore - b.globalScore);
+    const withScores = active.filter(a => a.globalScore > 0); // v1.0.253 — only counted, so no sort
     if (withScores.length >= 5) {
       const belowCount = withScores.filter(a => a.globalScore <= targetScore).length;
       const pct        = belowCount / withScores.length;
-      const eloRanked  = [...active].sort((a, b) => a.elo - b.elo);
-      const eloIdx     = Math.min(Math.floor(pct * eloRanked.length), eloRanked.length - 1);
+      const eloIdx     = Math.min(Math.floor(pct * eloSorted.length), eloSorted.length - 1); // v1.0.253 — reuse the baseline sort
       components.push({
         label:  `Community score (${(targetScore / 10).toFixed(1)}/10)`,
-        value:  eloRanked[eloIdx].elo,
+        value:  eloSorted[eloIdx].elo,
         weight: 0.15,
+        kind:   'community', // v1.0.253
       });
     }
   }
@@ -18897,6 +19074,7 @@ function _predictElo(media) {
         label:  `${targetFormat.replace('_', ' ')} format`,
         value:  fmtAvg,
         weight: 0.10,
+        kind:   'format', // v1.0.253 — same value for every title of a format, so not used for agreement
       });
     }
   }
@@ -18904,38 +19082,88 @@ function _predictElo(media) {
   if (!components.length) return null;
 
   // ── Combine with normalised weights ────────────────────────────────────────
-  const totalW       = components.reduce((s, c) => s + c.weight, 0);
-  const rawElo       = components.reduce((s, c) => s + c.value * (c.weight / totalW), 0);
-  const predictedElo = Math.max(ELO_FLOOR, Math.min(2200, Math.round(rawElo)));
+  const totalW = components.reduce((s, c) => s + c.weight, 0);
+  const rawElo = components.reduce((s, c) => s + c.value * (c.weight / totalW), 0);
+  return { rawElo, components, topK }; // v1.0.253 — placement and confidence moved to _predictElo
+}
 
-  const sorted   = [...active].sort((a, b) => b.elo - a.elo); // ranked anime only (v1.0.241)
-  const insertAt = sorted.findIndex(a => a.elo < predictedElo);
-  const rankPos  = insertAt === -1 ? sorted.length : insertAt;
-  const tier     = getTier(rankPos, sorted.length + 1);
+// v1.0.253 — three of the four signals are averages, so rawElo has ~1/3 of the list's spread. Score each
+// ranked anime the same way (left out of its own pool) and rank new titles among those scores instead.
+const PREDICT_CALIB_PAIRS = 50000; // v1.0.253 — caps first-run work (~70 ms on a Mac, phones several times that); past ~220 ranked, an even ELO spread (min 40) is scored
+let _predictCalib = null;
+function _predictCalibration(active) {
+  // v1.0.253 — cache key: battleCount plus an id/ELO fingerprint, so undo, re-seeds and cloud loads also refresh it
+  let h = 0;
+  for (const a of active) h = (Math.imul(h, 31) + (a.id | 0) * 7 + (a.elo | 0)) | 0;
+  const key = `${battleCount}|${active.length}|${h}`;
+  if (_predictCalib?.key === key) return _predictCalib;
+  const eloAsc = [...active].sort((a, b) => a.elo - b.elo);
+  const step   = active.length / Math.min(active.length, Math.max(40, Math.floor(PREDICT_CALIB_PAIRS / active.length)));
+  const raw = [], kinds = { knn: [], genre: [], community: [] };
+  for (let i = 0; i < eloAsc.length; i += step) {
+    const a = eloAsc[Math.floor(i)];
+    const r = _predictRaw({ genres: a.genres, seasonYear: a.seasonYear, averageScore: a.globalScore, format: a.format },
+      active.filter(x => x !== a), eloAsc.filter(x => x !== a));
+    if (!r) continue;
+    raw.push(r.rawElo);
+    for (const c of r.components) kinds[c.kind]?.push(c.value);
+  }
+  const desc = arr => arr.sort((x, y) => y - x);
+  _predictCalib = { key, raw: desc(raw), knn: desc(kinds.knn), genre: desc(kinds.genre), community: desc(kinds.community) };
+  return _predictCalib;
+}
+// v1.0.253 — share of a descending list above v (ties count half)
+function _predictPctAbove(desc, v) {
+  let above = 0, equal = 0;
+  for (const x of desc) { if (x > v) above++; else if (x === v) equal++; else break; }
+  return (above + equal / 2) / desc.length;
+}
+
+function _predictElo(media) {
+  // v1.0.241 — only ranked anime carry taste signal. Unranked entries all sit
+  // at ELO 1200, so including them dragged every prediction to the median
+  // and, at cold start, "predicted" any title into D tier with high
+  // confidence because a 1200 tie sorts last.
+  const active = animeList.filter(a => !excludedIds.has(a.id) && _isRanked(a));
+  if (active.length < MIN_RANKED_FOR_INSIGHTS) return null;
+  const pred = _predictRaw(media, active);
+  const cal  = pred && _predictCalibration(active);
+  if (!cal?.raw.length) return null;
+  const { components, topK } = pred;
+
+  // v1.0.253 — same percentile among the self-scores → same percentile of the list the Rankings tab
+  // numbers, so #N, tier and ELO (that rank's real ELO) all match that tab.
+  const { ranked, total } = _rankedEloOrder();
+  const rankPos      = Math.round(_predictPctAbove(cal.raw, pred.rawElo) * total);
+  const tier         = getTier(rankPos, total + 1);
+  const predictedElo = Math.round(ranked[Math.min(rankPos, total - 1)].elo);
 
   // ── Confidence ──────────────────────────────────────────────────────────────
-  const genreMatchCount = genreHits.reduce((s, g) => s + g.count, 0);
-  const signalCount     = components.length;
+  // v1.0.253 — was "High" for almost every title. Now: similar anime found, how many are settled
+  // (SETTLING_MIN_BATTLES+ battles), and whether the signals agree (each placed among its own self-scores).
+  const knnK     = topK.length;
+  const settledK = topK.filter(x => (x.anime.battles || 0) >= SETTLING_MIN_BATTLES).length;
+  const pcts     = components.filter(c => cal[c.kind]?.length).map(c => _predictPctAbove(cal[c.kind], c.value));
+  const spread   = pcts.length >= 2 ? Math.max(...pcts) - Math.min(...pcts) : null;
+  const agreeText = spread === null ? 'one signal only' : spread <= 0.35 ? 'signals agree' : spread <= 0.6 ? 'signals partly agree' : 'signals disagree';
 
-  let confidenceLevel, confidenceText, confidenceNote;
-  if (knnK >= 5 && signalCount >= 3) {
+  let confidenceLevel, confidenceText;
+  if (knnK >= 8 && settledK >= 6 && spread !== null && spread <= 0.35) {
     confidenceLevel = 'high';
     confidenceText  = '● High confidence';
-    confidenceNote  = `${knnK} similar anime found · ${signalCount} signals active`;
-  } else if (knnK >= 2 || (signalCount >= 2 && active.length >= 30)) {
+  } else if (knnK >= 3 && settledK >= 2 && (spread === null || spread <= 0.6)) {
     confidenceLevel = 'medium';
     confidenceText  = '● Medium confidence';
-    confidenceNote  = knnK > 0
-      ? `${knnK} similar anime found — rank more to improve accuracy`
-      : 'No close matches found — using genre and community signals only';
   } else {
     confidenceLevel = 'low';
     confidenceText  = '● Low confidence';
-    confidenceNote  = 'Too few comparable anime in your rankings yet';
   }
+  const confidenceNote = knnK
+    ? `${settledK} of ${knnK} similar anime have ${SETTLING_MIN_BATTLES}+ battles · ${agreeText}`
+    : `No close matches in your rankings · ${agreeText}`;
 
-  const confidence = { level: confidenceLevel, text: confidenceText, note: confidenceNote, genreMatchCount };
-  return { predictedElo, tier, rankPos: rankPos + 1, totalAnime: sorted.length + 1, components, confidence };
+  const confidence = { level: confidenceLevel, text: confidenceText, note: confidenceNote };
+  return { predictedElo, tier, rankPos: rankPos + 1, totalAnime: total + 1, components, confidence };
 }
 
 function _renderPrediction(media, pred, container) {
@@ -19172,35 +19400,45 @@ function setMode(name) {
 // noisy repeats of matchups the user has already settled. Called from
 // pickWinner (one pair per battle) and applyTrioResult (three pairs per round).
 //
-// Target count is re-resolved each tick so it tracks the CURRENT eligible
-// pool — if the user excludes a member halfway through, target shrinks and
-// completion can fire earlier than the original C(n,2).
+// v1.0.253 — Progress counts only pairs whose members are both still eligible, so an
+// exclude mid-run drops its pairs from done and total alike (it used to stop early).
 function _recordBattleWithinPair(idA, idB) {
   if (!battleWithinFranchise) return;
   // Same key shape as matchupStats — "minId-maxId" — so it dedupes both
   // orderings automatically and matches the keys pickWinner already builds.
-  const key = [Math.min(idA, idB), Math.max(idA, idB)].join('-');
-  battleWithinFranchise.battledPairs.add(key);
+  battleWithinFranchise.battledPairs.add(_battleWithinKey(idA, idB));
+  _battleWithinCheckDone(true); // v1.0.253 — true: pickWinner / applyTrioResult paint the next pair themselves
+}
 
-  const eligible = animeList.filter(a =>
-    battleWithinFranchise.ids.has(a.id)
-    && !excludedIds.has(a.id)
-    && !hiddenFormatsBattle.has(a.format)
-    && !hiddenStatusesBattle.has(a.status)
-  );
-  const n = eligible.length;
-  if (n < 2) {
-    const name = battleWithinFranchise.name;
-    stopBattleWithinFranchise();
-    showToast(`✨ Battle Within "${name}" stopped — pool ran out of eligible pairs.`, 4500);
-    return;
+// v1.0.253 — Pair count over members still eligible; writes
+// "⚔ Battle within: <name> · done / total" into the banner (textContent).
+function _battleWithinProgress() {
+  const bw = battleWithinFranchise;
+  if (!bw) return null;
+  const ids = animeList.filter(a => bw.ids.has(a.id) && !excludedIds.has(a.id)
+    && !hiddenFormatsBattle.has(a.format) && !hiddenStatusesBattle.has(a.status)).map(a => a.id);
+  let done = 0;
+  for (let x = 0; x < ids.length; x++) {
+    for (let y = x + 1; y < ids.length; y++) {
+      if (bw.battledPairs.has(_battleWithinKey(ids[x], ids[y]))) done++;
+    }
   }
-  const target = (n * (n - 1)) / 2;
-  if (battleWithinFranchise.battledPairs.size >= target) {
-    const name = battleWithinFranchise.name;
-    stopBattleWithinFranchise();
-    showToast(`✨ You've battled every pair in "${name}" — Battle Within stopped. Tap ⚔ Battle within again for another pass.`, 5500);
-  }
+  const total = (ids.length * (ids.length - 1)) / 2;
+  const msg = byId(IDS.withinFranchiseMsg);
+  if (msg) msg.textContent = `⚔ Battle within: ${bw.name} · ${done} / ${total}`;
+  return { n: ids.length, done, total };
+}
+
+// v1.0.253 — Auto-stop (same toasts as before) once fewer than 2 members are
+// eligible or every remaining pair is battled. Returns true if it stopped.
+function _battleWithinCheckDone(skipRender) {
+  const p = _battleWithinProgress();
+  if (!p || (p.n >= 2 && p.done < p.total)) return false;
+  const name = battleWithinFranchise.name;
+  stopBattleWithinFranchise(skipRender);
+  if (p.n < 2) showToast(`✨ Battle Within "${name}" stopped — pool ran out of eligible pairs.`, 4500);
+  else showToast(`✨ You've battled every pair in "${name}" — Battle Within stopped. Tap ⚔ Battle within again for another pass.`, 5500);
+  return true;
 }
 
 // v1.0.211 — Battle within franchise. Constrains the picker pool to a single
@@ -19250,8 +19488,7 @@ function startBattleWithinFranchise(name) {
 
   // Banner + filter-button visual cue
   const banner = byId(IDS.withinFranchiseBanner);
-  const msg    = byId(IDS.withinFranchiseMsg);
-  if (msg)    msg.textContent = `⚔ Battle within: ${name}`;
+  _battleWithinProgress(); // v1.0.253 — banner text now ends with the "· 0 / N" pair count
   if (banner) banner.classList.add('active');
   const filterBtn = byId(IDS.filterBtn);
   if (filterBtn) filterBtn.classList.add('has-franchise-lock');
@@ -19260,6 +19497,7 @@ function startBattleWithinFranchise(name) {
   closeDetailModal();
 
   // Fresh battle from the restricted pool
+  nextPairOverride = null; // v1.0.253 — a pair queued before the run (e.g. by undo) would bypass the lock
   _preloadedPair = null;
   _preloadedImgs = null;
   // v1.0.211 hotfix — navigate to the battle screen. The franchise modal
@@ -19341,7 +19579,9 @@ function battleNextFromModal() {
   showToast(`⚔ Queued "${displayTitle(animeList[idx])}" for next battle.`, 2500);
 }
 
-function stopBattleWithinFranchise() {
+// v1.0.253 — skipRender: the auto-stop inside a pick passes true because the
+// caller paints the next pair; rendering here put the last result beat on the new cards.
+function stopBattleWithinFranchise(skipRender) {
   battleWithinFranchise = null;
   const banner = byId(IDS.withinFranchiseBanner);
   if (banner) banner.classList.remove('active');
@@ -19349,6 +19589,7 @@ function stopBattleWithinFranchise() {
   if (filterBtn) filterBtn.classList.remove('has-franchise-lock');
   _preloadedPair = null;
   _preloadedImgs = null;
+  if (skipRender === true) return;
   if (trioMode) renderTrio(); else renderBattle();
 }
 
@@ -20656,12 +20897,12 @@ function renderFranchiseTable() {
     const scoreStr = group.avgScore ? group.avgScore + '%' : '–';
     const clickHandler = isSingle
       ? `showAnimeDetail(${group.members[0].id})`
-      : `showFranchiseDetail('${esc(group.name).replace(/'/g, "\\'")}')`;
+      : 'showFranchiseDetail(this.dataset.franchise)'; // v1.0.253 — name in data-franchise (apostrophes broke the quoted form)
     // v1.0.162 — mirror the grid card fix: display the ELO rank, not the
     // current-sort position. v1.0.241 — '–' for Unranked groups.
     const displayRank = group.unranked ? '–' : (group.eloRank ?? rank) + 1;
     html += `
-      <tr class="franchise-table-group" data-gid="${gid}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
+      <tr class="franchise-table-group" data-gid="${gid}" data-franchise="${esc(group.name)}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
         <td class="tbl-rank">${displayRank}</td>
         <td><img class="tbl-cover"${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
@@ -21910,23 +22151,21 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.251 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.253 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
+// 1.0.252 never shipped, so its Trio bullet is carried as the last bullet.
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🎯 For You and mood recommendations now show each series only once, so you won\'t see a show right next to its own sequel (like Wistoria Season 1 and 2) and the freed spot goes to another pick.',
-    '📱 On phones the Missing tab is much shorter above your results: the intro is now one short sentence, and the upcoming, planning, format and relation filters sit behind a Filters button that shows how many you\'ve changed.',
-    '⏳ The Missing scan now spaces out its AniList requests and counts down on screen whenever it has to wait for AniList\'s rate limit, retrying instead of quietly skipping anime, and if it still can\'t finish it keeps your last full scan rather than saving an incomplete list.',
-    '🖼 On wider screens the two battle covers are now bigger, filling more of each card instead of sitting small in the middle, while phones and Trio mode look the same as before.',
-    '🔮 Predict no longer opens on just an empty search box: a "Try:" row suggests a few anime you haven\'t added yet, and tapping one runs the prediction straight away.',
-    '🏅 Tastemaker, Era Curator, All-Stars, Hidden Gem Fan and Old Soul now only count anime with at least 3 battles, so they no longer unlock after one lucky win, and badges you\'ve already earned stay unlocked.',
-    '🔐 The landing page buttons now all read "Log in with…" and fit on one line on phones and desktop, the guest button is simply "Try it as a guest", and logging out after signing in no longer leaves the login button stuck on "Logging in…".',
-    '↻ If Genre picks or Hidden Gems on Discover can\'t load (for example when AniList is busy), just that section says so and suggests Refresh while your other recommendations still show, and the Refresh button no longer gets stuck on "Refreshing…".',
-    '🎭 Tapping a mood chip on For You and then switching Discover tabs, tapping another mood or hitting Clear no longer drops the old mood picks on top of what you\'re looking at, and finished mood picks are waiting when you come back to For You.',
-    '📋 In list view, anime you haven\'t battled yet now show a dash in the Tier column like the # column, instead of a clipped "UNRANKE" tag running into Confidence, and hovering the dash shows "Unranked".',
+    '🔗 Short share links now open straight away. Before, a link opened just after sharing could say "This share link isn\'t available" for a few seconds.',
+    '📸 Shared Top 10 and 3×3 images show your anime covers again instead of grey title boxes, carry the real Kessen logo, and no longer fall back to a download on Android when covers are slow to load.',
+    '⚔ Battle within a franchise now shows each matchup only once, counts your progress in the banner (e.g. 3 / 15) and stops when every pair is done; it also works for franchises with an apostrophe in the name, like JoJo\'s.',
+    '🎭 With a mood picked on Discover ▸ For You, ↻ Refresh now brings back fresh picks for that mood from your latest rankings instead of switching back to your normal recommendations, and tapping a mood chip no longer clears your Rankings search box.',
+    '🔮 Predict now places a new title by comparing it with how your own ranked anime score, so guesses spread from S to D instead of piling up in B/C; it also says how sure it is and why, and typing a title like "Frieren: Beyond Journey\'s End" now finds the main series instead of a spin-off.',
+    '🎯 The Strong match badge now actually appears: Discover marks recs whose genres fit your list better than about four in five of your own ranked anime (once you\'ve ranked 20).',
+    '🖼 Trio mode now uses the same bigger covers as the other battle modes on wider screens, so switching into Trio no longer shrinks the art.',
   ],
 };
 
