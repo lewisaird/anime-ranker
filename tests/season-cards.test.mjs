@@ -18,6 +18,7 @@ import vm from 'node:vm';
 const here = dirname(fileURLToPath(import.meta.url));
 const js   = readFileSync(join(here, '..', 'app.js'), 'utf8');
 const css  = readFileSync(join(here, '..', 'styles.css'), 'utf8');
+const html = readFileSync(join(here, '..', 'index.html'), 'utf8'); // v1.0.255 — Help text check
 
 // Top-level functions in app.js start at column 0 and end at the first "}" line.
 function fnSource(name) {
@@ -99,4 +100,31 @@ test('the rec-card hover lift only applies on hover-capable pointers', () => {
   const lines = css.split('\n').filter(l => l.includes('.rec-card:hover'));
   assert.ok(lines.length > 0, '.rec-card:hover rule not found');
   for (const l of lines) assert.match(l, /@media \(hover: hover\)/);
+});
+
+// v1.0.255 — the This Season subtitle must match the 12-card fill (unwatched first, then any ✓ Watched),
+// not claim the list is unwatched-only. Runs the real setRecsTab with a cached grid, so nothing is fetched.
+test('This Season subtitle says unwatched titles come first, not unwatched-only', () => {
+  const els = {};
+  const ctx = vm.createContext({
+    IDS: new Proxy({}, { get: (_, k) => String(k) }),
+    byId: (id) => (els[id] ??= { innerHTML: '', textContent: '', style: {}, classList: { toggle() {} } }),
+    document: { querySelectorAll: () => [] },
+    recsTab: 'foryou', _recsCache: { seasonal: { html: '<p>cards</p>', gridDisplay: 'block' } },
+    _recsLoadedTab: null, _moodRecActive: false, _activeMoodKey: null,
+    _metric() {}, _renderPredictorExamples() {}, renderFranchiseGaps() {},
+    getCurrentSeason: () => ({ season: 'FALL', year: 2026 }),
+    getNextSeason: () => ({ season: 'WINTER', year: 2027 }),
+  });
+  vm.runInContext(fnSource('setRecsTab'), ctx);
+  ctx.setRecsTab('seasonal');
+  const sub = els.recsSubText.innerHTML;
+  assert.match(sub, /^Airing this season \(FALL 2026\) and next \(WINTER 2027\) — titles you haven't watched come first\.<br>/);
+  assert.doesNotMatch(sub, /filtered/i);
+  assert.match(sub, /🎯 <strong>Strong match<\/strong> highlights/); // second line unchanged
+  assert.equal(els.recsGrid.innerHTML, '<p>cards</p>');            // cache restore untouched
+  // Help describes This Season without an unwatched-only claim
+  const help = html.match(/<em>This Season<\/em> \(([^)]*)\)/)?.[1];
+  assert.ok(help, 'Help should describe This Season');
+  assert.doesNotMatch(help, /unwatched|haven't watched|filtered/i);
 });

@@ -234,3 +234,122 @@ test('starting Battle within keeps Blind; a Tower run ends Battle within', () =>
   assert.match(fnSource('startBattleWithinFranchise'), /if \(!blindMode\) setMode\('normal'\);/);
   assert.match(fnSource('startTower'), /if \(battleWithinFranchise\) \{\s*stopBattleWithinFranchise\(true\);/);
 });
+
+// v1.0.255 — Undo of the pick or "✗ Not seen" that finished a run puts the run back on.
+// Runs the real pickWinner / excludeAnime / undoLast with the rest of the app stubbed.
+function undoSandbox(n) {
+  const ctx = sandbox(n);
+  const els = {};
+  ctx.byId = id => {
+    if (!els[id]) {
+      const cls = new Set();
+      els[id] = { textContent: '', cls, classList: { add: c => cls.add(c), remove: (...c) => c.forEach(x => cls.delete(x)) } };
+    }
+    return els[id];
+  };
+  ctx.els = els;
+  Object.assign(ctx, {
+    towerMode: false, settleMode: false, blindMode: false, wsoMode: false,
+    wsoWinnerIdx: null, wsoStreak: 0, wsoFacedOrder: [],
+    matchupStats: {}, battleHistory: [], MAX_HISTORY: 1000, battleCount: 0,
+    undoStack: [], MAX_UNDO_DEPTH: 5, nextPairOverride: null,
+    _dailyStreak: {}, _weeklyStats: { battlesThisWeek: 0 }, _lastUnlocked: [],
+  });
+  for (const f of ['updateElo', 'checkMilestone', 'checkSessionSummary', '_checkAchievements', '_syncTasteNewBadge',
+    '_updateDailyStreak', '_tickWeeklyStats', '_metric', 'saveState', '_startResultBeat', '_renderWsoBadge',
+    '_undoSideEffects', 'updateProgress', '_updateUndoBtn']) ctx[f] = () => {};
+  ctx._inResultBeat = () => false;
+  ctx.renderPair = (a, b) => show(ctx, [a, b]);
+  ctx.renderBattle = () => { // a queued pair first, then the picker, as renderBattle does
+    ctx.renders++;
+    const p = ctx.nextPairOverride?.shift() ?? ctx.pickOpponents();
+    if (ctx.nextPairOverride?.length === 0) ctx.nextPairOverride = null;
+    show(ctx, p);
+  };
+  vm.runInContext(['pickWinner', 'undoLast', 'excludeAnime', '_pushUndoSnapshot', '_battleWithinResume'].map(fnSource).join('\n\n'), ctx);
+  return ctx;
+}
+
+test('undoing the pick that finished a run puts the run back on, then the redo finishes it again', () => {
+  for (let i = 0; i < 20; i++) {
+    const ctx = undoSandbox(3);
+    const run = ctx.battleWithinFranchise;
+    show(ctx, ctx.pickOpponents());
+    ctx.pickWinner(0);
+    ctx.pickWinner(1);
+    const last = [ctx.currentA, ctx.currentB];
+    ctx.pickWinner(0);
+    assert.equal(ctx.battleWithinFranchise, null);
+    assert.match(ctx.toasts.at(-1), /battled every pair in "Test"/);
+    ctx.undoLast();
+    assert.equal(ctx.battleWithinFranchise, run, 'the same run object is back');
+    assert.deepEqual([ctx.currentA, ctx.currentB], last, 'the undone pair is back on screen');
+    assert.equal(run.battledPairs.size, 2);
+    assert.ok(!run.battledPairs.has(key(ctx, ...last)), 'the undone pair is un-ticked');
+    assert.equal(ctx.els.wm.textContent, '⚔ Battle within: Test · 2 / 3');
+    assert.ok(ctx.els.wb.cls.has('active'), 'banner shown');
+    assert.ok(ctx.els.fb.cls.has('has-franchise-lock'), 'Filter-button lock style');
+    assert.equal(ctx.nextPairOverride, null, 'the pair picked after the run must not be queued under the lock');
+    assert.equal(ctx._preloadedPair, null);
+    assert.match(ctx.toasts.at(-1), /Battle within "Test" is back on/);
+    ctx.pickWinner(1);
+    assert.equal(ctx.battleWithinFranchise, null, 'redoing the last pair finishes the run again');
+    assert.match(ctx.toasts.at(-1), /battled every pair in "Test"/);
+    assert.equal(ctx.els.wb.cls.has('active'), false);
+  }
+});
+
+test('undoing the "✗ Not seen" that stopped a run puts the run back on', () => {
+  const ctx = undoSandbox(3);
+  const run = ctx.battleWithinFranchise;
+  run.battledPairs.add(key(ctx, 0, 1));
+  run.battledPairs.add(key(ctx, 0, 2));
+  show(ctx, [1, 2]);
+  ctx.excludeAnime({ stopPropagation() {} }, 1); // member 2 out: 0-1 is the only pair left, already battled
+  assert.equal(ctx.battleWithinFranchise, null);
+  assert.match(ctx.toasts.at(-1), /battled every pair in "Test"/);
+  ctx.undoLast();
+  assert.equal(ctx.battleWithinFranchise, run);
+  assert.equal(ctx.excludedIds.has(ctx.animeList[2].id), false);
+  assert.deepEqual([ctx.currentA, ctx.currentB], [1, 2]);
+  assert.equal(ctx.els.wm.textContent, '⚔ Battle within: Test · 2 / 3');
+  assert.ok(ctx.els.wb.cls.has('active') && ctx.els.fb.cls.has('has-franchise-lock'));
+});
+
+test('undo mid-run, or after the banner\'s Stop, does not bring a stopped run back', () => {
+  const ctx = undoSandbox(3);
+  show(ctx, ctx.pickOpponents());
+  ctx.pickWinner(0);
+  const toasts = ctx.toasts.length;
+  ctx.undoLast(); // mid-run: the lock stays on, the pair is un-ticked (v1.0.253)
+  assert.ok(ctx.battleWithinFranchise);
+  assert.equal(ctx.battleWithinFranchise.battledPairs.size, 0);
+  assert.equal(ctx.toasts.length, toasts, 'no "back on" toast mid-run');
+  ctx.pickWinner(0);
+  ctx.stopBattleWithinFranchise(); // the user stops it
+  ctx.undoLast();
+  assert.equal(ctx.battleWithinFranchise, null);
+});
+
+test('resume is skipped in a mode Battle within can\'t use, with nothing left, or with another run on', () => {
+  const ctx = undoSandbox(3);
+  const run = ctx.battleWithinFranchise;
+  ctx.battleWithinFranchise = null;
+  for (const m of ['settleMode', 'trioMode', 'wsoMode', 'towerMode']) {
+    ctx[m] = true;
+    ctx._battleWithinResume(run);
+    assert.equal(ctx.battleWithinFranchise, null, m);
+    ctx[m] = false;
+  }
+  for (const [a, b] of [[0, 1], [0, 2], [1, 2]]) run.battledPairs.add(key(ctx, a, b));
+  ctx._battleWithinResume(run);
+  assert.equal(ctx.battleWithinFranchise, null, 'every pair already battled');
+  run.battledPairs.delete(key(ctx, 1, 2));
+  const other = { name: 'Other', ids: new Set(), battledPairs: new Set() };
+  ctx.battleWithinFranchise = other;
+  ctx._battleWithinResume(run);
+  assert.equal(ctx.battleWithinFranchise, other, 'a run started since is left alone');
+  ctx.battleWithinFranchise = null;
+  ctx._battleWithinResume(run);
+  assert.equal(ctx.battleWithinFranchise, run);
+});

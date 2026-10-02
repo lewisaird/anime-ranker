@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.254" />
+  <meta name="version" content="1.0.255" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1272,9 +1272,10 @@
         <!-- v1.0.238 — Mood quick-chip strip inside For You. Presented as
              an OPTIONAL filter row (label + "Clear" chip) so users can see
              at a glance that the recs grid below is the main content and
-             the chips are just an optional narrowing. Tabbing to This
-             Season / Predict / Missing clears the mood filter. Clear
-             chip is only visible when a mood is active. -->
+             the chips are just an optional narrowing. Clear chip is only
+             visible when a mood is active.
+             v1.0.255 — the selected mood survives sub-tab switches (since
+             1.0.253); only ✕ Clear, logout, Change User or reset clears it. -->
         <div id="foryou-mood-chips" style="display:none;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:0 0 14px;font-size:0.78rem">
           <button type="button" class="mood-chip" onclick="applyMoodRec('comforting')"
             style="background:rgba(88,166,255,0.06);border:1px solid #30363d;color:#8b949e;border-radius:14px;padding:4px 12px;cursor:pointer;transition:all 0.15s">☕ Comforting</button>

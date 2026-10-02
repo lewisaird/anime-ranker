@@ -134,3 +134,41 @@ test('_clearRankingState forgets the mood and supersedes in-flight For You / moo
     assert.ok(src.includes(line), `_clearRankingState should contain ${line}`);
   }
 });
+
+// v1.0.255 — restoring a selected mood's cached picks (sub-tab round trip, For You tapped again,
+// Discover reopened mid-run) showed the plain For You sub-text and "Recommended for you" heading
+// above the mood's own "… picks" heading; with no mood selected both stay visible.
+test('For You sub-text and heading follow the selected mood when its picks are restored', () => {
+  const shown = (ctx) => ({
+    heading: ctx.byId('foryouRecsHeading').style.display,
+    sub:     ctx.byId('recsSubText').style.display,
+  });
+
+  const a = sandbox();
+  a.ctx._activeMoodKey = 'devastating';
+  a.ctx._recsCache.foryou = { html: '<h3>Devastating picks</h3>', gridDisplay: 'block' };
+  a.ctx.setRecsTab('seasonal');
+  a.ctx.setRecsTab('foryou');                 // cached mood picks restored, no reload
+  assert.deepEqual(a.calls, ['plain:seasonal']);
+  assert.match(a.ctx.byId('recsGrid').innerHTML, /Devastating picks/);
+  assert.deepEqual(shown(a.ctx), { heading: 'none', sub: 'none' });
+  a.ctx.renderDiscoverTab();                  // main-tab round trip
+  assert.deepEqual(shown(a.ctx), { heading: 'none', sub: 'none' });
+
+  const b = sandbox();
+  b.ctx._activeMoodKey = 'intense';
+  b.ctx._moodRecActive = true;                // mood run still loading
+  b.ctx.renderDiscoverTab();
+  assert.equal(b.ctx.byId('foryouRecsHeading').style.display, 'none');
+  assert.deepEqual(b.calls, []);
+
+  const c = sandbox();
+  c.ctx._recsCache.foryou = { html: '<p>plain</p>', gridDisplay: 'block' };
+  c.ctx.setRecsTab('foryou');                 // no mood: plain For You keeps its sub-text and heading
+  assert.deepEqual(shown(c.ctx), { heading: '', sub: '' });
+  c.ctx.renderDiscoverTab();
+  assert.deepEqual(shown(c.ctx), { heading: '', sub: '' });
+
+  // chip highlight and ✕ Clear change only with the mood itself (applyMoodRec / clearMoodRec)
+  assert.doesNotMatch(fnSource('setRecsTab'), /foryouMoodClear|mood-chip/);
+});

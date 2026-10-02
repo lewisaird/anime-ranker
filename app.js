@@ -1134,6 +1134,10 @@ function _clearRankingState() {
   _moodRecActive = false;
   _forYouGen++;
   _resetMoodChipUI();
+  // v1.0.255 — Missing: forget the previous account's scan and planning-list IDs. A scan still
+  // running sees saveKey change and stops without saving (fetchFranchiseGaps).
+  _franchiseGaps    = null;
+  _planningIdsCache = null;
 
   // Return to the home screen
   hide('battle-screen');
@@ -4074,7 +4078,10 @@ function pickWinner(side) {
   _metric('battle');     // v1.0.239 — usage metrics
   // v1.0.211 — Battle Within Franchise auto-completion. No-op when the mode
   // isn't active. Reuses _mKey which is already in scope above.
+  const withinRun = battleWithinFranchise;
   _recordBattleWithinPair(wId, lId);
+  // v1.0.255 — this pick finished the run: the undo snapshot keeps it so Undo can put it back on.
+  if (withinRun && !battleWithinFranchise) snap.withinRun = withinRun;
   // v1.0.207 — WSO state update. Side 0 (champion) winning ticks the streak
   // and adds the opponent to the faced list; side 1 (opponent) winning makes
   // them the new champion with streak 1 and the previous champion as their
@@ -4168,6 +4175,7 @@ function undoLast() {
     // because exclusion doesn't run a battle.
     excludedIds.delete(snap.excludedId);
     _battleWithinProgress(); // v1.0.253 — the re-included member's pairs count again in the Battle Within banner
+    _battleWithinResume(snap.withinRun); // v1.0.255 — this exclude had stopped the run: put it back on
     if (typeof snap.prevA === 'number' && typeof snap.prevB === 'number'
         && snap.prevA < animeList.length && snap.prevB < animeList.length) {
       renderPair(snap.prevA, snap.prevB);
@@ -4256,6 +4264,9 @@ function undoLast() {
 
     // After undo, if the user re-picks from pairA/pairB, restore the same next pair
     nextPairOverride = [[nextA, nextB], ...(nextPairOverride || [])];
+    // v1.0.255 — this pick had finished the run: put it back on (that also drops the
+    // queue above, whose next pair was picked with the lock off).
+    _battleWithinResume(snap.withinRun);
 
     // Show the original pair
     renderPair(pairA, pairB);
@@ -5662,12 +5673,26 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
   return card;
 }
 
+// v1.0.255 — the overview's group, built from the card's own list (_franchiseSortedList) so its numbers match the card.
+// hidden: this franchise's entries that list leaves out (excluded / format- or length-filtered); full: the unfiltered group.
+function _franchiseDetailGroups(groupName) {
+  const visible = _franchiseSortedList();
+  const group   = _buildFranchiseGroups(visible).find(g => g.name === groupName);
+  if (!group) return null;
+  if (visible.length === animeList.length) return { group, hidden: [], full: group }; // v1.0.255 — nothing left out: same list, same groups
+  const visibleIds = new Set(visible.map(a => a.id));
+  const topId = group.members[0].id;
+  const full  = _buildFranchiseGroups(getSortedList()).find(g => g.members.some(a => a.id === topId)) || group;
+  return { group, hidden: full.members.filter(a => !visibleIds.has(a.id)), full };
+}
+
 function showFranchiseDetail(groupName, opts) {
   const skipHistoryPush = !!(opts && opts.skipHistoryPush);
-  // Use unfiltered list so all franchise members show regardless of active filters
-  const groups = _buildFranchiseGroups(getSortedList());
-  const group  = groups.find(g => g.name === groupName);
-  if (!group) return;
+  // v1.0.255 — numbers from the same list as the card (was the unfiltered list, so an excluded entry moved Avg ELO,
+  // ★ Best, W/L and confidence, and a card left with one entry didn't open); left-out entries are listed, greyed.
+  const detail = _franchiseDetailGroups(groupName);
+  if (!detail) return;
+  const group = detail.group;
   _resetDiscoverVariant(); // v1.0.245
 
   const tier = _franchiseTier(group); // v1.0.241 — null when the franchise is Unranked
@@ -5678,7 +5703,9 @@ function showFranchiseDetail(groupName, opts) {
   // v1.0.241 — one ranked-order pass for every member (was a full sort per
   // member); unranked members get the Unranked pill.
   const { rankMap: memberRankMap, total: memberRankTotal } = _rankedEloOrder();
-  const membersHtml = group.members.map((a, i) => {
+  // v1.0.255 — the card's entries, then the ones it leaves out (greyed, after a label; in no number above).
+  const membersHtml = group.members.concat(detail.hidden).map((a, i) => {
+    const notCounted = i >= group.members.length;
     const memberRank = memberRankMap.get(a.id);
     const memberTier = memberRank === undefined ? null : getTier(memberRank, memberRankTotal);
     const wr = (a.wins + a.losses) > 0
@@ -5694,7 +5721,9 @@ function showFranchiseDetail(groupName, opts) {
     // instead of dumping the user back at the Rankings screen with no context.
     // v1.0.253 — name rides in a data attribute: esc() turns ' into &#39;, which the
     // browser decodes back inside onclick, so "JoJo's …" broke the quoted JS string.
-    return `<div class="franchise-detail-member${fuzzyCls}" data-franchise="${esc(group.name)}" onclick="navigateToFranchiseMember(${a.id}, this.dataset.franchise)">
+    // v1.0.255 — a "Not counted" label before the first left-out entry; each such row says why (Excluded / Hidden by filter).
+    const notCountedLabel = i === group.members.length ? '<div class="franchise-detail-hidden-label">Not counted — excluded or hidden by a filter</div>' : '';
+    return `${notCountedLabel}<div class="franchise-detail-member${fuzzyCls}${notCounted ? ' not-counted' : ''}" data-franchise="${esc(group.name)}" onclick="navigateToFranchiseMember(${a.id}, this.dataset.franchise)">
       <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
@@ -5704,6 +5733,7 @@ function showFranchiseDetail(groupName, opts) {
             : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex">Unranked</span>'}
           <span>ELO ${a.elo}</span>
           <span>${wr} WR</span>
+          ${notCounted ? `<span>${excludedIds.has(a.id) ? 'Excluded' : 'Hidden by filter'}</span>` : ''}
         </div>
       </div>
     </div>`;
@@ -5741,7 +5771,9 @@ function showFranchiseDetail(groupName, opts) {
   const peakAllTimeHtml = !isSingleMember && !group.unranked && allTimePeak > group.peakElo
     ? ` · All-time best ${allTimePeak} <span style="color:#8b949e;font-size:0.82rem">(${esc(displayTitle(allTimePeakMember))})</span>`
     : '';
-  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${group.members.length} entries · Avg ELO ${group.bestElo}${peakNowHtml}${peakAllTimeHtml}`;
+  // v1.0.255 — "1 entry · ELO" for a single entry (a card filtered down to one now opens)
+  const _n = group.members.length;
+  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${_n} ${_n === 1 ? 'entry · ELO' : 'entries · Avg ELO'} ${group.bestElo}${peakNowHtml}${peakAllTimeHtml}`;
   const cohDetail = _coherenceLabel(group);
   const cohHtml   = cohDetail
     ? ` · <span class="franchise-coherence ${cohDetail.cls}" style="font-size:0.78rem" title="${esc(cohDetail.title)}">${cohDetail.icon} ${cohDetail.label} <span style="color:#8b949e;font-weight:400">(±${group.eloStdDev} ELO)</span></span>`
@@ -5830,8 +5862,9 @@ function showFranchiseDetail(groupName, opts) {
   // could have changed since modal-open if the user excluded an entry).
   // v1.0.253 — the name now rides in an esc()'d data-franchise attribute. The old
   // '${…}' JS string broke on an apostrophe (esc's &#39; decodes back to ') — e.g. JoJo's.
-  const safeName = esc(group.name);
-  const canBattle = group.members.length >= 2;
+  // v1.0.255 — both actions look the franchise up in the unfiltered list, so pass its full name and size.
+  const safeName = esc(detail.full.name);
+  const canBattle = detail.full.members.length >= 2;
   const actionsHtml = `
     <div class="franchise-detail-actions">
       <button type="button" class="franchise-action-btn" data-franchise="${safeName}"
@@ -6943,6 +6976,15 @@ function _doChangeUser() {
   closeNotifCentre();
   _notifCentre = [];
   _ncUpdateBell();
+  // v1.0.255 — the next username must not inherit this list's Discover picks or selected mood
+  // (logout already does this in _clearRankingState); Missing is guarded by _franchiseGapsKey.
+  Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
+  _recsLoadedTab = null;
+  _discoverItems.clear();
+  _activeMoodKey = null;
+  _moodRecActive = false;
+  _forYouGen++;
+  _resetMoodChipUI();
   showFlex('username-screen');
 }
 
@@ -7128,7 +7170,7 @@ function refreshDiscover() {
   const tabAtLoad = recsTab;
   // v1.0.250 — cache this load's own result; the live grid may show another tab by now
   // v1.0.251 — restore the button however the load ends (it was success-only, so a
-  // rejection left it disabled on "Refreshing…"); same .finally as refreshFranchiseGaps
+  // rejection left it disabled on "Refreshing…"); the button is restored in .finally (v1.0.255: Missing's Rescan follows _franchiseGapsLoading instead)
   _loadRecsGrid().then(res => {
     _recsCache[tabAtLoad] = res;
   }).finally(() => {
@@ -7158,7 +7200,10 @@ function setRecsTab(tab, fromMood = false) {
   // HTML). All mood entry goes through the chip strip on For You; the
   // #moods-section container is kept hidden purely as a cache-seed host.
   const specialTab = isPredict || isGaps;
-  if (sub)        sub.style.display        = specialTab ? 'none' : '';
+  // v1.0.255 — For You with a mood selected: the mood's own "… picks" heading replaces the plain
+  // sub-text and "Recommended for you" heading (as applyMoodRec sets them), cached picks included
+  const moodOnForYou = tab === 'foryou' && !!_activeMoodKey;
+  if (sub)        sub.style.display        = (specialTab || moodOnForYou) ? 'none' : '';
   if (grid)       grid.style.display       = specialTab ? 'none' : (grid.style.display || '');
   if (predictSec) predictSec.style.display = isPredict ? '' : 'none';
   if (moodsSec)   moodsSec.style.display   = 'none';   // hidden container — cache seed only
@@ -7168,24 +7213,10 @@ function setRecsTab(tab, fromMood = false) {
   const moodChips = byId(IDS.foryouMoodChips);
   if (moodChips) moodChips.style.display = (tab === 'foryou') ? 'flex' : 'none';
   const recsHeading = byId(IDS.foryouRecsHeading);
-  if (recsHeading) recsHeading.style.display = (tab === 'foryou') ? '' : 'none';
+  if (recsHeading) recsHeading.style.display = (tab === 'foryou' && !moodOnForYou) ? '' : 'none'; // v1.0.255 — hidden while a mood is selected (moodOnForYou)
 
-  // v1.0.238 — leaving For You clears any active mood filter, so the user
-  // isn't surprised by mood-filtered recs when they come back to For You.
-  if (tab !== 'foryou' && _moodRecActive) {
-    _moodRecActive = false;
-    document.querySelectorAll('#foryou-mood-chips .mood-chip').forEach(el => {
-      el.classList.remove('active');
-      el.style.borderColor = '#30363d';
-      el.style.color       = '#8b949e';
-      el.style.background  = 'rgba(88,166,255,0.06)';
-    });
-    const clearBtn = byId(IDS.foryouMoodClear);
-    if (clearBtn) clearBtn.style.display = 'none';
-    const recsHeading2 = byId(IDS.foryouRecsHeading);
-    if (recsHeading2) recsHeading2.style.display = '';   // restore heading for normal recs
-    delete _recsCache['foryou'];  // force fresh normal recs on return
-  }
+  // v1.0.255 — the v1.0.238 "leaving For You clears the mood" reset is gone: it never ran (_moodRecActive is
+  // cleared above; no caller passes fromMood) and since v1.0.253 the selected mood survives sub-tab switches.
 
   if (isGaps) {
     renderFranchiseGaps();  // v1.0.237
@@ -7199,7 +7230,8 @@ function setRecsTab(tab, fromMood = false) {
     } else {
       const { season, year } = getCurrentSeason();
       const nextS = getNextSeason(season, year);
-      sub.innerHTML = `Airing this season (${season} ${year}) and next (${nextS.season} ${nextS.year}) — filtered to titles you haven't watched.<br>All recommendations are worth a look; 🎯 <strong>Strong match</strong> highlights the ones that best fit your taste.`;
+      // v1.0.255 — never unwatched-only: sorted unwatched-first, so with 1.0.254's 12-card cap ✓ Watched ones often follow
+      sub.innerHTML = `Airing this season (${season} ${year}) and next (${nextS.season} ${nextS.year}) — titles you haven't watched come first.<br>All recommendations are worth a look; 🎯 <strong>Strong match</strong> highlights the ones that best fit your taste.`;
     }
 
     if (_moodRecActive) {
@@ -7277,6 +7309,9 @@ function _gapLooksLikeRecap(relationType, format, titles, description) {
 const FRANCHISE_GAP_UPCOMING_STATUSES = new Set(['NOT_YET_RELEASED']);
 
 let _franchiseGaps       = null;   // { fetchedAt, groups: [{ parent, gaps: [...] }] }
+// v1.0.255 — the saveKey (account) _franchiseGaps was scanned/loaded for; renderFranchiseGaps
+// drops it when the current account is a different one (Change User doesn't run _clearRankingState).
+let _franchiseGapsKey    = '';
 let _franchiseGapsView   = (() => { try { return localStorage.getItem('kessen.ui.gapsView') === 'grid' ? 'grid' : 'list'; } catch { return 'list'; } })(); // 'grid' | 'list' — v1.0.245: list by default, persisted
 let _franchiseGapsLoading = false;
 // v1.0.237 — Sort mode + franchise-group toggle promoted from DOM state
@@ -7364,6 +7399,10 @@ function _isFranchiseGapsCacheFresh(cache) {
 let _planningIdsCache = null;
 async function _fetchPlanningIds() {
   if (_planningIdsCache instanceof Set) return _planningIdsCache;
+  // v1.0.255 — only cache the result for the account that asked; a lookup still running
+  // at logout or account switch must not write the previous account's list back.
+  const keyAtStart = saveKey;
+  const keep = (ids) => { if (saveKey === keyAtStart) _planningIdsCache = ids; return ids; };
   // Prefer AniList when both are available — one query, native IDs.
   if (authToken && authUser?.name) {
     try {
@@ -7379,12 +7418,10 @@ async function _fetchPlanningIds() {
       (data?.data?.MediaListCollection?.lists ?? []).forEach(l => {
         (l.entries ?? []).forEach(e => { if (e.media?.id) ids.add(e.media.id); });
       });
-      _planningIdsCache = ids;
-      return ids;
+      return keep(ids);
     } catch (e) {
       console.warn('[_fetchPlanningIds] AniList query failed:', e?.message);
-      _planningIdsCache = new Set();
-      return _planningIdsCache;
+      return keep(new Set());
     }
   }
   // MAL session — fetch the plan_to_watch list from MAL, then map MAL IDs
@@ -7406,7 +7443,7 @@ async function _fetchPlanningIds() {
         (j.data || []).forEach(e => { if (e.node?.id) malIds.add(e.node.id); });
         path = j.paging?.next ? j.paging.next.replace(/^.*api\.myanimelist\.net\/v2/, '') : null;
       }
-      if (malIds.size === 0) { _planningIdsCache = new Set(); return _planningIdsCache; }
+      if (malIds.size === 0) return keep(new Set());
       // Convert MAL IDs → AniList IDs in batches
       const anilistIds = new Set();
       const arr = [...malIds];
@@ -7418,17 +7455,14 @@ async function _fetchPlanningIds() {
         (jj?.data?.Page?.media ?? []).forEach(m => { if (m?.id) anilistIds.add(m.id); });
         if (i + 50 < arr.length) await new Promise(res => setTimeout(res, 350));
       }
-      _planningIdsCache = anilistIds;
-      return anilistIds;
+      return keep(anilistIds);
     } catch (e) {
       console.warn('[_fetchPlanningIds] MAL path failed:', e?.message);
-      _planningIdsCache = new Set();
-      return _planningIdsCache;
+      return keep(new Set());
     }
   }
   // Guest session — no planning list to fetch.
-  _planningIdsCache = new Set();
-  return _planningIdsCache;
+  return keep(new Set());
 }
 
 // v1.0.251 — AniList currently allows ~30 requests/min. The Missing scan keeps to
@@ -7589,11 +7623,17 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
   }
 
   _franchiseGapsLoading = true;
+  _paintGapsRefreshBtn(); // v1.0.255 — every scan (tab-open auto-scan or Rescan) disables Rescan until it ends
+  // v1.0.255 — the account this scan is for. A large scan runs for minutes; after a logout or account
+  // switch it stops at the next batch or wait tick, and nothing is saved, kept or painted.
+  const scanKey = saveKey;
+  const stopIfSwitched = () => { if (saveKey !== scanKey) throw new Error('account changed during the scan'); };
   const progressEl = byId(IDS.gapsProgress);
   // v1.0.251 — pacing and rate-limit waits count down on the progress line with the
   // last progress figure, so a long scan never looks frozen.
   let waitLabel = '';
   const onWait = s => {
+    stopIfSwitched(); // v1.0.255
     if (progressEl) progressEl.textContent = `⏳ Waiting for AniList's rate limit — resuming in ${s}s${waitLabel ? ` (${waitLabel})` : ''}`;
   };
   try {
@@ -7610,6 +7650,7 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
       planningIds.forEach(id => excludeIds.add(id));
     }
     const media = await _fetchFranchiseRelations(source, (done, total) => {
+      stopIfSwitched(); // v1.0.255
       waitLabel = `${done} / ${total} anime scanned`; // v1.0.251
       if (progressEl) progressEl.textContent = waitLabel;
     }, onWait);
@@ -7619,16 +7660,19 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
     // first eight episodes" in the description) get caught. Only the gap
     // candidates are fetched — a few hundred at most — not every relation.
     await _flagRecapsFromDescriptions(groups, (done, total) => {
+      stopIfSwitched(); // v1.0.255
       waitLabel = `${done} / ${total} checked for recaps`; // v1.0.251
       if (progressEl) progressEl.textContent = `Checking ${done} / ${total} for recaps…`;
     }, onWait);
     // v1.0.251 — only reached when every batch of both passes succeeded
     const data = { fetchedAt: Date.now(), groups };
+    stopIfSwitched(); // v1.0.255 — never save the old account's scan under the new saveKey
     _saveFranchiseGapsCache(data);
     _franchiseGaps = data;
     return data;
   } finally {
     _franchiseGapsLoading = false;
+    _paintGapsRefreshBtn(); // v1.0.255 — restored only when the scan really ends (success or failure)
     if (progressEl) progressEl.textContent = '';
   }
 }
@@ -7759,13 +7803,20 @@ function _paintGapsFiltersBtn() {
   btn.setAttribute('aria-expanded', _gapsFiltersOpen ? 'true' : 'false');
 }
 
-function refreshFranchiseGaps() {
-  _metric('missing.rescan');  // v1.0.239 — usage metrics
+// v1.0.255 — the Rescan button mirrors _franchiseGapsLoading; fetchFranchiseGaps paints it at scan
+// start and end, so a scan started by opening the tab shows "Scanning…" too.
+function _paintGapsRefreshBtn() {
   const btn = byId(IDS.gapsRefreshBtn);
-  if (btn) { btn.textContent = '↻ Scanning…'; btn.disabled = true; }
-  renderFranchiseGaps({ force: true }).finally(() => {
-    if (btn) { btn.textContent = '↻ Rescan'; btn.disabled = false; }
-  });
+  if (!btn) return;
+  btn.textContent = _franchiseGapsLoading ? '↻ Scanning…' : '↻ Rescan';
+  btn.disabled = _franchiseGapsLoading;
+}
+
+function refreshFranchiseGaps() {
+  // v1.0.255 — a tap mid-scan used to be dropped silently and re-enable the button early
+  if (_franchiseGapsLoading) { showToast('⏳ A scan is already running.', 3000); return; }
+  _metric('missing.rescan');  // v1.0.239 — usage metrics
+  renderFranchiseGaps({ force: true }); // v1.0.255 — button state follows the scan (fetchFranchiseGaps)
 }
 
 // Format a compact meta-string ("TV · 24ep · 2024 · Sequel") for a gap card.
@@ -7941,6 +7992,8 @@ function _mergeGapsByFranchise(groups) {
 // { force }: bust cache and re-fetch. { skipFetch }: use current _franchiseGaps
 // as-is, no network. Everything else defaults to "use fresh cache or fetch".
 async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
+  // v1.0.255 — a scan held in memory for another account (e.g. after Change User) is not this one's
+  if (_franchiseGapsKey !== saveKey) _franchiseGaps = null;
   const loadingEl = byId(IDS.gapsLoading);
   const emptyEl   = byId(IDS.gapsEmpty);
   const resultsEl = byId(IDS.gapsResults);
@@ -7980,14 +8033,23 @@ async function renderFranchiseGaps({ force = false, skipFetch = false } = {}) {
     if (resultsEl) resultsEl.innerHTML     = '';
     if (metaEl)    metaEl.style.display    = 'none';
     // v1.0.251 — a scan AniList cut short throws and saves nothing; keep the last complete one.
+    const scanKey = saveKey; // v1.0.255 — the account this scan is for
     try {
       _franchiseGaps = await fetchFranchiseGaps({ force, includePlanning });
     } catch (e) {
       scanFailed = true;
       console.warn('[renderFranchiseGaps] scan failed:', e?.message);
-      _franchiseGaps = _franchiseGaps || _loadFranchiseGapsCache(); // so re-opening the tab doesn't auto-rescan
+      // v1.0.255 — fall back to the saved scan only while it is still the scanned account's
+      if (saveKey === scanKey) _franchiseGaps = _franchiseGaps || _loadFranchiseGapsCache(); // so re-opening the tab doesn't auto-rescan
     }
     if (loadingEl) loadingEl.style.display = 'none';
+    // v1.0.255 — logged out or switched account mid-scan: the scan stopped and kept nothing. No toast and
+    // none of its results; if Missing is the open sub-tab, show the current account's own saved scan.
+    if (saveKey !== scanKey) {
+      if (recsTab === 'gaps') await renderFranchiseGaps({ skipFetch: true });
+      return;
+    }
+    _franchiseGapsKey = scanKey; // v1.0.255
   }
 
   const data = _franchiseGaps || _loadFranchiseGapsCache();
@@ -13835,16 +13897,19 @@ function excludeAnime(event, side) {
   // discarded all prior undo history when the user accidentally tapped
   // "✗ Not seen". Push a typed snapshot instead so the same Undo button
   // can roll the exclusion back. Handled in undoLast as snap.type==='exclude'.
-  _pushUndoSnapshot({
+  const snap = { // v1.0.255 — named so a Battle within run this exclude stops can be added below
     type:       'exclude',
     excludedId,
     prevA:      currentA,
     prevB:      currentB,
-  });
+  };
+  _pushUndoSnapshot(snap);
 
   // v1.0.253 — Battle Within: recount without the excluded member (auto-stops if
   // no unbattled pair is left); if the survivor has no unbattled partner, draw a fresh pair.
-  if (battleWithinFranchise && _battleWithinCheckDone()) { saveState(); return; }
+  // v1.0.255 — if this stops the run, the undo snapshot keeps it so Undo can put it back on.
+  const withinRun = battleWithinFranchise;
+  if (withinRun && _battleWithinCheckDone()) { snap.withinRun = withinRun; saveState(); return; }
   // Keep the surviving anime in its position; replace only the excluded slot
   const newIdx = pickOneOpponent(keepIdx);
   if (newIdx == null) { renderBattle(); saveState(); return; }
@@ -15711,7 +15776,8 @@ function renderDiscoverTab() {
   const moodChips = byId(IDS.foryouMoodChips);
   if (moodChips) moodChips.style.display = (recsTab === 'foryou') ? 'flex' : 'none';
   const recsHeading = byId(IDS.foryouRecsHeading);
-  if (recsHeading) recsHeading.style.display = (recsTab === 'foryou') ? '' : 'none';
+  // v1.0.255 — hidden while a mood is selected: its picks and loading placeholder carry their own heading
+  if (recsHeading) recsHeading.style.display = (recsTab === 'foryou' && !_activeMoodKey) ? '' : 'none';
 
   // v1.0.251 — still no pre-loading; only the "Try:" chips are refreshed (no requests)
   if (recsTab === 'predict') { _renderPredictorExamples(); return; } // predictor is search-driven, no pre-loading needed
@@ -19485,6 +19551,22 @@ function _battleWithinCheckDone(skipRender) {
   return true;
 }
 
+// v1.0.255 — Undo of the pick or "✗ Not seen" that finished a run puts that run back on: banner
+// with its count, Filter-button lock, no queued or preloaded pair from outside it. Skipped when
+// another run is on, the current mode can't use Battle within, or no unbattled pair is left.
+function _battleWithinResume(run) {
+  if (!run || battleWithinFranchise || settleMode || trioMode || wsoMode || towerMode) return;
+  battleWithinFranchise = run;
+  const p = _battleWithinProgress();
+  if (p.n < 2 || p.done >= p.total) { battleWithinFranchise = null; return; }
+  byId(IDS.withinFranchiseBanner)?.classList.add('active');
+  byId(IDS.filterBtn)?.classList.add('has-franchise-lock');
+  nextPairOverride = null;
+  _preloadedPair = null;
+  _preloadedImgs = null;
+  showToast(`↩ Battle within "${run.name}" is back on.`, 2500);
+}
+
 // v1.0.211 — Battle within franchise. Constrains the picker pool to a single
 // franchise so users can settle the internal ordering ("which Re:Zero season
 // is best?") without that franchise getting paired against unrelated titles
@@ -22205,20 +22287,19 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.254 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.255 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '📱 On phones the header shows your anime count again, on a second small line under your battle count (e.g. "341 battles" over "367 anime"), and the header is no taller.',
-    '⏳ While Discover loads, For You, This Season and mood picks now show grey placeholder cards laid out like the finished page (headed rows, two per row on phones) instead of a block of bare boxes or one huge grey box, and the placeholders now visibly pulse in light mode too.',
-    '🗓 Discover ▸ This Season now shows 12 picks per season so desktop rows are full, and every Discover card lines up its title, format and ⭐ score with its neighbours, with the full "Part of…" note at the bottom instead of a half-cut line.',
-    '⛓ Franchise cards are clearer: the headline now reads "Avg ELO", "★ Top" is now "★ Best" (the franchise\'s highest-rated entry), and the numbers skip entries still unranked at 1200, count a battle between two of the franchise\'s own entries only once (and leave it out of the win rate), and judge confidence by battles per entry, so some franchise ranks and tiers may move.',
-    '📤 The Share window is simpler: it shows a preview of your Top 10 image with one Share button (Download if your device has no share sheet) and your short link underneath, the 3×3 option is gone, and a brand-new short link now keeps trying for longer instead of saying it isn\'t available.',
-    '🎯 Strong match is rarer and means more: it now goes to roughly one card in five (at most two per row, three per This Season section), the ones whose genres best fit your list.',
-    '⚔ While you\'re battling within a franchise, the Mode menu now greys out Settle, Trio, Winner Stays and Tower (they ignored the one-pair-at-a-time order, so Winner Stays kept the same champion every round); Standard and Blind still work, and everything comes back when you stop or finish.',
+    '🎭 With a mood picked, For You no longer shows the plain "Recommended for you" heading and description above that mood\'s picks when you come back to it.',
+    '🔄 In Discover ▸ Missing, the ↻ Rescan button now shows "Scanning…" and stays greyed out for as long as a scan is running, including the scan that starts when you open the tab.',
+    '🔒 If you log out or switch account while a Missing scan is still running, the scan now stops, and its results are never saved to or shown on the other account.',
+    '↩ Undoing the battle (or "✗ Not seen") that finished a Battle within run now puts the run back on, with its banner and pair count.',
+    '🧩 A franchise\'s pop-up now shows the same Avg ELO, Best, wins and losses as its card when some entries are excluded or filtered out, lists those entries greyed at the bottom, and now opens for a card left with one entry.',
+    '📅 The note at the top of Discover ▸ This Season now says titles you haven\'t watched come first, since a few ✓ Watched shows can fill out a season\'s 12 cards.',
   ],
 };
 

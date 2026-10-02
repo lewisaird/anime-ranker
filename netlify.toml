@@ -3,7 +3,8 @@
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "18"
+  # v1.0.255 — Node 18 (April 2025) and 20 (April 2026) are end-of-life; 22 is supported to April 2027. Keep in step with .github/workflows/ci.yml.
+  NODE_VERSION = "22"
 
 [functions]
   node_bundler = "esbuild"
