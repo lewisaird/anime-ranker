@@ -3279,14 +3279,18 @@ function _renderDailyStreakBadge() {
 // milestone and starts again after each one. It used to show the average
 // per-anime confidence (battles ÷ 10 per anime), which for a 367-anime list
 // needed ~3,700 battles to fill — at 200 battles it sat at 5% and read as a
-// stray line. Early rungs are close together so a first session sees it move.
-const _BATTLE_MILESTONE_LADDER = [10, 25, 50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
+// stray line.
+// v1.0.258 — the rungs are the Taste Story milestones (10 and 25 filled with no card). Keep in step
+// with TASTE_STORY_MILESTONES; a literal, because that const is declared further down (TDZ at load).
+const _BATTLE_MILESTONE_LADDER = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
 function _nextBattleMilestone(count) {
   for (let i = 0; i < _BATTLE_MILESTONE_LADDER.length; i++) {
     const m = _BATTLE_MILESTONE_LADDER[i];
-    if (count < m) return { prev: i > 0 ? _BATTLE_MILESTONE_LADDER[i - 1] : 0, next: m };
+    // v1.0.258 — `<=` keeps the bar full on the milestone battle itself while the card opens
+    if (count <= m) return { prev: i > 0 ? _BATTLE_MILESTONE_LADDER[i - 1] : 0, next: m };
   }
-  const next = Math.floor(count / 200) * 200 + 200;
+  // v1.0.258 — after 1000 every 200 (TASTE_STORY_REPEAT_INTERVAL); ceil so 1200, 1400… also show full
+  const next = Math.ceil(count / 200) * 200;
   return { prev: next - 200, next };
 }
 
@@ -3299,12 +3303,19 @@ function updateProgress() {
     return;
   }
   const { prev, next } = _nextBattleMilestone(battleCount);
-  const pct = Math.round(((battleCount - prev) / (next - prev)) * 100);
-  byId(IDS.progressBar).style.width = pct + '%';
+  // v1.0.258 — floor, so 100% only on the milestone battle (round showed 1199 as full)
+  const pct = Math.floor(((battleCount - prev) * 100) / (next - prev)); // v1.0.258 — integer maths: 29/50 shows 58%, not 57%
+  const bar = byId(IDS.progressBar);
+  // v1.0.258 — a new lap starts empty at once instead of sliding back from full
+  bar.style.transition = pct < parseFloat(bar.style.width) ? 'none' : '';
+  bar.style.width = pct + '%';
   const wrap = byId(IDS.progressBarWrap);
   if (wrap) {
     const left = next - battleCount;
-    wrap.title = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ${left} more to your next milestone (${next})`;
+    // v1.0.258 — name the Taste Story; on the milestone battle the bar is full, so point at the next one
+    wrap.title = `${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · ` + (left === 0
+      ? `Taste Story milestone reached · next at ${_nextBattleMilestone(next + 1).next}`
+      : `${left} more to your next Taste Story milestone (${next})`);
   }
   // Built with textContent, not innerHTML: battleCount can come from an
   // imported backup file unchecked, so it must stay inert.
@@ -5096,6 +5107,42 @@ function _franchiseKey(title) {
   return _franchiseBaseName(title).toLowerCase().replace(/\./g, '');
 }
 
+// v1.0.258 — the franchise name a card shows; display only (grouping keys stay on _franchiseBaseName). Repairs " – " subtitles,
+// a mid "(TV)", "Second Season", "No. 8" / "Golgo 13". lone (a one-entry card) only drops a sequel marker (Lewis: "Frieren: …" stays whole).
+// v1.0.258 — a trailing season/part marker on a lone aliased title with a colon ("Date a Live: Season 4", "Bleach: … Part 2").
+const _LONE_SEQUEL_MARKER = /(?::\s*|\s+)(?:(?:The\s+)?Final\s+(?:Season|Part|Cour)|(?:Season|Part|Cour)\s*(?:\d{1,2}|[IVX]+)|(?:\d+(?:st|nd|rd|th)|First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth)\s+Season|[1-9]\d?)$/i; // no leading 0: "Digimon: Digital Monsters 02" is its own series
+function _franchiseDisplayName(title, lone) {
+  if (!title) return '';
+  const alias = _franchiseAlias(title);
+  // a curated name, but never over a lone entry's colon subtitle; there only a trailing sequel marker goes.
+  // A curated name that is only a grouping stub ("SSSS.", ".hack//") is no name to show a lone entry under.
+  if (alias && lone && /[./]$/.test(alias)) return title;
+  if (alias) return lone && /:\s/.test(title) ? (title.replace(_LONE_SEQUEL_MARKER, '').trim() || title) : alias;
+  // lone: a subtitle colon (": ") becomes COLON, a private-use character no title contains, so the strip's colon rules can't cut there.
+  const COLON = String.fromCharCode(0xE000);
+  let t = title.replace(/\s+[–—]\s+/g, ' - ').replace(/\s*\((?:TV|Movie|OVA|ONA)\)(?=[\s:])/gi, '');
+  if (lone) t = t.replace(/:(?=\s)/g, COLON);
+  let name = _franchiseBaseName(t);
+  const ord = /\s(First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth)\s+Season\b/i.exec(t);
+  if (ord) name = name.replace(new RegExp(`\\s+${ord[1]}$`, 'i'), '');
+  if (lone && t.startsWith(name)) {
+    const cut = t.slice(name.length); // what the strip took off the end
+    if (name.includes(COLON)) {
+      // After a kept colon only a season/part/movie marker or a dash/bracket suffix may go, never a word ("…: Two Heroes", "…: Act II").
+      if (!/^\s*(?:[-(]|(?:The\s+)?Final\s+(?:Season|Part|Cour|Chapter|Arc)\b|(?:Season|Part|Cour)\s*(?:\d|[IVX]+\b)|(?:\d+(?:st|nd|rd|th)|First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth)\s+Season\b|(?:The\s+)?(?:Movie|Motion\s+Picture)\b)/i.test(cut)) return title;
+      // Only a marker followed the last colon ("Monogatari Series: Second Season"): the name is the part before it.
+      if (name.endsWith(COLON)) return _franchiseDisplayName(name.slice(0, -1).split(COLON).join(':'), true);
+    } else if (/^[!?]*(?:\s+(?:Twins?|Origins?|Returns?|Revenge|Reborn|Reload|Revolution|More|Plus|Ultra|Beyond|Kai|Heroes|Alternative|Progressive)[!?]*)?$/i.test(cut)) {
+      return title; // nothing went, or only punctuation or a word of the name ("Durarara!!", "So What?", "…Galactic Heroes")
+    } else {
+      name += /^[!?]*/.exec(cut)[0]; // "…in a Dungeon? IV" keeps its "?"
+    }
+  }
+  const num = t.startsWith(name) && /^\s+(\d+)(?!\w)/.exec(t.slice(name.length));
+  if (num && (/\bNo\.$/i.test(name) || num[1].length === 2)) name += ' ' + num[1];
+  return name.split(COLON).join(':');
+}
+
 // Fallback lookup: checks whether `key` shares a word-boundary prefix or
 // suffix with any existing group key.
 //
@@ -5486,6 +5533,12 @@ function _buildFranchiseGroups(sorted) {
       ? Math.round(scoredMembers.reduce((s, a) => s + a.globalScore, 0) / scoredMembers.length) : 0;
     if (group.members.length === 1) {
       group.name = displayTitle(group.members[0]);
+      // v1.0.258 — name stays the lookup key; the card shows the franchise name with this entry's own title under it
+      // (tester: a lone series kept its series name). A lone crossover keeps its full title.
+      group.displayName = _isCrossoverAnime(group.members[0]) ? group.name : (_franchiseDisplayName(group.name, true) || group.name);
+      // v1.0.258 — a title that differs only in capitals ("ONE PIECE" vs the curated "One Piece") already is the name
+      if ((group.displayName || '').toLowerCase() === (group.name || '').toLowerCase()) group.displayName = group.name;
+      group.entryTitle  = group.displayName !== group.name ? group.name : '';
     } else {
       // v1.0.140 — re-derive the franchise name from the most popular member
       // rather than whichever entry happened to be processed first. AniList
@@ -5502,11 +5555,26 @@ function _buildFranchiseGroups(sorted) {
         : (mainline.titleEn || mainline.title || '');
       const cleanName = _franchiseBaseName(mainlineRaw);
       if (cleanName) group.name = cleanName;
+      // v1.0.258 — shown name only (the key above is unchanged): "Kaiju No. 8" not "Kaiju No.", "Assassination Classroom" not "… Second"
+      group.displayName = _franchiseDisplayName(mainlineRaw, false) || group.name;
+      group.entryTitle  = '';
     }
     // v1.0.254 — coherence (how consistently the user ranks the entries: eloStdDev, eloRange)
     // is now set by _franchiseGroupStats above, over ranked members only (needs two).
     result.push(group);
   }
+  // v1.0.258 — no two cards show the same name: a rewritten shown name that matches another card's falls back to the
+  // group's own name. One-entry cards give way first, so a repaired multi-entry name survives a clash with one.
+  // Lookups use .name, never .displayName.
+  const revertClashes = which => {
+    const shown = new Map();
+    result.forEach(g => shown.set(g.displayName, (shown.get(g.displayName) || 0) + 1));
+    result.forEach(g => {
+      if (which(g) && g.displayName !== g.name && shown.get(g.displayName) > 1) { g.displayName = g.name; g.entryTitle = ''; }
+    });
+  };
+  revertClashes(g => g.members.length === 1);
+  revertClashes(() => true);
   // Compute ELO rank for each group (used for tier badge regardless of sort order)
   // v1.0.241 — a franchise is Unranked when none of its members is ranked
   // (see _isRanked). Only ranked groups get an eloRank; tiers are taken
@@ -5520,7 +5588,7 @@ function _buildFranchiseGroups(sorted) {
   const dir = sortAsc ? 1 : -1;
   switch (currentSort) {
     case 'title':
-      result.sort((a, b) => a.name.localeCompare(b.name) * dir);
+      result.sort((a, b) => a.displayName.localeCompare(b.displayName) * dir); // v1.0.258 — by the name the card shows
       break;
     case 'winrate':
       result.sort((a, b) => ((a.winRate ?? -1) - (b.winRate ?? -1)) * dir);
@@ -5587,6 +5655,11 @@ function _franchiseUnrankedBadge(group) {
   const n = _franchiseUnrankedCount(group);
   return n ? `<span class="franchise-unranked-count" title="Not battled yet, so left out of Avg ELO">${n} unranked</span>` : '';
 }
+// v1.0.258 — a lone entry's own title, small and muted under the franchise name (grid card, list row, pop-up title).
+// The leading space keeps the two apart in screen-reader text and the list's search text.
+function _franchiseEntryTitleHtml(group) {
+  return group.entryTitle ? ` <span class="franchise-entry-title">${esc(group.entryTitle)}</span>` : '';
+}
 
 function _buildFranchiseCard(group, rank, _totalGroups) {
   const isSingle = group.members.length === 1;
@@ -5596,7 +5669,7 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
   const card = document.createElement('div');
   card.className = 'rank-card franchise-group'
                  + (isSingle ? ' franchise-single' : '');
-  card.dataset.franchiseName = group.name;
+  card.dataset.franchiseName = group.displayName; // v1.0.258 — search matches the name the card shows (list rows match their text)
   // Stash member IDs so _filterFranchise can apply per-member filters
   // (format / episode-length / excluded / fuzzy-only) without rebuilding the
   // franchise grouper. A franchise card is hidden iff NO member passes the
@@ -5683,11 +5756,12 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
     const peakBadge = (!isSingle && !group.unranked && group.statMembers.length >= 2 && group.peakElo !== group.bestElo) // v1.0.254 — one ranked entry: Best would just repeat Avg
       ? `<span class="franchise-peak" title="Highest-rated entry in this franchise">★ Best ${group.peakElo}</span>`
       : '';
+    // v1.0.258 — the franchise name, and for a lone entry its own title as a muted line under it
     card.innerHTML = `
       ${displayRank ? `<span class="rank-number ${numClass}">#${displayRank}</span>` : ''}
       ${tier ? `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>` : '<span class="tier-badge t-unranked">Unranked</span>'}
       <img${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
-      <div class="rank-title">${esc(group.name)}</div>
+      <div class="rank-title${group.entryTitle ? ' has-entry-title' : ''}">${esc(group.displayName)}</div>${_franchiseEntryTitleHtml(group)}
       <div class="rank-elo">${isSingle ? 'ELO' : 'Avg ELO'} ${group.bestElo}</div>
       ${countBadge || fuzzyCountBadge || peakBadge ? `<div class="franchise-grid-meta">${countBadge}${peakBadge}${fuzzyCountBadge}</div>` : ''}
       <span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span>
@@ -5797,8 +5871,9 @@ function showFranchiseDetail(groupName, opts) {
   const coverEl = byId(IDS.modalCover);
   coverEl.classList.remove('img-broken');
   _setCoverSrc(coverEl, group.cover); // v1.0.250 — same crossorigin mode as the franchise grid
-  coverEl.alt = group.name;
-  byId(IDS.modalTitle).textContent = group.name;
+  coverEl.alt = group.displayName;
+  // v1.0.258 — the franchise name, and a lone entry's own title as a muted line under it (other views reset it via textContent)
+  byId(IDS.modalTitle).innerHTML = esc(group.displayName) + _franchiseEntryTitleHtml(group);
   const tierHtml = tier
     ? `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>`
     : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex;margin-right:6px">Unranked</span>';
@@ -8317,6 +8392,22 @@ function _recFranchiseRoot(seed) {
   } catch { return null; }
 }
 
+// v1.0.258 — Lewis: rows hide unowned entries of the seed's own franchise (Kakegurui Twin under Kakegurui xx; Missing lists them).
+// Same franchise: a member of the seed's _getFranchiseIdMap group stores the id in its AniList relations, or the title keys match.
+function _recSeedFranchise(seed) {
+  const ids = new Set();
+  const keys = new Set();
+  try {
+    const groupOf = _getFranchiseIdMap();
+    const gid = groupOf.get(seed.id);
+    for (const a of gid ? animeList.filter(m => groupOf.get(m.id) === gid) : [seed]) {
+      if (Array.isArray(a.relations)) a.relations.forEach(id => ids.add(id));
+      [a.titleEn, a.titleRo, a.title].filter(Boolean).forEach(t => keys.add(_franchiseKey(t)));
+    }
+  } catch { /* never throws: a failed lookup only hides less */ }
+  return (rec) => ids.has(rec.id) || _recFranchiseKeys(rec).some(k => keys.has(k));
+}
+
 async function fetchRecommendationsForYou() {
   // Returns { grouped: true, groups: [{seed, recs[]}] } or { grouped: false, items: [...] }
   // v1.0.241 — seeds come from ranked anime only. With nothing ranked, skip
@@ -8361,6 +8452,7 @@ async function fetchRecommendationsForYou() {
     const anime = seeds[rank];
     try {
       const rootAnime = _recFranchiseRoot(anime); // v1.0.257 — e.g. Kakegurui for Kakegurui xx; null for a first entry
+      const inSeedFranchise = _recSeedFranchise(anime); // v1.0.258 — e.g. Kakegurui Twin under Kakegurui xx
       const res = await _anilistFetch({ query, variables: { id: anime.id, root: rootAnime?.id ?? null, hasRoot: !!rootAnime } });
       const json = await res.json();
       const media = json?.data?.Media;
@@ -8372,6 +8464,8 @@ async function fetchRecommendationsForYou() {
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        // v1.0.258 — no unowned entry of the seed's own franchise (Lewis); the next pick, or the root's, takes the seat
+        if (inSeedFranchise(rec)) continue;
         // v1.0.251 — skip a franchise already shown (e.g. a series next to its own sequel).
         // Nodes are rating-sorted, so the entry kept is the best-recommended one.
         const fKeys = _recFranchiseKeys(rec);
@@ -8771,7 +8865,8 @@ const EXTRA_RECS_PER_SECTION = 6;
 
 // v1.0.256 — the two extras' final pick, in AniList's order: skip titles already in the For You
 // rows (shownIds), keep one entry per franchise (For You's _recFranchiseKeys rule), stop at the cap.
-function _pickExtraRecs(media, shownIds) {
+// v1.0.258 — cap (default the section's 6): Hidden Gems asks for its best HIDDEN_GEMS_PICK_FROM to pick from.
+function _pickExtraRecs(media, shownIds, cap = EXTRA_RECS_PER_SECTION) {
   const usedFranchises = new Set();
   const items = [];
   for (const m of media) {
@@ -8780,7 +8875,7 @@ function _pickExtraRecs(media, shownIds) {
     if (fKeys.some(k => usedFranchises.has(k))) continue;
     fKeys.forEach(k => usedFranchises.add(k));
     items.push({ media: m });
-    if (items.length >= EXTRA_RECS_PER_SECTION) break;
+    if (items.length >= cap) break; // v1.0.258 — was EXTRA_RECS_PER_SECTION, now cap's default
   }
   return items;
 }
@@ -8834,63 +8929,103 @@ async function fetchGenreDeepDive(shownIds = new Set()) {
   }
 }
 
+// v1.0.258 — 💎 Hidden Gems: how many of the best-ranked gems (one per franchise) each load picks its 6 from.
+const HIDDEN_GEMS_PICK_FROM = 15;
+
+// v1.0.258 — 💎 your top 3 genres: _strongMatchTest's map (ranked, non-excluded anime; genres on 3+ of them),
+// highest average ELO first, as the genre dive ranks genres. [] (the global pick) when that test has no map:
+// fewer than MIN_RANKED_FOR_INSIGHTS ranked, or no genre data yet.
+function _hiddenGemGenres(isStrong) {
+  return [...(isStrong?.affinity ?? [])].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([g]) => g);
+}
+
+// v1.0.258 — 💎 pure: AniList candidates → unique, minus skipIds, best genre fit first (fit: _strongMatchTest's
+// .fit; null in the global pick, which leaves the score alone to order them), then the higher AniList score.
+function _rankGemCandidates(media, skipIds, fit) {
+  const fitOf = (m) => (fit ? fit(m) : null) ?? 0;
+  const seen = new Set();
+  const unique = [];
+  for (const m of media) {
+    if (!m?.id || skipIds.has(m.id) || seen.has(m.id)) continue;
+    seen.add(m.id);
+    unique.push(m);
+  }
+  return unique.sort((a, b) => (fitOf(b) - fitOf(a)) || ((b.averageScore || 0) - (a.averageScore || 0)));
+}
+
+// v1.0.258 — 💎 pure: the ranked pool → EXTRA_RECS_PER_SECTION cards drawn at random (random(): 0 to <1) from its
+// best HIDDEN_GEMS_PICK_FROM, one per franchise, skipping skipIds (the genre dive's cards); kept in rank order.
+// Every load and Refresh draws again, so the section rotates.
+// v1.0.258 — skipFranchises: franchise keys already on the page (For You rows, genre dive), so no series shows twice.
+function _pickHiddenGems(ranked, skipIds, random, skipFranchises = new Set()) {
+  const fresh = ranked.filter(m => !_recFranchiseKeys(m).some(k => skipFranchises.has(k)));
+  const top = _pickExtraRecs(fresh, skipIds, HIDDEN_GEMS_PICK_FROM);
+  while (top.length > EXTRA_RECS_PER_SECTION) {
+    top.splice(Math.min(top.length - 1, Math.floor(random() * top.length)), 1);
+  }
+  return top;
+}
+
 // Hidden gems: highly rated but under the radar (low popularity)
 // v1.0.256 — shownIds: the For You titles on screen, skipped by _pickExtraRecs.
-async function fetchHiddenGems(shownIds = new Set()) {
+// v1.0.258 — from your top genres (genres: _hiddenGemGenres; [] → the global list), FINISHED only, no sequels,
+// spin-offs or film retellings, still 2 requests. Resolves to the checked pool, best first; _loadRecsGrid picks the cards.
+async function fetchHiddenGems(shownIds = new Set(), genres = [], fit = null) {
   const ownIds = new Set(animeList.map(a => a.id));
   // No id_not_in — large arrays can hit AniList query complexity limits.
   // Fetch a big pool and filter client-side instead.
   // Step 1: fetch candidates — simple query, no nested data
-  // v1.0.256 — 50 candidates (was 20), still one request, so 6 can survive the filters below.
-  const candidateQuery = `
-    {
-      Page(perPage: 50) {
-        media(type: ANIME, format: TV, sort: SCORE_DESC,
-              averageScore_greater: 70,
-              popularity_lesser: 150000,
-              status_in: [FINISHED, RELEASING]) {
-          id idMal title { romaji english } coverImage { large medium } averageScore format genres
-        }
-      }
-    }`;
+  // v1.0.258 — one request either way: pages g0-g2 of 50 (one per genre; names only in variables) or two global
+  // pages of 50. Most under-the-radar high scorers are later seasons, so the pool has to be big (checked live).
+  const filters = 'type: ANIME, isAdult: false, popularity_lesser: 150000, averageScore_greater: 75, ' +
+                  'status: FINISHED, format_in: [TV, MOVIE, ONA], sort: SCORE_DESC';
+  const fields  = 'id idMal title { romaji english } coverImage { large medium } averageScore format genres';
+  const candidateQuery = genres.length
+    ? `query (${genres.map((_, i) => `$g${i}: String`).join(', ')}) {
+        ${genres.map((_, i) => `g${i}: Page(perPage: 50) { media(genre: $g${i}, ${filters}) { ${fields} } }`).join('\n        ')}
+      }`
+    : `{ ${[1, 2].map(p => `g${p - 1}: Page(page: ${p}, perPage: 50) { media(${filters}) { ${fields} } }`).join(' ')} }`;
+  const variables = Object.fromEntries(genres.map((g, i) => [`g${i}`, g]));
   try {
-    const r1 = await _anilistFetch({ query: candidateQuery });
+    const r1 = await _anilistFetch({ query: candidateQuery, variables });
     const j1 = await r1.json();
     if (j1.errors) throw new Error(j1.errors[0].message);
-    const candidates = (j1?.data?.Page?.media ?? []).filter(m => !ownIds.has(m.id));
+    // v1.0.258 — merge the pages (a title can sit in two genres), drop owned and For You titles, best first;
+    // only the best 100 fit the relations check below (two pages of 50), so only those can show
+    const media = Object.values(j1?.data ?? {}).flatMap(p => p?.media ?? []);
+    // v1.0.258 — also skip Planning titles when Missing or "+ Add to Planning" already loaded them (no extra request);
+    // gems now rotate, so one you just added to Planning would otherwise come back on a later Refresh
+    const planning = _planningIdsCache instanceof Set ? _planningIdsCache : [];
+    const candidates = _rankGemCandidates(media, new Set([...ownIds, ...shownIds, ...planning]), genres.length ? fit : null).slice(0, 100);
     if (!candidates.length) return [];
 
-    // Step 2: check only those candidate IDs for popular prequels — tiny query
+    // Step 2: check the candidates' relations (prequels, parents, retellings) — no nested media data
+    // v1.0.258 — one request with up to two aliased pages of 50 ids (c0, c1); each related title's format too
     const ids = candidates.map(m => m.id);
-    // v1.0.256 — perPage 50 (was 20) to cover all 50 candidates; at 20, ids 21-50 would skip the sequel check.
+    const chunks = [ids.slice(0, 50), ids.slice(50, 100)].filter(c => c.length);
     const relQuery = `
-      query ($ids: [Int]) {
-        Page(perPage: 50) {
-          media(id_in: $ids, type: ANIME) {
-            id
-            relations {
-              edges {
-                relationType(version: 2)
-                node { popularity }
-              }
-            }
-          }
-        }
+      query (${chunks.map((_, i) => `$c${i}: [Int]`).join(', ')}) {
+        ${chunks.map((_, i) => `c${i}: Page(perPage: 50) { media(id_in: $c${i}, type: ANIME) { id relations { edges { relationType(version: 2) node { format } } } } }`).join('\n        ')}
       }`;
     await new Promise(r => setTimeout(r, 600)); // small gap to avoid rate limit
-    const r2 = await _anilistFetch({ query: relQuery, variables: { ids } });
+    const r2 = await _anilistFetch({ query: relQuery, variables: Object.fromEntries(chunks.map((c, i) => [`c${i}`, c])) });
     const j2 = await r2.json();
-    // Build a set of IDs that are sequels to popular franchises
-    const franchiseIds = new Set();
-    for (const m of (j2?.data?.Page?.media ?? [])) {
-      const isSequel = (m.relations?.edges ?? []).some(e =>
-        e.relationType === 'PREQUEL' && (e.node?.popularity ?? 0) > 50000
-      );
-      if (isSequel) franchiseIds.add(m.id);
+    // v1.0.258 — fail closed: an errored check throws (retry hint) and a title missing from the answer is dropped.
+    // Any PREQUEL drops a title (was: only one over 50k followers), so the query no longer asks for node popularity.
+    if (j2.errors) throw new Error(j2.errors[0].message);
+    const firstEntries = new Set();
+    const formatOf = new Map(candidates.map(m => [m.id, m.format]));
+    for (const m of Object.values(j2?.data ?? {}).flatMap(p => p?.media ?? [])) {
+      if (!m?.relations) continue; // v1.0.258 — no relations answer: unchecked, so it can't show (fail closed)
+      const edges = m.relations.edges ?? [];
+      // v1.0.258 — PARENT too: side stories and spin-offs need their main series first, so they aren't starting points
+      const needsEarlier = edges.some(e => e.relationType === 'PREQUEL' || e.relationType === 'PARENT');
+      // v1.0.258 — and a film that retells a series ("Gintama - The Movie", a recap movie) is no way in either
+      const retelling = formatOf.get(m.id) === 'MOVIE' && edges.some(e =>
+        ['ALTERNATIVE', 'SUMMARY', 'COMPILATION', 'CONTAINS'].includes(e.relationType) && ['TV', 'TV_SHORT', 'ONA'].includes(e.node?.format));
+      if (!needsEarlier && !retelling) firstEntries.add(m.id);
     }
-
-    // v1.0.256 — _pickExtraRecs replaces the hard cap of 4: For You skip, one per franchise, EXTRA_RECS_PER_SECTION cards
-    return _pickExtraRecs(candidates.filter(m => !franchiseIds.has(m.id)), shownIds);
+    return candidates.filter(m => firstEntries.has(m.id));
   } catch (e) {
     // v1.0.251 — rethrow (was: resolve []) so _loadRecsGrid shows a retry hint, not "No hidden gems found."
     console.warn('Hidden gems fetch failed:', e);
@@ -9047,6 +9182,7 @@ function _strongMatchTest(list = animeList) {
     return m !== null && m >= cut && m > floor;
   };
   isStrong.fit = (media) => _meanGenreElo(media, affinity); // v1.0.254 — lets _strongMatchPick rank the cards that pass
+  isStrong.affinity = affinity; // v1.0.258 — Hidden Gems' top genres come from this same map (_hiddenGemGenres)
   return isStrong;
 }
 
@@ -9189,6 +9325,14 @@ async function _loadRecsGrid() {
     mainHtml = `<div class="recs-subgrid">${items.map(({ media }) => recCardHtml(media, { strongMatch: strong.has(media) })).join('')}</div>`;
   }
 
+  // v1.0.258 — 💎 Hidden Gems come from your top genres, named in its subtitle; known before any fetch, so the
+  // placeholder and the cached page say the same. The global pick (under 20 ranked) keeps the old line.
+  const gemGenres = _hiddenGemGenres(isStrong);
+  const gemNames  = gemGenres.map(esc);
+  const gemsSub   = gemNames.length
+    ? 'Under-the-radar ' + (gemNames.length > 1 ? gemNames.slice(0, -1).join(', ') + ' &amp; ' : '') + gemNames[gemNames.length - 1]
+    : 'Well rated but under the radar — fewer than 150k followers on AniList'; // v1.0.258 — matches the query (was 100k)
+
   // Render main recs + placeholder sections for async extras
   // v1.0.254 — each extra shows placeholder cards (its final count) instead of a "⏳ Loading…" line
   // v1.0.256 — that count is EXTRA_RECS_PER_SECTION (was 4), the cap both fetches use
@@ -9200,7 +9344,7 @@ async function _loadRecsGrid() {
     </div>
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading">💎 Hidden Gems</h4>
-      <p class="recs-extra-sub">Well rated but under the radar — fewer than 100k followers on AniList</p>
+      <p class="recs-extra-sub">${gemsSub}</p>
       <div class="recs-subgrid" id="hidden-gems-grid">${_recsSkeletonCards(EXTRA_RECS_PER_SECTION)}</div>
     </div>`;
   commit('block'); // v1.0.250 — main recs paint now (if still on For You); extras fill in below
@@ -9211,11 +9355,18 @@ async function _loadRecsGrid() {
   // instead of rejecting the whole load (main recs, cache write and Refresh unaffected).
   // v1.0.256 — both skip the titles already shown in the For You rows above (same ids as the relations batch)
   const shownIds = new Set(allRecIds);
-  const [genreSettled, gemsSettled] = await Promise.allSettled([fetchGenreDeepDive(shownIds), fetchHiddenGems(shownIds)]);
+  // v1.0.258 — gems also get your top genres and the genre-fit ranking ([] / unused in the global pick)
+  const [genreSettled, gemsSettled] = await Promise.allSettled([fetchGenreDeepDive(shownIds), fetchHiddenGems(shownIds, gemGenres, isStrong.fit)]);
   const genreFailed = genreSettled.status === 'rejected';
   const gemsFailed  = gemsSettled.status === 'rejected';
   const genreResult = genreFailed ? { genre: null, items: [] } : genreSettled.value;
-  const gemItems    = gemsFailed ? [] : gemsSettled.value;
+  // v1.0.258 — the gems are picked once both have settled (no race): the genre dive's cards are skipped, and each
+  // load or Refresh draws a fresh 6 from the best HIDDEN_GEMS_PICK_FROM (_pickHiddenGems)
+  const genreIds    = new Set(genreResult.items.map(i => i.media.id));
+  // v1.0.258 — and no series already shown above (a gem could be another entry of a For You or genre-dive pick)
+  const shownMedia  = [...(result.grouped ? result.groups.flatMap(g => g.recs) : (result.items || [])), ...genreResult.items].map(r => r.media);
+  const shownFranchises = new Set(shownMedia.flatMap(m => _recFranchiseKeys(m)));
+  const gemItems    = gemsFailed ? [] : _pickHiddenGems(gemsSettled.value, genreIds, Math.random, shownFranchises);
   const extraFailedHtml = '<p style="color:#8b949e;font-size:0.8rem;grid-column:1/-1">Couldn\'t load right now — try Refresh.</p>';
 
   // v1.0.250 — fill the placeholders in the detached copy and in the live
@@ -14900,14 +15051,23 @@ function shareRankings() {
     showToast('Battle a few times first — nothing is ranked yet.');
     return;
   }
-  const top20 = ranked.slice(0, 20);
+  // v1.0.258 — the link is a Top 10 (was 20), so it matches the image, the share-sheet text and the modal.
+  const top10 = ranked.slice(0, 10);
   // v1.0.256 — guests send u:'' (the page then says "Top N Anime"); was u:'guest'.
   const user  = _shareDisplayName();
   const payload = {
     u: user,
     b: battleCount,
-    top: top20.map((a, i) => ({ r: i + 1, t: a.title, e: a.elo, c: a.cover }))
+    // v1.0.258 — t as the sharer sees it (displayTitle, like the image); i AniList id, m MAL id, f/y/n format, year,
+    // episodes and k the tier letter Rankings shows, so the shared page can link each card. undefined keys drop out of the JSON.
+    top: top10.map((a, idx) => ({
+      r: idx + 1, t: displayTitle(a), e: a.elo, c: a.cover,
+      i: a.id, m: Number.isInteger(a.idMal) && a.idMal > 0 ? a.idMal : undefined,
+      f: a.format || undefined, y: a.seasonYear || undefined, n: a.episodes || undefined,
+      k: getTier(idx, ranked.length),
+    }))
   };
+  if (_isMalCloudSession()) payload.p = 'mal'; // v1.0.258 — MAL sharer: the page opens MyAnimeList where an entry has a MAL id
   const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   const url = location.origin + '/#r=' + encoded;
   byId(IDS.shareUrl).value = url;
@@ -16239,6 +16399,7 @@ function closeSessionSummary(e) {
 // record anyone could have created) so NOTHING from the payload is allowed
 // into innerHTML. All user-visible strings go via textContent; the cover-image
 // URL is scheme- and host-allowlisted before it ever touches <img src>.
+// v1.0.258 — card links (AniList / MAL) are built only from validated integer ids.
 const _SHORT_SHARE_PATH_RE = /^\/s\/([A-Za-z0-9]{6,16})\/?$/;
 function tryLoadSharedView() {
   const hash = location.hash;
@@ -16294,6 +16455,11 @@ function _renderSharedPayload(payload) {
       return u.href;
     } catch { return ''; }
   };
+  // v1.0.258 — optional entry details, checked with share.js sanitisePayload's rules (#r= links never pass
+  // through it): an integer in range, a known format or tier letter, otherwise the detail is left out.
+  const _intIn = (v, min, max) => (Number.isInteger(v) && v >= min && v <= max ? v : 0);
+  const _FORMAT_LABELS = new Map([['TV', 'TV'], ['TV_SHORT', 'Short'], ['MOVIE', 'Movie'], ['SPECIAL', 'Special'], ['OVA', 'OVA'], ['ONA', 'ONA'], ['MUSIC', 'Music']]);
+  const _TIERS = ['S', 'A', 'B', 'C', 'D'];
 
   try {
     if (!payload || !Array.isArray(payload.top)) return false;
@@ -16302,7 +16468,8 @@ function _renderSharedPayload(payload) {
     const u  = String(payload.u  ?? '').slice(0, 80);
     const ms = payload.ms ? String(payload.ms).slice(0, 80) : '';
     const b  = Math.max(0, parseInt(payload.b, 10) || 0);
-    const top = payload.top.slice(0, 50); // hard cap — share links are top-20 by design
+    const top = payload.top.slice(0, 50); // hard cap — v1.0.258: new links are a Top 10, older ones a Top 20
+    const isMal = payload.p === 'mal'; // v1.0.258 — MAL sharer: cards with a MAL id open MyAnimeList
 
     // v1.0.256 — no name → "Top N Anime"; links made before 1.0.256 carry 'guest' or a raw guest key as u.
     const name = ['guest', KESSEN_KEYS.session.guest, KESSEN_KEYS.session.anilist('guest')].includes(u) ? '' : u;
@@ -16323,20 +16490,42 @@ function _renderSharedPayload(payload) {
       const title = String(a.t ?? '').slice(0, 200);
       const cover = _safeImgUrl(a.c);
       const numClass = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
+      // v1.0.258 — the optional details, each 0 / '' unless valid (see _intIn above).
+      const id    = _intIn(a.i, 1, 10_000_000);
+      const malId = isMal ? _intIn(a.m, 1, 10_000_000) : 0;
+      const tier  = _TIERS.includes(a.k) ? a.k : '';
+      const fmt   = _FORMAT_LABELS.get(a.f) || '';
+      const eps   = _intIn(a.n, 1, 5000);
+      const year  = _intIn(a.y, 1900, 2100);
 
-      const card = document.createElement('div');
-      card.className = 'rank-card';
+      // v1.0.258 — an entry with an AniList id is a link (MAL for a MAL sharer's entry with a MAL id), new tab, href
+      // built only from the parsed integer. Entries without one (links made before 1.0.258) stay plain cards.
+      const card = document.createElement(id ? 'a' : 'div');
+      card.className = id ? 'rank-card shared-card' : 'rank-card';
+      if (id) {
+        card.href   = malId ? `https://myanimelist.net/anime/${malId}` : `https://anilist.co/anime/${id}`;
+        card.target = '_blank';
+        card.rel    = 'noopener noreferrer';
+        card.title  = title; // full title on hover (the card clamps it to two lines)
+      }
 
       const rankSpan = document.createElement('span');
       rankSpan.className = 'rank-number' + (numClass ? ' ' + numClass : '');
       rankSpan.textContent = '#' + rank;
       card.appendChild(rankSpan);
 
+      if (tier) { // v1.0.258 — the sharer's tier letter, same badge as their Rankings card
+        const badge = document.createElement('span');
+        badge.className = 'tier-badge t-' + tier.toLowerCase();
+        badge.textContent = tier;
+        card.appendChild(badge);
+      }
+
       if (cover) {
         const img = document.createElement('img');
         if (coverCors(cover)) img.crossOrigin = 'anonymous';
         img.src = cover;
-        img.alt = title;
+        img.alt = id ? '' : title; // v1.0.258 — inside a link the title below already names it (no double read-out)
         img.loading = 'lazy';
         card.appendChild(img);
       }
@@ -16346,10 +16535,26 @@ function _renderSharedPayload(payload) {
       titleDiv.textContent = title;
       card.appendChild(titleDiv);
 
+      // v1.0.258 — 'TV · 24 ep · 2019': a movie shows no episode count (as on the Rankings card), missing parts are left out.
+      const meta = [fmt, eps && fmt !== 'Movie' ? `${eps} ep` : '', year ? String(year) : ''].filter(Boolean).join(' · ');
+      if (meta) {
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'shared-card-meta';
+        metaDiv.textContent = meta;
+        card.appendChild(metaDiv);
+      }
+
       const eloDiv = document.createElement('div');
       eloDiv.className = 'rank-elo';
       eloDiv.textContent = 'ELO ' + elo;
       card.appendChild(eloDiv);
+
+      if (id) { // v1.0.258 — says where a tap goes
+        const ext = document.createElement('span');
+        ext.className = 'shared-card-ext';
+        ext.textContent = malId ? 'MAL ↗' : 'AniList ↗';
+        card.appendChild(ext);
+      }
 
       list.appendChild(card);
     });
@@ -18042,6 +18247,7 @@ async function applyMoodRec(moodKey) {
     if (gen !== _forYouGen) return; // v1.0.251 — superseded: stop spending AniList requests
     try {
       const rootAnime = _recFranchiseRoot(seed); // v1.0.257 — as in fetchRecommendationsForYou
+      const inSeedFranchise = _recSeedFranchise(seed); // v1.0.258 — as in fetchRecommendationsForYou
       const res  = await _anilistFetch({ query, variables: { id: seed.id, root: rootAnime?.id ?? null, hasRoot: !!rootAnime } });
       const json = await res.json();
       const media = json?.data?.Media;
@@ -18053,6 +18259,7 @@ async function applyMoodRec(moodKey) {
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        if (inSeedFranchise(rec)) continue; // v1.0.258 — the seed's own franchise, as in fetchRecommendationsForYou
         // v1.0.251 — same franchise dedupe as fetchRecommendationsForYou (no series next to its sequel).
         const fKeys = _recFranchiseKeys(rec);
         if (fKeys.some(k => usedFranchises.has(k))) continue;
@@ -19771,6 +19978,7 @@ function startBattleWithinFranchise(name) {
     showToast('⚠️ Franchise no longer exists — refresh rankings and try again.', 3500);
     return;
   }
+  name = group.displayName; // v1.0.258 — the toasts and banner use the name the card shows (the lookup above used the key)
   // Eligible members = not excluded + not filtered by format. We honour
   // existing pool filters so Battle Within respects the user's mental model
   // of "active battle pool". If that knocks the set under 2, we tell them.
@@ -19915,6 +20123,7 @@ function bulkExcludeFranchise(name) {
   const groups = _buildFranchiseGroups(getSortedList());
   const group  = groups.find(g => g.name === name);
   if (!group) return;
+  name = group.displayName; // v1.0.258 — the confirm, toast and undo note use the name the card shows (the lookup above used the key)
   // Only ids that aren't already excluded — undo shouldn't "re-exclude" the
   // ones the user had already singled out earlier.
   const newlyExcluded = group.members
@@ -21223,12 +21432,13 @@ function renderFranchiseTable() {
     // v1.0.162 — mirror the grid card fix: display the ELO rank, not the
     // current-sort position. v1.0.241 — '–' for Unranked groups.
     const displayRank = group.unranked ? '–' : (group.eloRank ?? rank) + 1;
+    // v1.0.258 — the franchise name; a lone entry's own title goes on a muted line under it, after any fuzzy pill (data-franchise stays the key)
     html += `
       <tr class="franchise-table-group" data-gid="${gid}" data-franchise="${esc(group.name)}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
         <td class="tbl-rank">${displayRank}</td>
         <td><img class="tbl-cover"${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
-          <strong>${esc(group.name)}</strong>
+          <strong>${esc(group.displayName)}</strong>
           ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>${_franchiseUnrankedBadge(group)}` : ''}<!-- v1.0.256 — "n unranked", as on the grid card -->
           ${(() => {
             // v1.0.165 — fuzzy count in the franchise table view. Same shape
@@ -21239,6 +21449,7 @@ function renderFranchiseTable() {
               : '';
           })()}
           ${!isSingle ? `<span class="franchise-table-chevron" data-chv="${gid}" onclick="event.stopPropagation();toggleFranchiseTableGroup(${gid})" style="margin-left:6px;color:#6e7681;font-size:0.85rem;display:inline-block;transition:transform 0.15s;cursor:pointer;padding:0 4px">▸</span>` : ''}
+          ${_franchiseEntryTitleHtml(group)}<!-- v1.0.258 — a lone entry's own title, under its name and fuzzy pill -->
         </td>
         <td>${group.bestElo}</td>
         <td>${wrStr}</td>
@@ -22473,17 +22684,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.257 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.258 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🆕 The "New anime on your list" window now opens centred over the page with a dimmed background, instead of sitting in the top-left corner.',
-    '⚡ The bell only offers "Add & Tower" for a series you\'ve finished; a show you\'re still watching just gets "Add to rankings" until you complete it.',
-    '🚪 Logging out now closes any window that was still open, so nothing is left over the sign-in page.',
-    '📈 Recommendation rows for a sequel ("Because you loved" and mood picks) now fill up to 6 using the first entry of that series on your list, so shows like Kakegurui xx no longer get a short row.',
+    '🔗 Share links now show your Top 10, matching the image, and each anime on the shared page shows its tier, format, episodes and year, and opens on AniList (or MyAnimeList if you signed in with MAL) when tapped.',
+    '📊 The bar under the header now fills toward your next Taste Story and is full right when the card appears, instead of also filling at 10 and 25 battles when nothing happened.',
+    '🏷️ In franchise view, a franchise with only one show on your list now shows the franchise name with that show\'s own title in small text under it, and names like Kaiju No. 8 are no longer cut short.',
+    '🎯 "Because you loved" and "Because you liked" rows no longer suggest other parts of the same franchise that aren\'t on your list (like Kakegurui Twin under Kakegurui xx), and other picks take their place.',
+    '💎 Hidden Gems now come from your favourite genres once you\'ve ranked 20 anime, skip sequels, spin-offs and film retellings, and mix up the picks when you refresh.',
   ],
 };
 

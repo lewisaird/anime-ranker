@@ -1593,6 +1593,18 @@
     /* v1.0.256 — muted "n unranked" pill beside "n entries" (never-battled entries are left out of Avg ELO) */
     .franchise-unranked-count { font-size: 0.75rem; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: 10px; padding: 1px 7px; }
     .tbl-title .franchise-unranked-count { margin-left: 6px; }
+    /* v1.0.258 — a lone franchise entry's own title, small and muted under the franchise name (grid card, list row, pop-up title) */
+    .franchise-entry-title { display: block; font-size: 0.72rem; font-weight: 400; line-height: 1.25; color: var(--text-secondary); word-break: break-word; }
+    /* v1.0.258 — grid card: the name gives up its reserved second line and the entry title sits close under it, two lines at most */
+    .rank-title.has-entry-title { min-height: 0; }
+    .franchise-grid-card .franchise-entry-title { margin-top: -6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    #modal-title .franchise-entry-title { font-size: 0.8rem; margin-top: 2px; }
+    /* v1.0.258 — phone list view: the title cell is one line with an ellipsis; the entry title gets its own ellipsis */
+    .tbl-title .franchise-entry-title { overflow: hidden; text-overflow: ellipsis; }
+    /* v1.0.258 — hovering a franchise list row underlines the name only, not the entry title under it (a child
+       can't cancel an underline drawn by its parent, so the underline moves onto the name itself) */
+    .franchise-table-group .tbl-title:hover { text-decoration: none; }
+    .franchise-table-group .tbl-title:hover > strong { text-decoration: underline; }
     /* v1.0.211 — Peak ELO pill. Gold accent (matches the #1 gold rank style)
        so the eye picks out franchises with at least one top-tier entry even
        when the average doesn't look impressive. The sub-label clarifies the
@@ -3062,6 +3074,12 @@
     .shared-header { text-align: center; margin-bottom: 28px; }
     .shared-header h2 { font-size: 1.6rem; color: var(--accent-blue); margin-bottom: 6px; }
     .shared-header p { color: var(--text-secondary); }
+    /* v1.0.258 — shared cards that open AniList / MAL in a new tab: no link underline or colour, a visible
+       keyboard focus ring, the 'TV · 24 ep · 2019' line, and the 'AniList ↗' hint pinned to the card's foot. */
+    a.shared-card { color: inherit; text-decoration: none; }
+    a.shared-card:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+    .shared-card-meta { font-size: 0.72rem; line-height: 1.3; color: var(--text-secondary); }
+    .shared-card-ext { margin-top: auto; font-size: 0.68rem; font-weight: 600; color: var(--accent-blue); }
     /* v1.0.242 — call to action under a shared tier list */
     .shared-cta {
       margin: 36px auto 24px; max-width: 520px; padding: 24px 22px;

@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.257" />
+  <meta name="version" content="1.0.258" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -826,7 +826,8 @@
 
   <div id="battle-screen">
     <!-- v1.0.245 — fills toward the next battle milestone (title set by updateProgress) -->
-    <div id="progress-bar-wrap" title="Battles toward your next milestone"><div id="progress-bar" style="width:0%"></div></div>
+    <!-- v1.0.258 — the milestones are the Taste Story ones, so the title names that card -->
+    <div id="progress-bar-wrap" title="Battles toward your next Taste Story milestone"><div id="progress-bar" style="width:0%"></div></div>
     <div id="tower-progress-wrap"><div id="tower-progress-bar" style="width:0%"></div></div>
     <!-- v1.0.244 — Tower now has the same banner shape as Settle / Blind / Trio /
          WSO (text + Stop button) instead of a bare status line with no way out. -->
@@ -1823,7 +1824,8 @@
         <div class="help-section">
           <h4>🔗 Share</h4>
           <!-- v1.0.254 — 3×3 dropped; one Top 10 image with a preview, one Share/Download button, link underneath -->
-          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) and shows you a preview, plus a short link that opens your top 20 in a browser. Where your device has a share sheet the image goes straight to it; otherwise it downloads, and on desktop you can also copy it to the clipboard. Long-press or right-click the preview to save it.</p>
+          <!-- v1.0.258 — the link is a Top 10 now (was 20) and its cards open AniList / MyAnimeList -->
+          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) and shows you a preview, plus a short link that opens the same top 10 in a browser — tap an anime there to open its AniList page (MyAnimeList if you signed in with MAL). Where your device has a share sheet the image goes straight to it; otherwise it downloads, and on desktop you can also copy it to the clipboard. Long-press or right-click the preview to save it.</p>
         </div>
 
         <div class="help-section">
@@ -1946,7 +1948,8 @@
   <div class="share-box">
     <button class="share-close" onclick="closeShare()" aria-label="Close">✕</button>
     <h3 id="share-modal-title">📤 Share Your Rankings</h3>
-    <p class="share-subtitle">Share an image of your top 10, or copy a link to your top 20.</p>
+    <!-- v1.0.258 — the link is a Top 10 too (was 20) -->
+    <p class="share-subtitle">Share an image of your top 10, or copy a link to it.</p>
 
     <!-- v1.0.254 — one Top 10 image (3×3 and its toggle dropped). Live preview of the exact
          image the buttons send, as a data: URL (live CSP img-src has no blob:); the line under
