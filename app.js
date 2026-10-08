@@ -2010,7 +2010,9 @@ if (loadAuthFromStorage()) {
   // Auto-resume the MAL session on page reload — mirrors AniList's auto-start behaviour.
   // Skip if a shared ranking is in the URL (tryLoadSharedView in window.load handles that).
   // Skip if AniList is also active — it will take the lead via the username input trick.
-  if (location.hash.startsWith('#r=') || authToken) return;
+  // v1.0.261 — short /s/<id> links too (since 1.0.249): a MAL-only viewer's own list loaded over the shared page.
+  // _SHORT_SHARE_PATH_RE is initialised by now: this runs after the await above, once app.js has finished loading.
+  if (location.hash.startsWith('#r=') || _SHORT_SHARE_PATH_RE.test(location.pathname) || authToken) return;
 
   const doStart = () => _startMALOAuthSession({ autoResume: true });
   if (document.readyState === 'complete') {
@@ -22795,16 +22797,14 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.260 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.261 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '📈 Each account and the guest on a device now keep their own "How you\'ve changed" timeline, Taste tab NEW badge and Taste Story cards, and snapshots another account left in your timeline are cleared out.',
-    '⚡ You can now choose how often the Session Recap pops up while you rank (every 15, 30 or 50 battles, or never), right from the recap itself or in ⚙️ Manage.',
-    '🏷 In franchise view, a show that is the only one on your list from a franchise Kessen knows by name now sits under that name, so Detective Conan: The Culprit Hanzawa shows as Detective Conan with its own title in small text underneath.',
+    '🔗 Opening a short share link while signed in with MyAnimeList now shows the shared rankings, instead of loading your own list over them.',
   ],
 };
 
