@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.259" />
+  <meta name="version" content="1.0.260" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1607,6 +1607,18 @@
           <button id="lang-toggle-btn" class="manage-btn" onclick="toggleLanguage()" title="Switch between English and Romaji anime titles">🈯 Titles: EN</button>
         </div>
 
+        <!-- v1.0.260 — how often the Session Recap pops up while ranking (device setting; the recap has the same picker) -->
+        <div class="manage-section">
+          <label class="manage-section-title" for="session-recap-every-manage">Session recap</label>
+          <p style="color:#8b949e;font-size:0.82rem;margin-bottom:10px;line-height:1.5">While you rank, a recap of what moved most pops up every few battles.</p>
+          <select id="session-recap-every-manage" class="manage-btn" onchange="setSessionRecapEvery(this.value)">
+            <option value="15">Every 15 battles</option>
+            <option value="30">Every 30 battles</option>
+            <option value="50">Every 50 battles</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+
         <div class="manage-section" id="manage-anilist-section" style="display:none">
           <div class="manage-section-title">AniList</div>
           <button id="sync-anilist-btn" class="manage-btn manage-btn-anilist" onclick="openSyncModal()">🔵 Sync to AniList</button>
@@ -1723,6 +1735,16 @@
       <div style="text-align:center;margin-top:16px;display:flex;gap:8px;justify-content:center">
         <button class="btn-primary" onclick="resumeBattle();document.getElementById('session-summary-modal').style.display='none'">▶ Keep Ranking</button>
         <button class="btn-secondary" onclick="showResults();document.getElementById('session-summary-modal').style.display='none'">📋 See Rankings</button>
+      </div>
+      <!-- v1.0.260 — recap frequency picker; same setting as Manage → Session recap -->
+      <div class="recap-freq-row">
+        <label for="session-recap-every-modal">Show this recap</label>
+        <select id="session-recap-every-modal" class="recap-freq-select" onchange="setSessionRecapEvery(this.value)">
+          <option value="15">every 15 battles</option>
+          <option value="30">every 30 battles</option>
+          <option value="50">every 50 battles</option>
+          <option value="off">never</option>
+        </select>
       </div>
     </div>
   </div>

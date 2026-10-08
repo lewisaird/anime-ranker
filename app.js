@@ -173,6 +173,9 @@ const IDS = Object.freeze({
   sortMenuBtn:            'sort-menu-btn',
   sortMenuCurrent:        'sort-menu-current',
   sortMenuPopover:        'sort-menu-popover',
+  // v1.0.260 — Session Recap frequency pickers (Manage tab + inside the recap itself)
+  sessionRecapEveryManage: 'session-recap-every-manage',
+  sessionRecapEveryModal:  'session-recap-every-modal',
   sessionSummaryList:     'session-summary-list',
   sessionSummaryModal:    'session-summary-modal',
   sessionSummarySubtitle: 'session-summary-subtitle',
@@ -872,6 +875,7 @@ const KESSEN_KEYS = {
     // (§5.2.12) JSON array of saveKeys for which the guest-merge prompt has
     // already been shown (accepted or declined). Prevents repeat pestering.
     guestMergeDismissed: 'kessen.ui.guestMergeDismissed',
+    // v1.0.260 — legacy device-wide entry, only removed at boot (_dropDeviceWideTasteKeys); per list: data.tasteForList.
     tasteStorySeen:      'kessen.ui.tasteStorySeen', // JSON array of battle counts already shown
     // v1.0.210 — ms timestamp of the most recent successful cloud save.
     // Surfaced on the Manage tab's Backup/Sync card so users can SEE their
@@ -892,7 +896,7 @@ const KESSEN_KEYS = {
     // into the registry for discoverability. Literal preserved so existing
     // saves don't lose the seen-milestone marker (no migration entry exists
     // for the legacy underscore form).
-    tasteNewBadgeMilestone: 'kessen_taste_badge_milestone',
+    tasteNewBadgeMilestone: 'kessen_taste_badge_milestone', // v1.0.260 — legacy device-wide entry, removed at boot
     // v1.0.168 — Push notification config cached per-device.
     // Stored shape: { enabled: bool, categories: { towerRetry, watchTogether,
     // liveChallenge }, endpoint: string, syncedAt: number }. Mirror of what
@@ -903,6 +907,8 @@ const KESSEN_KEYS = {
   settings: {
     allowAdult:  'kessen.settings.allowAdult',
     viewPrefs:   'kessen.settings.viewPrefs', // local-only: rankingView + franchiseMode + avoidSameFranchise
+    // v1.0.260 — how often the Session Recap shows: '15' | '30' | '50' | 'off' (device-only; anything else = '15')
+    sessionRecapEvery: 'kessen.settings.sessionRecapEvery',
   },
   data: {
     savedComparisons: 'kessen.data.savedComparisons',
@@ -943,8 +949,11 @@ const KESSEN_KEYS = {
     // doesn't disappear — no migration entry exists for the legacy form.
     lcHistory:         'kessen_lc_history',
     // v1.0.154 — Taste profile snapshots (was a module-level KESSEN_KEYS.data.tasteSnapshots
-    // const). Global rather than per-user so re-imports don't lose history.
+    // const). v1.0.260 — was one entry per device, shared by every account on it; now legacy, removed at boot.
     tasteSnapshots:    'kessen.data.tasteSnapshots',
+    // v1.0.260 — Taste records per list, keyed by saveKey: kind 'snapshots' | 'storySeen' | 'badge'.
+    // Read and written only through _tasteKey(kind), which supplies the current list's saveKey.
+    tasteForList: (kind, key) => `kessen.data.taste.${kind}.${key}`,
   },
   _migrationFlagV1: 'kessen.meta.migratedV1',
 };
@@ -994,6 +1003,16 @@ function _migrateLocalStorageV1() {
   } catch { /* private-mode / quota-exhausted / storage disabled — skip */ }
 }
 _migrateLocalStorageV1();
+
+// v1.0.260 — the Taste records were one entry per device, shared by every account on it, and may hold another
+// account's data. They are kept per list now (KESSEN_KEYS.data.tasteForList); the old entries are dropped, not imported.
+function _dropDeviceWideTasteKeys() {
+  try {
+    [KESSEN_KEYS.data.tasteSnapshots, KESSEN_KEYS.ui.tasteStorySeen, KESSEN_KEYS.ui.tasteNewBadgeMilestone]
+      .forEach(k => localStorage.removeItem(k));
+  } catch { /* storage blocked — nothing to drop */ }
+}
+_dropDeviceWideTasteKeys();
 
 function saveAuth() {
   localStorage.setItem(KESSEN_KEYS.auth.anilist, JSON.stringify({
@@ -2191,6 +2210,7 @@ const SAVE_STATE_DEBOUNCE_MS = 400;
 // v1.0.247 — the 50-battle milestone most recently confirmed to have a taste
 // snapshot. Lets the check in saveState() skip the localStorage parse.
 // Reset to -1 whenever the snapshot store is cleared, merged or trimmed.
+// v1.0.260 — holds "<list key>|<milestone>", so another list at the same milestone is still checked.
 let _tasteSnapshotMilestoneOk = -1;
 
 function saveState() {
@@ -2722,15 +2742,7 @@ function _applyCloudSaveToMemory(cloud) {
       }
     }
   }
-  // v1.0.209 — merge cloud's seen taste-story milestones into this device's
-  // localStorage list. Without this, a device cloud-syncing into the middle
-  // of a battle history (e.g. phone first sign-in at battle 1306) had an
-  // empty local seen list and the catch-up logic in checkMilestone fired
-  // already-seen milestones as fresh popups on the next battle.
-  _mergeTasteStorySeen(cloud.tasteStorySeen);
-  // v1.0.209 — and same merge for the "How you've changed" snapshots, so
-  // the timeline reflects the user's full history across devices.
-  _mergeTasteSnapshots(cloud.tasteSnapshots);
+  // (v1.0.260 — the Taste record merges moved below, after saveKey points at this save's list.)
 
   // Migrate old data fields
   const _cloudAvgBattles = Math.round((cloud.battleCount || 0) * 2 / Math.max(cloud.animeList.length, 1));
@@ -2746,6 +2758,12 @@ function _applyCloudSaveToMemory(cloud) {
   });
 
   if (cloud.saveKey) saveKey = cloud.saveKey;
+  // v1.0.209 — merge the save's seen Taste Story milestones and "How you've changed" snapshots into this device.
+  // v1.0.260 — after saveKey is set, so they land in this list's own records (it was the last list's on a list load).
+  // Cloud saves carry no Taste fields and this path skips loadState, so the list's own local save seeds them first.
+  _seedTasteFromLocalSave();
+  _mergeTasteStorySeen(cloud.tasteStorySeen);
+  _mergeTasteSnapshots(cloud.tasteSnapshots);
   _suppressCloudSave = true;
   saveState(); // persist to localStorage — suppress cloud save since we just loaded from cloud
   _suppressCloudSave = false;
@@ -5109,15 +5127,14 @@ function _franchiseKey(title) {
 
 // v1.0.258 — the franchise name a card shows; display only (grouping keys stay on _franchiseBaseName). Repairs " – " subtitles,
 // a mid "(TV)", "Second Season", "No. 8" / "Golgo 13". lone (a one-entry card) only drops a sequel marker (Lewis: "Frieren: …" stays whole).
-// v1.0.258 — a trailing season/part marker on a lone aliased title with a colon ("Date a Live: Season 4", "Bleach: … Part 2").
-const _LONE_SEQUEL_MARKER = /(?::\s*|\s+)(?:(?:The\s+)?Final\s+(?:Season|Part|Cour)|(?:Season|Part|Cour)\s*(?:\d{1,2}|[IVX]+)|(?:\d+(?:st|nd|rd|th)|First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth)\s+Season|[1-9]\d?)$/i; // no leading 0: "Digimon: Digital Monsters 02" is its own series
 function _franchiseDisplayName(title, lone) {
   if (!title) return '';
   const alias = _franchiseAlias(title);
-  // a curated name, but never over a lone entry's colon subtitle; there only a trailing sequel marker goes.
   // A curated name that is only a grouping stub ("SSSS.", ".hack//") is no name to show a lone entry under.
   if (alias && lone && /[./]$/.test(alias)) return title;
-  if (alias) return lone && /:\s/.test(title) ? (title.replace(_LONE_SEQUEL_MARKER, '').trim() || title) : alias;
+  // v1.0.260 — otherwise a curated franchise name always wins, for a lone entry too, colon or not (Lewis: "Detective Conan:
+  // The Culprit Hanzawa" belongs under Detective Conan); the card shows the entry's full title under it.
+  if (alias) return alias;
   // lone: a subtitle colon (": ") becomes COLON, a private-use character no title contains, so the strip's colon rules can't cut there.
   const COLON = String.fromCharCode(0xE000);
   let t = title.replace(/\s+[–—]\s+/g, ' - ').replace(/\s*\((?:TV|Movie|OVA|ONA)\)(?=[\s:])/gi, '');
@@ -6889,8 +6906,7 @@ function resetAll() {
       if (saveKey) localStorage.removeItem(saveKey);
       // Clear taste snapshots, milestone seen-state, and saved comparisons
       // so taste profile, taste story, and social tab start completely fresh.
-      localStorage.removeItem(KESSEN_KEYS.data.tasteSnapshots);
-      localStorage.removeItem(KESSEN_KEYS.ui.tasteStorySeen);
+      _clearTasteRecords(); // v1.0.260 — this list's snapshots, Taste Story seen record and badge (saveKey still set here)
       localStorage.removeItem(KESSEN_KEYS.data.savedComparisons);
       localStorage.removeItem(KESSEN_KEYS.data.finishPrompts);
       localStorage.removeItem(KESSEN_KEYS.data.finishPromptedIds);
@@ -7261,7 +7277,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
 
   saveKey = existingSaveKey;
   _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only; the last list's streak, history and undo leaked in
-  _clearTasteSnapshots(); // fresh load — discard any leftovers from a prior session
+  _clearTasteRecords(); // v1.0.260 — fresh load from 0 battles: this list's Taste records start clean
   saveState();
   _clearLoadCancelTimer();
   hide('loading-screen');
@@ -13920,7 +13936,7 @@ async function startLoading() {
 
     saveKey = existingSaveKey;
     _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only; the last list's streak, history and undo leaked in
-    _clearTasteSnapshots(); // fresh load — discard any leftovers from a prior session
+    _clearTasteRecords(); // v1.0.260 — fresh load from 0 battles: this list's Taste records start clean
     saveState();
     // Push initial state to cloud immediately for fresh loads
     if (isOAuthUser) _doCloudSave();
@@ -14071,7 +14087,7 @@ async function startGuestMode() {
     }
     animeList = await fetchGuestPool();
     _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only (loadState('guest') above has reset too)
-    _clearTasteSnapshots(); // fresh guest pool — discard any leftovers from a prior session
+    _clearTasteRecords(); // v1.0.260 — fresh guest pool from 0 battles: the guest list's Taste records start clean
     byId(IDS.loadingMsg).textContent =
       `Loaded ${animeList.length} popular anime. Let's go!`;
     await new Promise(r => setTimeout(r, 600));
@@ -14355,6 +14371,12 @@ function _tasteArchetypeIndex(milestone) {
        + Math.round((milestone - TASTE_STORY_REPEAT_FROM) / TASTE_STORY_REPEAT_INTERVAL) - 1;
 }
 
+// v1.0.260 — the current list's localStorage key for one of its Taste records ('snapshots', 'storySeen', 'badge'), or
+// null before a list loads or while another account owns this save: reads then see nothing and writes are skipped.
+function _tasteKey(kind) {
+  return saveKey && !_saveCollision ? KESSEN_KEYS.data.tasteForList(kind, saveKey) : null;
+}
+
 // v1.0.209 — tasteStorySeen helpers. Previously this list lived only in
 // localStorage, so a fresh device that cloud-synced into the middle of a
 // battle history (e.g. phone first sign-in at battle 1306) had `seen = []`
@@ -14364,16 +14386,20 @@ function _tasteArchetypeIndex(milestone) {
 // sync, merging with `union` semantics so a device that showed a milestone
 // while offline doesn't lose its local record when remote state arrives.
 function _readTasteStorySeen() {
-  try { return JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]'); }
+  const key = _tasteKey('storySeen'); // v1.0.260 — this list's record (none before a list loads)
+  if (!key) return [];
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
   catch { return []; }
 }
 function _mergeTasteStorySeen(incoming) {
   if (!Array.isArray(incoming) || incoming.length === 0) return;
   try {
+    const key = _tasteKey('storySeen'); // v1.0.260 — merged into this list's own record
+    if (!key) return;
     const local = _readTasteStorySeen();
     const merged = Array.from(new Set([...local, ...incoming])).sort((a, b) => a - b);
     if (merged.length !== local.length) {
-      localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(merged));
+      localStorage.setItem(key, JSON.stringify(merged));
     }
   } catch { /* ignore — sync failure shouldn't break the app */ }
 }
@@ -14388,30 +14414,57 @@ function _mergeTasteStorySeen(incoming) {
 // will render at paint time). Snapshots are capped at 40 entries (8 KB
 // upper bound) — well within the cloud payload budget.
 function _readTasteSnapshots() {
-  try { return JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]'); }
+  const key = _tasteKey('snapshots'); // v1.0.260 — this list's entry (none before a list loads)
+  if (!key) return [];
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
   catch { return []; }
 }
+// v1.0.260 — merges into this list's own entry, and always drops snapshots beyond this list's battleCount (the paint's
+// rule), so a list moved back (an older cloud save or backup) records those milestones again.
 function _mergeTasteSnapshots(incoming) {
-  if (!Array.isArray(incoming) || incoming.length === 0) return;
   try {
+    const key = _tasteKey('snapshots');
+    if (!key) return;
     const local = _readTasteSnapshots();
     const byBattle = new Map();
     // Incoming first so locals overwrite on collision
-    incoming.forEach(s => { if (s && typeof s.battleCount === 'number') byBattle.set(s.battleCount, s); });
+    (Array.isArray(incoming) ? incoming : []).forEach(s => { if (s && typeof s.battleCount === 'number') byBattle.set(s.battleCount, s); });
     local.forEach(s    => { if (s && typeof s.battleCount === 'number') byBattle.set(s.battleCount, s); });
-    const merged = [...byBattle.values()].sort((a, b) => a.battleCount - b.battleCount);
+    // v1.0.260 — and drops snapshots another account left in this list's history (before 1.0.260 every save copied the
+    // device-wide record): a snapshot whose top 10 is mostly not on this list can only be someone else's.
+    const onList = new Set((animeList || []).map(a => a.id));
+    const mine = s => !onList.size || !Array.isArray(s.top10) || !s.top10.length
+      || s.top10.filter(id => onList.has(id)).length * 2 >= s.top10.length;
+    const merged = [...byBattle.values()]
+      .filter(s => s.battleCount <= (battleCount || 0) && mine(s))
+      .sort((a, b) => a.battleCount - b.battleCount);
     // Re-impose the 40-entry cap (keep most recent — same as _maybeSaveTasteSnapshot)
     const capped = merged.length > 40 ? merged.slice(merged.length - 40) : merged;
-    if (capped.length !== local.length) {
-      localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(capped));
+    if (JSON.stringify(capped) !== JSON.stringify(local)) {
+      localStorage.setItem(key, JSON.stringify(capped));
       _tasteSnapshotMilestoneOk = -1; // v1.0.247 — store changed; re-verify on next save
     }
   } catch { /* ignore — sync failure shouldn't break the app */ }
+}
+// v1.0.260 — seeds this list's Taste records from its own local save (localStorage[saveKey]). loadState merges the
+// save it restores; a cloud apply skips loadState and cloud saves carry no Taste fields, so it calls this instead.
+// Skips a wiped save and one another signed-in account wrote (the same check loadState makes).
+function _seedTasteFromLocalSave() {
+  if (!_tasteKey('snapshots')) return; // no list, or another account owns this save: nothing could be written
+  try {
+    const s = JSON.parse(localStorage.getItem(saveKey) || 'null');
+    if (!s || typeof s !== 'object' || s._wiped) return;
+    const owner = _currentOwnerTag();
+    if (owner && s._owner && (s._owner.source !== owner.source || String(s._owner.id) !== String(owner.id))) return;
+    _mergeTasteStorySeen(s.tasteStorySeen);
+    _mergeTasteSnapshots(s.tasteSnapshots);
+  } catch { /* unreadable local save — nothing to seed */ }
 }
 
 // v1.0.259 — the seen list is one record per device, and every account's save carries a copy, so another
 // account's (or guest's) Taste Story at 50 could stop this list's card at 50 while its bar showed full.
 // A milestone now counts as seen only if this list has already passed it (n <= before).
+// v1.0.260 — the record is per list now; the guard stays because records seeded from older saves can hold another account's.
 function _tasteStorySeenBy(before) {
   const all = _readTasteStorySeen();
   return Array.isArray(all) ? all.filter(n => n <= before) : [];
@@ -14430,7 +14483,9 @@ function checkMilestone(before, after) {
   // produced a Taste Story popup every battle for users with historical gaps
   // in their seen list (e.g. someone past battle 1000 who never saw 700/900).
   // Now: one popup, everything older marked silently, done.
-  if (!tasteHit && after >= TASTE_STORY_MILESTONES[0]) {
+  // v1.0.260 — no catch-up without this list's record (none loaded, or another account owns this save): it could
+  // never be marked seen, so the card would open on every battle. A crossing still opens it once.
+  if (!tasteHit && after >= TASTE_STORY_MILESTONES[0] && _tasteKey('storySeen')) {
     try {
       const seen = _tasteStorySeenBy(before); // v1.0.259 — only milestones this list has passed
       const unseen = TASTE_STORY_MILESTONES.filter(n => n <= after && !seen.includes(n));
@@ -14447,7 +14502,8 @@ function checkMilestone(before, after) {
       if (!_tasteStorySeenBy(before).includes(tasteHit)) {
         const all = _readTasteStorySeen();
         const updated = Array.from(new Set([...(Array.isArray(all) ? all : []), tasteHit, ...extraSeen]));
-        localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(updated));
+        const seenKey = _tasteKey('storySeen'); // v1.0.260 — this list's record (none before a list loads)
+        if (seenKey) localStorage.setItem(seenKey, JSON.stringify(updated));
         setTimeout(() => showTasteStory(tasteHit), 400);
         return; // don't show regular milestone on same battle
       }
@@ -16066,6 +16122,7 @@ function renderManageTab() {
   // so the relative time is accurate even if the user just came back to it
   // after an hour. Background ticking handles the per-minute updates.
   _updateCloudSyncTimestamp();
+  _syncSessionRecapControls(); // v1.0.260 — Session recap picker shows this device's stored choice
   const notifSec = byId(IDS.manageNotificationsSection);
   if (notifSec) notifSec.style.display = _isGuestSession() ? 'none' : ''; // v1.0.246
   // v1.0.250 — Danger Zone copy matches what deleteAllData will do.
@@ -16345,7 +16402,11 @@ function toggleTheme() {
 // ─── SESSION SUMMARY ──────────────────────────────────────────────────────────
 let sessionStartElo    = {};
 let sessionBattleCount = 0;
-const SESSION_SUMMARY_INTERVAL = 15;
+const SESSION_SUMMARY_INTERVAL = 15; // v1.0.260 — now the default; the device setting below can change it
+// v1.0.260 — allowed values of KESSEN_KEYS.settings.sessionRecapEvery, matching both pickers' <option> values.
+const SESSION_RECAP_CHOICES = ['15', '30', '50', 'off'];
+// v1.0.260 — set only when the device could not store a new choice (storage full), so it still applies this visit.
+let _sessionRecapEveryUnsaved = null;
 
 function snapshotSessionStart() {
   sessionStartElo    = {};
@@ -16361,8 +16422,39 @@ function snapshotSessionStart() {
 
 function checkSessionSummary() {
   sessionBattleCount++;
-  if (sessionBattleCount > 0 && sessionBattleCount % SESSION_SUMMARY_INTERVAL === 0) {
+  // v1.0.260 — interval is the device setting (15 / 30 / 50, or off). The count keeps running while it is
+  // off, so after a change the next recap lands on the next multiple of the new interval.
+  const every = _sessionRecapEvery();
+  if (every !== 'off' && sessionBattleCount > 0 && sessionBattleCount % Number(every) === 0) {
     showSessionSummary();
+  }
+}
+
+// v1.0.260 — the stored recap frequency; a missing, unreadable or unknown value means the default (every 15).
+function _sessionRecapEvery() {
+  if (_sessionRecapEveryUnsaved) return _sessionRecapEveryUnsaved;
+  let v = null;
+  try { v = localStorage.getItem(KESSEN_KEYS.settings.sessionRecapEvery); } catch { /* storage blocked */ }
+  return SESSION_RECAP_CHOICES.includes(v) ? v : String(SESSION_SUMMARY_INTERVAL);
+}
+
+// v1.0.260 — onchange for both pickers (Manage tab and the recap itself): applies at once, keeps them in step.
+function setSessionRecapEvery(value) {
+  const v = SESSION_RECAP_CHOICES.includes(String(value)) ? String(value) : String(SESSION_SUMMARY_INTERVAL);
+  try {
+    localStorage.setItem(KESSEN_KEYS.settings.sessionRecapEvery, v);
+    _sessionRecapEveryUnsaved = null;
+  } catch { _sessionRecapEveryUnsaved = v; } // storage full — still applies for this visit
+  _syncSessionRecapControls();
+  if (v === 'off') showToast('Session recap is off. Change it any time in ⚙️ Manage → Session recap.'); // v1.0.260 — reads right from either picker
+}
+
+// v1.0.260 — show the stored choice in both pickers (run when Manage opens and before the recap shows).
+function _syncSessionRecapControls() {
+  const v = _sessionRecapEvery();
+  for (const id of [IDS.sessionRecapEveryManage, IDS.sessionRecapEveryModal]) {
+    const sel = byId(id);
+    if (sel) sel.value = v;
   }
 }
 
@@ -16389,6 +16481,7 @@ function showSessionSummary() {
       <span class="${a.delta > 0 ? 'mover-up' : 'mover-down'}">${a.delta > 0 ? '\u25b2' : '\u25bc'} ${Math.abs(a.delta | 0)}</span>
     </div>`).join('');
 
+  _syncSessionRecapControls(); // v1.0.260 — the recap's own picker shows the current frequency
   byId(IDS.sessionSummaryModal).style.display = 'flex';
   pushModalBack('sessionSummary', () => closeSessionSummary());
 }
@@ -18324,16 +18417,14 @@ async function applyMoodRec(moodKey) {
 }
 
 // ── Taste snapshots (for drift tracking) ────────────────────────────────────
-// v1.0.154 — storage key is now KESSEN_KEYS.data.tasteSnapshots.
+// v1.0.260 — stored per list: _tasteKey('snapshots') (KESSEN_KEYS.data.tasteForList).
 
-// Wipes the global taste-snapshot store. Called from every fresh-load path
-// that resets battleCount to 0 (AniList load, MAL load, guest load, full
-// reset). Without this, snapshots from a prior account or session linger
-// and the timeline shows milestones the new user couldn't possibly have
-// reached. The proper fix would be to scope this key per-saveKey, but for
-// now an explicit clear at every reset surface is the smaller change.
-function _clearTasteSnapshots() {
-  try { localStorage.removeItem(KESSEN_KEYS.data.tasteSnapshots); } catch (_e) {}
+// v1.0.260 — was _clearTasteSnapshots (the device-wide store). Clears this list's snapshots, Taste Story seen record and
+// Taste badge; called when a list starts from 0 battles (fresh AniList / MAL / guest load) and by Reset.
+function _clearTasteRecords() {
+  try {
+    ['snapshots', 'storySeen', 'badge'].forEach(kind => { const key = _tasteKey(kind); if (key) localStorage.removeItem(key); });
+  } catch (_e) {}
   _tasteSnapshotMilestoneOk = -1; // v1.0.247
 }
 
@@ -18343,9 +18434,12 @@ function _maybeSaveTasteSnapshot() {
     // of history). Each snapshot is ~200 bytes so 40 ≈ 8 KB.
     const milestone = Math.floor(battleCount / 50) * 50;
     if (milestone < 50) return;
-    if (milestone === _tasteSnapshotMilestoneOk) return; // v1.0.247 — already confirmed this session
-    const snaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
-    if (snaps.some(s => s.battleCount === milestone)) { _tasteSnapshotMilestoneOk = milestone; return; }
+    const key = _tasteKey('snapshots'); // v1.0.260 — this list's snapshots; nothing is saved before a list loads
+    if (!key) return;
+    const okTag = key + '|' + milestone; // v1.0.260 — the "already saved" cache is per list too
+    if (okTag === _tasteSnapshotMilestoneOk) return; // v1.0.247 — already confirmed this session
+    const snaps = JSON.parse(localStorage.getItem(key) || '[]');
+    if (snaps.some(s => s.battleCount === milestone)) { _tasteSnapshotMilestoneOk = okTag; return; }
 
     const genreMap = {};
     animeList.forEach(a => {
@@ -18372,8 +18466,8 @@ function _maybeSaveTasteSnapshot() {
     });
     snaps.sort((a, b) => (a.battleCount || 0) - (b.battleCount || 0));
     if (snaps.length > 40) snaps.splice(0, snaps.length - 40);
-    localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(snaps));
-    _tasteSnapshotMilestoneOk = milestone;
+    localStorage.setItem(key, JSON.stringify(snaps));
+    _tasteSnapshotMilestoneOk = okTag;
   } catch { /* storage full / corrupt — skip */ }
 }
 
@@ -18382,7 +18476,7 @@ function _paintTasteDrift(el) {
   try {
     // Same stale-filter as _paintTasteEvolution — drop snapshots from a prior
     // account/reset whose battle count is ahead of ours.
-    const rawSnaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
+    const rawSnaps = _readTasteSnapshots(); // v1.0.260 — this list's snapshots
     const snaps    = rawSnaps.filter(s => (s.battleCount || 0) <= battleCount);
     if (snaps.length < 2) {
       const needed = Math.max(0, 50 - battleCount);
@@ -18428,12 +18522,13 @@ function _paintTasteDrift(el) {
       return;
     }
 
+    // v1.0.260 — genre names come from AniList / MAL, so they are escaped (house rule).
     el.innerHTML = `
       <p class="taste-drift-since">Since battle ${oldest.battleCount} (${battlesSince} battles ago):</p>
       <div class="taste-drift-rows">
         ${notable.map(s => `
           <div class="taste-drift-row ${s.delta > 0 ? 'up' : 'down'}">
-            <span class="drift-genre">${s.genre}</span>
+            <span class="drift-genre">${esc(s.genre)}</span>
             <span class="drift-arrow">${s.delta > 0 ? '▲' : '▼'}</span>
             <span class="drift-delta">${s.delta > 0 ? '+' : ''}${s.delta} ELO</span>
           </div>`).join('')}
@@ -18452,17 +18547,17 @@ function _paintTasteEvolution(el) {
   if (!el) return;
   try {
     // Filter out any snapshots whose battle count is ahead of the user's
-    // current count. Those are leftovers from a prior account / reset path
-    // (KESSEN_KEYS.data.tasteSnapshots is a global localStorage entry, not per-user, so it
-    // leaks across guest switches, fresh-loads, etc). Showing them produces
+    // current count. v1.0.260 — snapshots are per list now, so these can only be this list's own
+    // from before it was moved back (an older cloud save or a backup). Showing them produces
     // the "Battle 200" cards for a user who only has 113 battles bug.
-    const rawSnaps = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.tasteSnapshots) || '[]');
+    const rawSnaps = _readTasteSnapshots(); // v1.0.260 — this list's snapshots
     const allSnaps = rawSnaps.filter(s => (s.battleCount || 0) <= battleCount);
     // If we discarded any, persist the cleaned list so the renderer doesn't
     // re-filter on every paint and the next snapshot save starts from a
     // clean baseline.
-    if (allSnaps.length !== rawSnaps.length) {
-      localStorage.setItem(KESSEN_KEYS.data.tasteSnapshots, JSON.stringify(allSnaps));
+    const snapKey = _tasteKey('snapshots'); // v1.0.260
+    if (snapKey && allSnaps.length !== rawSnaps.length) {
+      localStorage.setItem(snapKey, JSON.stringify(allSnaps));
       _tasteSnapshotMilestoneOk = -1; // v1.0.247 — a milestone was dropped; re-verify on next save
     }
     if (!allSnaps.length) {
@@ -20213,6 +20308,7 @@ function _avatarOutsideClick(e) {
 // milestone is crossed, nudging the user to revisit their updated profile.
 
 // v1.0.154 — storage key is now KESSEN_KEYS.ui.tasteNewBadgeMilestone.
+// v1.0.260 — now kept per list: _tasteKey('badge') (KESSEN_KEYS.data.tasteForList).
 
 function _initNewBadges() {
   _syncTasteNewBadge();
@@ -20225,7 +20321,9 @@ function _syncTasteNewBadge() {
   if (!el) return;
   if (battleCount < TASTE_STORY_MILESTONES[0]) { el.style.display = 'none'; return; }
   const currentMilestone = _lastTasteStoryMilestone(battleCount);
-  const seenMilestone    = Number(localStorage.getItem(KESSEN_KEYS.ui.tasteNewBadgeMilestone) || 0);
+  const badgeKey         = _tasteKey('badge'); // v1.0.260 — the milestone this list last dismissed (none yet: NEW shows)
+  if (!badgeKey) { el.style.display = 'none'; return; } // v1.0.260 — no list record, so a dismissal couldn't be kept
+  const seenMilestone    = Number(localStorage.getItem(badgeKey) || 0);
   el.style.display = currentMilestone > seenMilestone ? '' : 'none';
 }
 
@@ -20234,8 +20332,9 @@ function _dismissNewBadge(tab) {
   if (el) el.style.display = 'none';
   try {
     if (tab === 'taste') {
-      if (battleCount >= TASTE_STORY_MILESTONES[0]) {
-        localStorage.setItem(KESSEN_KEYS.ui.tasteNewBadgeMilestone, String(_lastTasteStoryMilestone(battleCount)));
+      const badgeKey = _tasteKey('badge'); // v1.0.260 — kept per list
+      if (badgeKey && battleCount >= TASTE_STORY_MILESTONES[0]) {
+        localStorage.setItem(badgeKey, String(_lastTasteStoryMilestone(battleCount)));
       }
     }
   } catch (_) {}
@@ -21519,7 +21618,8 @@ document.addEventListener('keydown', e => {
   // Only fire when the battle screen is visible
   if (byId(IDS.battleScreen).style.display === 'none') return;
   // Don't hijack text inputs
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  // v1.0.260 — nor a focused <select>: the recap picker sits over the battle screen and arrows change it
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
   switch (e.key) {
     case 'ArrowLeft':  e.preventDefault(); pickWinner(0); break;
     case 'ArrowRight': e.preventDefault(); pickWinner(1); break;
@@ -22695,14 +22795,16 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.259 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.260 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🎉 A second account or a guest on the same device now gets its own Taste Story card at 50 battles (and every milestone after), instead of the bar filling up with no card because another account had already seen it.',
+    '📈 Each account and the guest on a device now keep their own "How you\'ve changed" timeline, Taste tab NEW badge and Taste Story cards, and snapshots another account left in your timeline are cleared out.',
+    '⚡ You can now choose how often the Session Recap pops up while you rank (every 15, 30 or 50 battles, or never), right from the recap itself or in ⚙️ Manage.',
+    '🏷 In franchise view, a show that is the only one on your list from a franchise Kessen knows by name now sits under that name, so Detective Conan: The Culprit Hanzawa shows as Detective Conan with its own title in small text underneath.',
   ],
 };
 

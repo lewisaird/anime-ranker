@@ -1000,6 +1000,8 @@
     .manage-btn-danger:hover { border-color: var(--accent-red); background: var(--hover-red-bg); }
     }
     .manage-danger-box { background: #1a0d0d; border: 1px solid #6e3232; border-radius: 10px; padding: 16px; }
+    /* v1.0.260 — Session recap picker: a <select> wearing .manage-btn; text stays left of its arrow on phones too */
+    select.manage-btn { text-align: left; }
 
     .results-tabs {
       display: flex;
@@ -1177,6 +1179,11 @@
       padding: 24px;
       position: relative;
       transition: border-color 0.15s ease; /* v1.0.211 */
+      /* v1.0.260 — the frequency picker sits at the bottom: cap the box to the screen and scroll inside it
+         (8 movers outgrow a 640px-tall phone); dvh where supported so Chrome's URL bar can't hide it */
+      max-height: calc(100vh - 40px);
+      max-height: calc(100dvh - 40px);
+      overflow-y: auto;
     }
     @media (hover: hover) {
       .session-summary-box:hover { border-color: rgba(88,166,255,0.30); }
@@ -1194,6 +1201,15 @@
     .session-mover img { width: 34px; height: 48px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
     .mover-up   { color: var(--accent-green); font-weight: 700; }
     .mover-down { color: var(--accent-red); font-weight: 700; }
+    /* v1.0.260 — recap frequency picker under the recap's buttons: small, muted, one line at 360px */
+    .recap-freq-row {
+      display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+      gap: 6px 8px; margin-top: 14px; font-size: 0.8rem; color: var(--text-secondary);
+    }
+    .recap-freq-select {
+      padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border-default);
+      background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.8rem; cursor: pointer;
+    }
 
     /* ── Rivalry section ─────────────────────────────────────────────────── */
     #rivalry-section {
