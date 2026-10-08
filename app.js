@@ -14409,6 +14409,14 @@ function _mergeTasteSnapshots(incoming) {
   } catch { /* ignore — sync failure shouldn't break the app */ }
 }
 
+// v1.0.259 — the seen list is one record per device, and every account's save carries a copy, so another
+// account's (or guest's) Taste Story at 50 could stop this list's card at 50 while its bar showed full.
+// A milestone now counts as seen only if this list has already passed it (n <= before).
+function _tasteStorySeenBy(before) {
+  const all = _readTasteStorySeen();
+  return Array.isArray(all) ? all.filter(n => n <= before) : [];
+}
+
 function checkMilestone(before, after) {
   // Taste story — check before the regular milestone so it appears first
   let tasteHit = _findTasteStoryMilestone(before, after);
@@ -14424,7 +14432,7 @@ function checkMilestone(before, after) {
   // Now: one popup, everything older marked silently, done.
   if (!tasteHit && after >= TASTE_STORY_MILESTONES[0]) {
     try {
-      const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
+      const seen = _tasteStorySeenBy(before); // v1.0.259 — only milestones this list has passed
       const unseen = TASTE_STORY_MILESTONES.filter(n => n <= after && !seen.includes(n));
       if (unseen.length) {
         tasteHit   = unseen[unseen.length - 1];   // show only the latest
@@ -14435,9 +14443,10 @@ function checkMilestone(before, after) {
 
   if (tasteHit && animeList.length >= 10) {
     try {
-      const seen = JSON.parse(localStorage.getItem(KESSEN_KEYS.ui.tasteStorySeen) || '[]');
-      if (!seen.includes(tasteHit)) {
-        const updated = Array.from(new Set([...seen, tasteHit, ...extraSeen]));
+      // v1.0.259 — a crossing always opens the card; the shared record only gates catch-up. Write back every entry.
+      if (!_tasteStorySeenBy(before).includes(tasteHit)) {
+        const all = _readTasteStorySeen();
+        const updated = Array.from(new Set([...(Array.isArray(all) ? all : []), tasteHit, ...extraSeen]));
         localStorage.setItem(KESSEN_KEYS.ui.tasteStorySeen, JSON.stringify(updated));
         setTimeout(() => showTasteStory(tasteHit), 400);
         return; // don't show regular milestone on same battle
@@ -19732,8 +19741,10 @@ function _setTowerChrome(on) {
 // run down via _exitTowerState and re-picks a standard pair.
 function exitTowerEarly() {
   if (!towerMode) return;
+  const start = _towerStartBattleCount; // v1.0.259 — rounds already played still count toward a Taste Story
   setMode('normal');
   showToast('Tower run abandoned — back to standard battles.');
+  if (battleCount > start) checkMilestone(start, battleCount);
 }
 
 function _exitTowerState() {
@@ -22684,18 +22695,14 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.258 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.259 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔗 Share links now show your Top 10, matching the image, and each anime on the shared page shows its tier, format, episodes and year, and opens on AniList (or MyAnimeList if you signed in with MAL) when tapped.',
-    '📊 The bar under the header now fills toward your next Taste Story and is full right when the card appears, instead of also filling at 10 and 25 battles when nothing happened.',
-    '🏷️ In franchise view, a franchise with only one show on your list now shows the franchise name with that show\'s own title in small text under it, and names like Kaiju No. 8 are no longer cut short.',
-    '🎯 "Because you loved" and "Because you liked" rows no longer suggest other parts of the same franchise that aren\'t on your list (like Kakegurui Twin under Kakegurui xx), and other picks take their place.',
-    '💎 Hidden Gems now come from your favourite genres once you\'ve ranked 20 anime, skip sequels, spin-offs and film retellings, and mix up the picks when you refresh.',
+    '🎉 A second account or a guest on the same device now gets its own Taste Story card at 50 battles (and every milestone after), instead of the bar filling up with no card because another account had already seen it.',
   ],
 };
 
