@@ -4039,8 +4039,11 @@
     #removed-anime-banner.active { display: flex; }
 
     /* §5.2.7 — Archive confirmation modal · §5.2.12 — Guest merge modal */
+    /* v1.0.257 — the new-anime review dialog shares .archive-confirm-box but was never in this
+       overlay rule, so it rendered in the page flow at the top-left with no backdrop. */
     #archive-confirm-modal,
-    #guest-merge-modal {
+    #guest-merge-modal,
+    #new-anime-confirm-modal {
       display: none; position: fixed; inset: 0; z-index: 1500;
       background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
       align-items: center; justify-content: center; padding: 20px;

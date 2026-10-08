@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.256" />
+  <meta name="version" content="1.0.257" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1698,7 +1698,7 @@
   </div>
 
   <!-- TASTE STORY MODAL -->
-  <div id="taste-story-modal" style="display:none" onclick="if(event.target===this)closeTasteStory()">
+  <div id="taste-story-modal" role="dialog" aria-modal="true" aria-label="Taste story" style="display:none" onclick="if(event.target===this)closeTasteStory()"><!-- v1.0.257 — role so the logout sweep and overlay test cover it -->
     <div class="ts-card">
       <div class="ts-top">
         <div class="ts-dots"></div>

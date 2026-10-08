@@ -1081,6 +1081,7 @@ function _clearRankingState() {
   _searchChips = {
     genres: new Set(), studios: new Set(), years: new Set(),
     yearRange: null, formats: new Set(), lengths: new Set(),
+    statuses: new Set(), // v1.0.257 — was missing: after Delete all, Rankings filters threw 'statuses is not iterable'
   };
   // Reset enrichment-attempted flags so the new list's enrichment fires.
   _enrichmentAttemptedKey = '';
@@ -1107,6 +1108,17 @@ function _clearRankingState() {
   const bell = byId(IDS.notifBell);
   if (bell) bell.style.display = 'none';
   closeNotifCentre();
+  // v1.0.257 — close any dialog left open (the new-anime review stayed over the landing
+  // page after logout). Everything is being reset, so hide them directly and drop the
+  // back-button stack rather than replaying each close (which would walk history back).
+  // Live Challenge / Watch Together hold Firebase listeners and timers: close them through their
+  // own functions (cloud sync is already off here, so their re-sync call is a no-op).
+  try { if (_lc) closeLiveChallengeModal(); } catch { /* not declared yet during boot */ }
+  try { if (_collab) closeCollabModal(); } catch { /* not declared yet during boot */ }
+  byId(IDS.towerModal)?.classList.remove('open'); // shown by a class, not an inline display
+  // Only dialogs shown via an inline display are touched, so class-toggled ones keep working.
+  document.querySelectorAll('[role="dialog"]').forEach(d => { if (d.style.display && d.style.display !== 'none') d.style.display = 'none'; });
+  try { _modalBackStack.length = 0; } catch { /* declared later in the file; nothing open during boot */ }
 
   // Clear discover cache so a different user gets fresh recommendations
   Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
@@ -1797,7 +1809,9 @@ async function _fetchMALAnimeListViaAPI() {
           if (isNsfw || isRx || hentai) return;
         }
         if (!entries.some(e => e.malId === node.id)) {
-          entries.push({ malId: node.id, score: item.list_status?.score || 0, title: node.title || '' });
+          // v1.0.257 — keep the list status (AniList's names) so new-anime entries know if the series is finished
+          const listStatus = item.list_status?.is_rewatching ? 'REPEATING' : (status === 'completed' ? 'COMPLETED' : 'CURRENT');
+          entries.push({ malId: node.id, score: item.list_status?.score || 0, title: node.title || '', status: listStatus });
         }
       });
 
@@ -8283,6 +8297,26 @@ function _recFranchiseKeys(media) {
   return [media?.title?.english, media?.title?.romaji].filter(Boolean).map(t => _franchiseKey(t)).filter(Boolean);
 }
 
+// v1.0.257 — the seed's franchise root: the earliest entry of its franchise on your list (Kakegurui for
+// Kakegurui xx), by seasonYear then lowest id, from the cached franchise groups (no network). null when
+// the seed is that entry or has no franchise. Sequels get few AniList recommendations (Kakegurui xx: 11),
+// so For You and mood rows top up from the root's, fetched in the seed's own request.
+function _recFranchiseRoot(seed) {
+  // v1.0.257 — never throws: a failed lookup must only skip the top-up, not lose the seed's row.
+  try {
+    const groupOf = _getFranchiseIdMap();
+    const gid = groupOf.get(seed.id);
+    if (!gid) return null;
+    const year = (a) => a.seasonYear || Infinity;
+    let root = seed;
+    for (const a of animeList) {
+      if (groupOf.get(a.id) !== gid) continue;
+      if (year(a) < year(root) || (year(a) === year(root) && a.id < root.id)) root = a;
+    }
+    return root.id === seed.id ? null : root;
+  } catch { return null; }
+}
+
 async function fetchRecommendationsForYou() {
   // Returns { grouped: true, groups: [{seed, recs[]}] } or { grouped: false, items: [...] }
   // v1.0.241 — seeds come from ranked anime only. With nothing ranked, skip
@@ -8307,20 +8341,33 @@ async function fetchRecommendationsForYou() {
         }
       }
     }
-    query ($id: Int) {
+    query ($id: Int, $root: Int, $hasRoot: Boolean!) {
       Media(id: $id) {
         p1: recommendations(page: 1, perPage: 25, sort: RATING_DESC) { ...recNodes }
         p2: recommendations(page: 2, perPage: 25, sort: RATING_DESC) { ...recNodes }
       }
+      root: Page(perPage: 1) @include(if: $hasRoot) {
+        media(id: $root) {
+          r1: recommendations(page: 1, perPage: 25, sort: RATING_DESC) { ...recNodes }
+          r2: recommendations(page: 2, perPage: 25, sort: RATING_DESC) { ...recNodes }
+        }
+      }
     }`;
+  // v1.0.257 — root: the franchise root's 50 recommendations (r1/r2) in the same request, so a sequel's short
+  // row tops up with no extra AniList call. Page, not Media: a root id AniList no longer has comes back as an
+  // empty list, where Media(id) answers 404 and nulls the seed's own data too. @include skips it with no root.
 
   for (let rank = 0; rank < seeds.length; rank++) {
     const anime = seeds[rank];
     try {
-      const res = await _anilistFetch({ query, variables: { id: anime.id } });
+      const rootAnime = _recFranchiseRoot(anime); // v1.0.257 — e.g. Kakegurui for Kakegurui xx; null for a first entry
+      const res = await _anilistFetch({ query, variables: { id: anime.id, root: rootAnime?.id ?? null, hasRoot: !!rootAnime } });
       const json = await res.json();
       const media = json?.data?.Media;
-      const nodes = [...(media?.p1?.nodes ?? []), ...(media?.p2?.nodes ?? [])];
+      const rootMedia = json?.data?.root?.media?.[0]; // v1.0.257 — absent with no root, or one AniList no longer has
+      // v1.0.257 — the root's picks come after the seed's own and pass the same filters, so they only fill a short row
+      const nodes = [...(media?.p1?.nodes ?? []), ...(media?.p2?.nodes ?? []),
+                     ...(rootMedia?.r1?.nodes ?? []), ...(rootMedia?.r2?.nodes ?? [])];
       const recs = [];
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
@@ -17977,20 +18024,31 @@ async function applyMoodRec(moodKey) {
         }
       }
     }
-    query ($id: Int) {
+    query ($id: Int, $root: Int, $hasRoot: Boolean!) {
       Media(id: $id) {
         p1: recommendations(page: 1, perPage: 25, sort: RATING_DESC) { ...recNodes }
         p2: recommendations(page: 2, perPage: 25, sort: RATING_DESC) { ...recNodes }
       }
+      root: Page(perPage: 1) @include(if: $hasRoot) {
+        media(id: $root) {
+          r1: recommendations(page: 1, perPage: 25, sort: RATING_DESC) { ...recNodes }
+          r2: recommendations(page: 2, perPage: 25, sort: RATING_DESC) { ...recNodes }
+        }
+      }
     }`;
+  // v1.0.257 — same franchise-root top-up as fetchRecommendationsForYou, in the same single request per seed.
 
   for (const seed of seeds) {
     if (gen !== _forYouGen) return; // v1.0.251 — superseded: stop spending AniList requests
     try {
-      const res  = await _anilistFetch({ query, variables: { id: seed.id } });
+      const rootAnime = _recFranchiseRoot(seed); // v1.0.257 — as in fetchRecommendationsForYou
+      const res  = await _anilistFetch({ query, variables: { id: seed.id, root: rootAnime?.id ?? null, hasRoot: !!rootAnime } });
       const json = await res.json();
       const media = json?.data?.Media;
-      const nodes = [...(media?.p1?.nodes ?? []), ...(media?.p2?.nodes ?? [])];
+      const rootMedia = json?.data?.root?.media?.[0]; // v1.0.257
+      // v1.0.257 — the root's picks after the seed's own, through the same filters
+      const nodes = [...(media?.p1?.nodes ?? []), ...(media?.p2?.nodes ?? []),
+                     ...(rootMedia?.r1?.nodes ?? []), ...(rootMedia?.r2?.nodes ?? [])];
       const recs  = [];
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
@@ -22415,20 +22473,17 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.256 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.257 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔥 Logging out or switching user now clears the streak badge from the header, and the next list starts with its own streak, weekly recap, undo history and stats instead of picking up the previous list\'s.',
-    '🎭 The "More <Genre> you haven\'t seen" and 💎 Hidden Gems sections in Discover now show up to 6 picks instead of 4, without repeating titles from your For You rows or showing two entries from the same series.',
-    '🔗 If you use MyAnimeList, cards in Missing and the Discover pop-ups now open the title on MyAnimeList instead of AniList.',
-    '🔮 Tapping a Predict result now opens the same detail pop-up as other Discover cards, with the synopsis, Add to Planning and a link to MAL or AniList.',
-    '🏷️ Franchise cards now show a never-battled entry as \'–\' instead of 1200, with an \'n unranked\' note beside the entry count, so the Avg ELO adds up; the franchise pop-up no longer repeats its win rate or confidence, and no longer shows a \'Best now\' that is the same as the average.',
-    '📤 Share links made as a guest now read "Top N Anime" instead of "guest\'s Top 20 Anime", and signed-in shares show your name with its proper capitals.',
-    '🔀 Logging in after trying Kessen as a guest now offers to bring your guest battles into your account, as it was always meant to.',
+    '🆕 The "New anime on your list" window now opens centred over the page with a dimmed background, instead of sitting in the top-left corner.',
+    '⚡ The bell only offers "Add & Tower" for a series you\'ve finished; a show you\'re still watching just gets "Add to rankings" until you complete it.',
+    '🚪 Logging out now closes any window that was still open, so nothing is left over the sign-in page.',
+    '📈 Recommendation rows for a sequel ("Because you loved" and mood picks) now fill up to 6 using the first entry of that series on your list, so shows like Kakegurui xx no longer get a short row.',
   ],
 };
 
@@ -22583,6 +22638,12 @@ function _ncIcon(type) {
   return '🔔';
 }
 
+// v1.0.257 — Tower is for series you've finished: COMPLETED, or REPEATING (rewatching
+// means you finished it before). A show you're still watching gets no Tower offer.
+function _isFinishedListStatus(status) {
+  return status === 'COMPLETED' || status === 'REPEATING';
+}
+
 function _ncActionBtn(n) {
   if (n.type === 'finish_prompt')
     return `<button class="nc-action-btn" onclick="ncActionFinishTower('${n.id}')">⚡ Battle in Tower</button>`;
@@ -22593,7 +22654,8 @@ function _ncActionBtn(n) {
     // just the review-modal button.
     const single = n.data?.anime?.length === 1;
     const addBtn = `<button class="nc-action-btn" onclick="ncActionAddAnime('${n.id}')">➕ Add to rankings</button>`;
-    const towerBtn = single
+    const a0 = n.data.anime[0];
+    const towerBtn = single && _isFinishedListStatus(a0?.listStatus ?? a0?.status) // v1.0.257 — finished series only
       ? `<button class="nc-action-btn" onclick="ncActionAddAndTower('${n.id}')">⚡ Add &amp; Tower</button>`
       : '';
     return addBtn + towerBtn;
@@ -22614,12 +22676,14 @@ function ncActionAddAndTower(id) {
   // can take a noticeable beat; without this the modal stays frozen and the
   // user taps again, sometimes creating duplicates. Disable the button (and
   // its sibling) synchronously so the tap is unambiguous.
-  const btn = document.querySelector(`.nc-action-btn[onclick*="ncActionAddAndTower('${id}')"]`);
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
-
   const notif = _notifCentre.find(n => n.id === id);
   const newAnime = notif?.data?.anime?.[0];
   if (!newAnime) return;
+  // v1.0.257 — a stale button for a series still being watched only adds it; no Tower yet.
+  // Checked before the button is disabled so it can't be left on "Loading…".
+  if (!_isFinishedListStatus(newAnime.listStatus ?? newAnime.status)) { ncActionAddAnime(id); return; }
+  const btn = document.querySelector(`.nc-action-btn[onclick*="ncActionAddAndTower('${id}')"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
   // If somehow already in the list, just start Tower against the existing one
   const existingIdx = animeList.findIndex(a => a.id === newAnime.id);
   let championIdx;
@@ -22638,7 +22702,7 @@ function ncActionAddAndTower(id) {
   // reflects the reduced _pendingNewAnime, rather than staying stuck on the
   // pre-add number. Also hides the banner entirely if we've cleared the last
   // pending entry.
-  _refreshListBanners('AniList');
+  _refreshListBanners(_isMalCloudSession() ? 'MyAnimeList' : 'AniList'); // v1.0.257 — MAL users saw 'AniList'
   startTower(championIdx);
 }
 
@@ -23139,6 +23203,7 @@ async function checkForNewAnimeMAL() {
     const entries   = await _fetchMALAnimeListViaAPI();
     const malIds    = entries.map(e => e.malId);
     const scoreMap  = new Map(entries.map(e => [e.malId, e.score]));
+    const statusMap = new Map(entries.map(e => [e.malId, e.status])); // v1.0.257 — for the Add & Tower gate
     const ownIds    = new Set(animeList.map(a => a.id));
     const PAGE_SIZE = 50;
     const pendingAnime = [];
@@ -23173,6 +23238,9 @@ async function checkForNewAnimeMAL() {
             fuzzy: false, eloHistory: [1200],
             anilistScore: 0, malScore: userScore,
             idMal: m.idMal || null,
+            // v1.0.257 — for the Add & Tower offer only. Kept off `status`: MAL statuses are never
+            // refreshed on the ranked list, so a saved 'CURRENT' would stick as 'Watching' for good.
+            listStatus: statusMap.get(m.idMal) || null,
           });
         }
       });
@@ -23211,8 +23279,9 @@ function _refreshListBanners(sourceName) {
     // for small deltas, or a single grouped entry for larger bulk syncs.
     _notifCentre = _notifCentre.filter(n => n.type !== 'new_anime');
     if (_pendingNewAnime.length < 5) {
-      // Per-anime entries — each gets a Tower button so films / OVAs / etc.
-      // that bypass the CURRENT→COMPLETED transition still get a prompt.
+      // Per-anime entries — each finished one gets a Tower button so films / OVAs / etc.
+      // that bypass the CURRENT→COMPLETED transition still get a prompt (v1.0.257: only
+      // COMPLETED/REPEATING; a show still being watched is prompted when it completes).
       _pendingNewAnime.forEach(a => {
         _ncAdd('new_anime',
           `${a.title} added on your ${sourceName} — not yet in rankings`,
@@ -23382,6 +23451,7 @@ function _removeFromArchive(id) {
 // Seeds a pending anime for insertion into animeList. Archived history wins
 // over the smart-ELO guess; otherwise behaves exactly as before.
 function _seedNewAnime(a) {
+  delete a.listStatus; // v1.0.257 — MAL list status was only for the Add & Tower offer; never saved
   const arch = _archivedEntryFor(a.id);
   if (arch && Number.isFinite(arch.elo)) {
     a.elo         = arch.elo;
