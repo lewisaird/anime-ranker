@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.255" />
+  <meta name="version" content="1.0.256" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1909,7 +1909,8 @@
         </div>
         <div id="modal-description" class="modal-description" style="display:none"></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
-          <a id="modal-anilist-btn" class="modal-anilist-btn" href="#" target="_blank" style="margin-bottom:0">View on AniList ↗</a>
+          <!-- v1.0.256 — external MAL/AniList link: rel per the house rule -->
+          <a id="modal-anilist-btn" class="modal-anilist-btn" href="#" target="_blank" rel="noopener noreferrer" style="margin-bottom:0">View on AniList ↗</a>
           <!-- v1.0.211 — Battle Next chip. Closes the modal, navigates to the
                battle screen, queues this anime against a similar-ELO opponent
                (or fresh random one) so the user can immediately put their

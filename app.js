@@ -1047,25 +1047,12 @@ function _clearRankingState() {
   flushSaveState();
 
   animeList         = [];
-  battleCount       = 0;
-  currentA          = null;
-  currentB          = null;
-  battleHistory     = [];
-  excludedIds       = new Set();
-  hiddenFormatsBattle     = new Set();
+  // v1.0.256 — battles, history, filters, undo, achievements, matchups, streak, weekly recap and Winner
+  // Stays now reset in _resetPerListState (shared with every list load), which also hides the streak badge.
+  _resetPerListState();
   hiddenStatusesBattle    = new Set();
-  hiddenFormatsRanking    = new Set();
-  hiddenEpRangesBattle    = new Set();
-  hiddenEpRangesRanking   = new Set();
   saveKey           = '';
-  undoStack         = [];
-  achievements      = {};
-  comparedFriends   = new Set();
   _cloudSyncEnabled = false;
-  nextPairOverride  = null;
-  matchupStats      = {};
-  _dailyStreak      = { current: 0, longest: 0, lastActiveDate: null };  // v1.0.238
-  _weeklyStats      = { currentWeekStart: null, battlesThisWeek: 0, lastCompletedWeek: null, summaryShownFor: null };  // v1.0.238
   _metrics          = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };  // v1.0.239
   _metricsSessionCounted = false;
   // v1.0.211 — Clear mode flags + per-mode session state. Without this, a
@@ -1073,10 +1060,7 @@ function _clearRankingState() {
   // ends up in the new session with a stale champion index, trio array, or
   // franchise restriction pointing into the OLD animeList. Most dangerously
   // wsoWinnerIdx → an array bound that no longer exists.
-  wsoMode              = false;
-  wsoWinnerIdx         = null;
-  wsoStreak            = 0;
-  wsoFacedOrder        = [];
+  // v1.0.256 — the Winner Stays fields (wsoMode/wsoWinnerIdx/wsoStreak/wsoFacedOrder) reset in _resetPerListState above.
   settleMode           = false;
   blindMode            = false;
   trioMode             = false;
@@ -1147,6 +1131,34 @@ function _clearRankingState() {
   const progress = byId(IDS.progressInfo);
   if (progress) progress.textContent = '';
   showFlex('username-screen');
+}
+
+// v1.0.256 — one list's own state (what loadState restores, plus undo and the queued pair), reset on every
+// list load and logout so a list opened after Change User can't inherit the previous one's. Never saves.
+function _resetPerListState() {
+  battleCount           = 0;
+  currentA              = null;
+  currentB              = null;
+  battleHistory         = [];
+  excludedIds           = new Set();
+  hiddenFormatsBattle   = new Set();
+  hiddenFormatsRanking  = new Set();
+  hiddenEpRangesBattle  = new Set();
+  hiddenEpRangesRanking = new Set();
+  undoStack             = [];
+  nextPairOverride      = null;
+  achievements          = {};
+  comparedFriends       = new Set();
+  matchupStats          = {};
+  _dailyStreak          = { current: 0, longest: 0, lastActiveDate: null };
+  _weeklyStats          = { currentWeekStart: null, battlesThisWeek: 0, lastCompletedWeek: null, summaryShownFor: null };
+  wsoMode               = false;
+  wsoWinnerIdx          = null;
+  wsoStreak             = 0;
+  wsoFacedOrder         = [];
+  _updateUndoBtn();
+  _renderDailyStreakBadge();
+  dismissWeeklySummary(); // v1.0.256 — the previous list's weekly card must not linger (DOM only, never saves)
 }
 
 function clearAuth() {
@@ -2776,6 +2788,9 @@ async function checkAndApplyCloudSave(localSaveKey) {
   if (!ok) return false;
 
   try {
+    // v1.0.256 — a list load, not live sync: drop the previous list's state so its streak and weekly
+    // tally aren't merged in (the apply sets saveKey in this same tick, so nothing saves in between).
+    _resetPerListState();
     _applyCloudSaveToMemory(cloud);
     return true; // caller should navigate to battle screen
   } catch (err) {
@@ -2904,6 +2919,9 @@ function loadState(username, source = 'anilist') {
     ? KESSEN_KEYS.session.mal(username)
     : KESSEN_KEYS.session.anilist(username);
   _saveCollision = false;
+  // v1.0.256 — saveKey now points at the new list: start it clean so undo, the streak and anything a
+  // save lacks can't carry over from the previous list (a name with no save starts fresh too).
+  _resetPerListState();
   // v1.0.211 fix — Safari private-mode throws SecurityError for storage
   // access, which used to crash the entire login flow with no user message.
   // Treat any storage exception as "no save found" so cold-start path takes
@@ -5545,6 +5563,17 @@ function _applyRankingViewState() {
   }
 }
 
+// v1.0.256 — never-battled (Unranked) entries are left out of Avg ELO, so the card, list table and overview say how many.
+// statMembers is the ranked entries, or every entry when none is ranked (the tier then reads Unranked), so that case is 0.
+function _franchiseUnrankedCount(group) {
+  return group.members.length - group.statMembers.length;
+}
+// v1.0.256 — the muted "n unranked" pill shown after "n entries" on the grid card and the list table.
+function _franchiseUnrankedBadge(group) {
+  const n = _franchiseUnrankedCount(group);
+  return n ? `<span class="franchise-unranked-count" title="Not battled yet, so left out of Avg ELO">${n} unranked</span>` : '';
+}
+
 function _buildFranchiseCard(group, rank, _totalGroups) {
   const isSingle = group.members.length === 1;
   // v1.0.164 — Franchise cards (single-member or otherwise) no longer carry
@@ -5568,7 +5597,8 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
   const tierBadge = tier
     ? `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">${tier}</span>`
     : `<span class="rank-tier" style="background:${tierColor}22;color:${tierColor};border-color:${tierColor}44">Unranked</span>`;
-  const countBadge = !isSingle ? `<span class="franchise-count">${group.members.length} entries</span>` : '';
+  // v1.0.256 — plus a muted "n unranked" pill when Avg ELO leaves never-battled entries out (Lewis: "2 entries" over one number).
+  const countBadge = !isSingle ? `<span class="franchise-count">${group.members.length} entries</span>${_franchiseUnrankedBadge(group)}` : '';
   // v1.0.165 — fuzzy-member count badge. Renders alongside the entries
   // count when at least one member is flagged so users can spot
   // franchises with uncertain entries without opening each one.
@@ -5595,11 +5625,15 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
         const fuzzyPill = a.fuzzy
           ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
           : '';
+        // v1.0.256 — an Unranked entry shows a muted '–' (as in the list table), not the 1200 that Avg ELO leaves out.
+        const eloHtml = _isRanked(a)
+          ? `<span class="franchise-member-elo">${a.elo}</span>`
+          : '<span class="franchise-member-elo is-unranked" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>';
         return `
         <div class="franchise-member${fuzzyCls}" onclick="showAnimeDetail(${a.id})">
           <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
           <span class="franchise-member-title">${esc(a.titleEn || a.title)}${fuzzyPill}</span>
-          <span class="franchise-member-elo">${a.elo}</span>
+          ${eloHtml}
         </div>`;
       }).join('')}
     </div>` : '';
@@ -5631,7 +5665,8 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
     // franchise; the historical peak lives in the overview (showFranchiseDetail).
     // v1.0.254 — "★ Top" read like a rank: now "★ Best" (hidden while Unranked), under a
     // labelled "Avg ELO" headline that replaces "ELO x" + the faint "AVG" suffix.
-    const peakBadge = (!isSingle && !group.unranked && group.statMembers.length >= 2) // v1.0.254 — one ranked entry: Best would just repeat Avg
+    // v1.0.256 — also hidden when it equals Avg ELO (ranked entries level), the same rule as the overview's "Best now".
+    const peakBadge = (!isSingle && !group.unranked && group.statMembers.length >= 2 && group.peakElo !== group.bestElo) // v1.0.254 — one ranked entry: Best would just repeat Avg
       ? `<span class="franchise-peak" title="Highest-rated entry in this franchise">★ Best ${group.peakElo}</span>`
       : '';
     card.innerHTML = `
@@ -5722,18 +5757,23 @@ function showFranchiseDetail(groupName, opts) {
     // v1.0.253 — name rides in a data attribute: esc() turns ' into &#39;, which the
     // browser decodes back inside onclick, so "JoJo's …" broke the quoted JS string.
     // v1.0.255 — a "Not counted" label before the first left-out entry; each such row says why (Excluded / Hidden by filter).
-    const notCountedLabel = i === group.members.length ? '<div class="franchise-detail-hidden-label">Not counted — excluded or hidden by a filter</div>' : '';
+    // v1.0.256 — the label is a short "Not counted (n)" heading on a divider; a left-out row shows only why (a muted
+    // pill) and its ELO ('Unranked' if never battled) — no tier or WR, as it is in none of the numbers above.
+    const notCountedLabel = i === group.members.length ? `<div class="franchise-detail-hidden-label" title="Excluded or hidden by a filter, so left out of the numbers above">Not counted (${detail.hidden.length})</div>` : '';
+    const statsHtml = notCounted
+      ? `<span class="franchise-detail-reason">${excludedIds.has(a.id) ? 'Excluded' : 'Hidden by filter'}</span>
+          <span>${_isRanked(a) ? `ELO ${a.elo}` : 'Unranked'}</span>`
+      : `${memberTier
+            ? `<span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>`
+            : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex">Unranked</span>'}
+          ${_isRanked(a) ? `<span>ELO ${a.elo}</span>
+          <span>${wr} WR</span>` : ''}`; // v1.0.256 — an unbattled entry shows just its Unranked pill, as on the card
     return `${notCountedLabel}<div class="franchise-detail-member${fuzzyCls}${notCounted ? ' not-counted' : ''}" data-franchise="${esc(group.name)}" onclick="navigateToFranchiseMember(${a.id}, this.dataset.franchise)">
       <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
         <div class="franchise-detail-member-stats">
-          ${memberTier
-            ? `<span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>`
-            : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex">Unranked</span>'}
-          <span>ELO ${a.elo}</span>
-          <span>${wr} WR</span>
-          ${notCounted ? `<span>${excludedIds.has(a.id) ? 'Excluded' : 'Hidden by filter'}</span>` : ''}
+          ${statsHtml}
         </div>
       </div>
     </div>`;
@@ -5765,22 +5805,28 @@ function showFranchiseDetail(groupName, opts) {
   }
   const isSingleMember = group.members.length === 1;
   // v1.0.254 — the card's "★ Best" wording; neither best is shown while the franchise is Unranked.
-  const peakNowHtml = !isSingleMember && !group.unranked && group.statMembers.length >= 2 // v1.0.254 — see the card's Best pill
+  // v1.0.256 — and not when it equals Avg ELO (the same number twice); the card's ★ Best follows the same rule.
+  const peakNowHtml = !isSingleMember && !group.unranked && group.statMembers.length >= 2 && group.peakElo !== group.bestElo // v1.0.254 — see the card's Best pill
     ? ` · Best now ${group.peakElo}`
     : '';
   const peakAllTimeHtml = !isSingleMember && !group.unranked && allTimePeak > group.peakElo
     ? ` · All-time best ${allTimePeak} <span style="color:#8b949e;font-size:0.82rem">(${esc(displayTitle(allTimePeakMember))})</span>`
     : '';
   // v1.0.255 — "1 entry · ELO" for a single entry (a card filtered down to one now opens)
+  // v1.0.256 — "2 of 4 entries counted" when some are left out (they sit under "Not counted"), "· 1 unranked" as on the card.
   const _n = group.members.length;
-  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${_n} ${_n === 1 ? 'entry · ELO' : 'entries · Avg ELO'} ${group.bestElo}${peakNowHtml}${peakAllTimeHtml}`;
+  const _hid = detail.hidden.length;
+  const _unr = _franchiseUnrankedCount(group);
+  const countTxt = (_hid ? `${_n} of ${_n + _hid} entries counted` : `${_n} ${_n === 1 ? 'entry' : 'entries'}`) + (_unr ? ` · ${_unr} unranked` : '');
+  byId(IDS.modalRankLine).innerHTML = `${tierHtml}${countTxt} · ${_n === 1 ? 'ELO' : 'Avg ELO'} ${group.bestElo}${peakNowHtml}${peakAllTimeHtml}`;
   const cohDetail = _coherenceLabel(group);
   const cohHtml   = cohDetail
     ? ` · <span class="franchise-coherence ${cohDetail.cls}" style="font-size:0.78rem" title="${esc(cohDetail.title)}">${cohDetail.icon} ${cohDetail.label} <span style="color:#8b949e;font-weight:400">(±${group.eloStdDev} ELO)</span></span>`
     : '';
   // v1.0.254 — battles between two of its own entries count once and sit outside the win rate; say how many.
   const insideHtml = group.insideBattles ? ` (${group.insideBattles} within the franchise)` : '';
-  byId(IDS.modalMetaLine).innerHTML = `${esc(wrStr)} win rate · ${group.totalBattles} total ${group.totalBattles === 1 ? 'battle' : 'battles'}${insideHtml} · ${conf.label}${cohHtml}`; // v1.0.250 — singular at 1; inline because "total" sits between count and noun
+  // v1.0.256 — no win rate or confidence here: the Win Rate box and the confidence pill below already show them.
+  byId(IDS.modalMetaLine).innerHTML = `${group.totalBattles} total ${group.totalBattles === 1 ? 'battle' : 'battles'}${insideHtml}${cohHtml}`; // v1.0.250 — singular at 1; inline because "total" sits between count and noun
   byId(IDS.modalGenres).style.display = 'none';
   // v1.0.254 — wins/losses against other franchises (they match the win rate); the ELO box reads "Avg ELO".
   byId(IDS.modalWins).textContent    = group.wins;
@@ -6480,8 +6526,8 @@ function _drawCoverSlot(ctx, img, x, y, w, h, r, fallbackTitle) {
 // v1.0.254 — Top 10 card only (3×3 dropped).
 async function _buildShareImageBlob() {
   const ranked = _rankedEloOrder().ranked;
-  const rawUser = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
-  const user   = rawUser && rawUser !== 'guest' ? rawUser : ''; // guests get "My …"
+  // v1.0.256 — same name rule as the link (_shareDisplayName): guests get "My …", others their display case.
+  const user   = _shareDisplayName();
   const picks  = ranked.slice(0, 10);
   if (!picks.length) throw new Error('Nothing ranked yet');
 
@@ -6966,10 +7012,17 @@ function changeUser() {
   _doChangeUser();
 }
 function _doChangeUser() {
+  // v1.0.256 — write this list's pending save to its own key now; the next list's load resets the
+  // per-list state, so nothing is zeroed here and the old list's save stays intact.
+  flushSaveState();
+  // v1.0.256 — as logout does: a pending cloud upload must not fire after the next list's
+  // saveKey/reset lands (it would upload this list's anime under the new key).
+  clearTimeout(_cloudSaveTimer); _cloudSaveTimer = null;
   hide('battle-screen');
   hide('results-screen');
   byId(IDS.changeUserBtn).style.display = 'none';
   byId(IDS.progressInfo).textContent = '';
+  byId(IDS.dailyStreakBadge).style.display = 'none'; // v1.0.256 — the old list's "🔥 Nd" stayed in the header
   byId(IDS.usernameInput).value = '';
   byId(IDS.kbFirstTip).style.display = 'none';
   byId(IDS.notifBell).style.display = 'none';
@@ -7118,8 +7171,7 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
   await new Promise(r => setTimeout(r, 800));
 
   saveKey = existingSaveKey;
-  battleCount = 0;
-  excludedIds = new Set();
+  _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only; the last list's streak, history and undo leaked in
   _clearTasteSnapshots(); // fresh load — discard any leftovers from a prior session
   saveState();
   _clearLoadCancelTimer();
@@ -7483,6 +7535,7 @@ async function _gapScanQuery(body, onWait) {
 // groups of 50 (AniList's per-page cap) and awaits sequentially with a
 // small pacing delay to avoid the 90-req/min rate limit on large lists.
 // v1.0.251 — onWait(secondsLeft) reports pacing / rate-limit waits; a failed batch throws.
+// v1.0.256 — relation nodes also select idMal (same request, no extra calls) so Missing cards can link to MAL.
 async function _fetchFranchiseRelations(sourceList, onProgress, onWait) {
   const BATCH = 50;
   const ids = sourceList.map(a => a.id).filter(id => Number.isFinite(id));
@@ -7501,7 +7554,7 @@ async function _fetchFranchiseRelations(sourceList, onProgress, onWait) {
               edges {
                 relationType(version: 2)
                 node {
-                  id type
+                  id idMal type
                   title { romaji english native }
                   coverImage { large medium }
                   format status episodes seasonYear
@@ -7542,6 +7595,7 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
       .filter(e => !seenGapIds.has(e.node.id))
       .map(e => ({
         id:           e.node.id,
+        idMal:        Number.parseInt(e.node.idMal, 10) || null, // v1.0.256 — for MAL links; scans cached before this lack it
         title:        e.node.title?.english || e.node.title?.romaji || e.node.title?.native || '(untitled)',
         cover:        e.node.coverImage?.large || e.node.coverImage?.medium || '',
         format:       e.node.format || null,
@@ -7847,21 +7901,22 @@ function _registerGapItem(gap) {
     ? `<div class="rec-relation-note">🔗 ${esc(rel ? rel.charAt(0).toUpperCase() + rel.slice(1) : 'Related')} of <strong>${esc(gap.parentTitle)}</strong>, which is in your list</div>`
     : '';
   _registerDiscoverItem({
-    id: gap.id, idMal: null, title: gap.title, cover: gap.cover,
+    // v1.0.256 — the scan's MAL id (absent in older cached scans; the pop-up then learns it on open)
+    id: gap.id, idMal: gap.idMal || null, title: gap.title, cover: gap.cover,
     format: gap.format, seasonYear: gap.seasonYear, episodes: gap.episodes,
     averageScore: null, genres: [], relationNote: note,
   });
 }
 
 function _renderGapCardGrid(gap) {
-  const anilistUrl = `https://anilist.co/anime/${gap.id}`;
+  const extUrl = esc(_animeExternalUrl(gap)); // v1.0.256 — MAL for MAL sessions when the scan has the MAL id (was always AniList)
   _registerGapItem(gap);
   // v1.0.250 — coverCors: same mode as the Discover detail modal this card opens
   const cover = gap.cover
     ? `<img${coverCors(gap.cover)} src="${gap.cover}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
     : `<div style="width:100%;aspect-ratio:2/3;background:#161b22;border-radius:6px 6px 0 0"></div>`;
   return `
-    <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-grid"
+    <a href="${extUrl}" target="_blank" rel="noopener noreferrer" class="gap-card gap-card-grid"
        onclick="return openDiscoverDetail(event, ${Number(gap.id) || 0})"
        style="background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column">
       ${cover}
@@ -7873,14 +7928,14 @@ function _renderGapCardGrid(gap) {
 }
 
 function _renderGapCardList(gap) {
-  const anilistUrl = `https://anilist.co/anime/${gap.id}`;
+  const extUrl = esc(_animeExternalUrl(gap)); // v1.0.256 — MAL for MAL sessions when the scan has the MAL id (was always AniList)
   _registerGapItem(gap);
   // v1.0.250 — coverCors: same mode as the Discover detail modal this card opens
   const cover = gap.cover
     ? `<img${coverCors(gap.cover)} src="${gap.cover}" alt="" loading="lazy" style="width:34px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
     : `<div style="width:34px;aspect-ratio:2/3;background:#161b22;border-radius:4px;flex-shrink:0"></div>`;
   return `
-    <a href="${anilistUrl}" target="_blank" rel="noopener" class="gap-card gap-card-list"
+    <a href="${extUrl}" target="_blank" rel="noopener noreferrer" class="gap-card gap-card-list"
        onclick="return openDiscoverDetail(event, ${Number(gap.id) || 0})"
        style="display:flex;gap:10px;align-items:center;padding:5px 8px;background:#161b22;border:1px solid #30363d;border-radius:6px;text-decoration:none;color:inherit;margin-bottom:4px">
       ${cover}
@@ -8444,7 +8499,15 @@ let _discoverCurrent = null;      // item currently shown in the modal
 let _discoverFetchGen = 0;        // guards a stale synopsis fetch after a quick re-open
 
 function _registerDiscoverItem(item) {
-  if (item && item.id) _discoverItems.set(item.id, item);
+  if (!item || !item.id) return;
+  // v1.0.256 — Missing and the rec tabs share this map: merge into the entry already there, so a sparser
+  // card (a gap has no score or genres, older scans no MAL id) never drops what another card knew.
+  const prev = _discoverItems.get(item.id);
+  if (!prev) { _discoverItems.set(item.id, item); return; }
+  for (const [k, v] of Object.entries(item)) {
+    if (v == null || v === '' || (Array.isArray(v) && !v.length)) continue;
+    prev[k] = v;
+  }
 }
 
 function openDiscoverDetail(event, id) {
@@ -8504,10 +8567,13 @@ function showDiscoverDetail(item) {
   if (backBtn) backBtn.style.display = 'none';
 
   // External link — MAL for MAL sessions when we know the MAL id
+  // v1.0.256 — the shared helpers; painted again when the synopsis fetch below learns the MAL id
   const linkBtn = byId(IDS.modalAnilistBtn);
-  const useMal = _isMalCloudSession() && item.idMal;
-  linkBtn.href = useMal ? `https://myanimelist.net/anime/${item.idMal}` : `https://anilist.co/anime/${item.id}`;
-  linkBtn.textContent = `View on ${useMal ? 'MAL' : 'AniList'} ↗`;
+  const paintLink = () => {
+    linkBtn.href = _animeExternalUrl(item);
+    linkBtn.textContent = `View on ${_animeExternalLabel(item)} ↗`;
+  };
+  paintLink();
   linkBtn.style.display = '';
 
   // Planning button / note
@@ -8542,7 +8608,7 @@ function showDiscoverDetail(item) {
   _fetchDiscoverDetails(item.id).then(d => {
     if (gen !== _discoverFetchGen || _discoverCurrent !== item) return; // modal moved on
     if (d) {
-      if (d.idMal && !item.idMal) item.idMal = d.idMal;
+      if (d.idMal && !item.idMal) { item.idMal = d.idMal; paintLink(); } // v1.0.256 — button was set before the MAL id was known
       if (d.episodes && !item.episodes) item.episodes = d.episodes;
       const desc = stripHtml(d.description || '');
       descEl.textContent = desc || 'No synopsis available.';
@@ -8558,7 +8624,8 @@ function showDiscoverDetail(item) {
         }
       }
     } else {
-      descEl.textContent = 'Couldn\'t load the synopsis — try View on AniList.';
+      // v1.0.256 — name the site the button opens (was always AniList)
+      descEl.textContent = `Couldn't load the synopsis — try View on ${_animeExternalLabel(item)}.`;
       descEl.style.opacity = '0.6';
     }
   });
@@ -8651,9 +8718,30 @@ async function _fetchHighlyRatedUnseen(ownIds) {
   } catch { return []; }
 }
 
+// v1.0.256 — cards per 🎭 genre dive / 💎 Hidden Gems section (was a hard-coded 4), shared with
+// their loading placeholders in _loadRecsGrid; 6 matches the For You rows and mood rows above.
+const EXTRA_RECS_PER_SECTION = 6;
+
+// v1.0.256 — the two extras' final pick, in AniList's order: skip titles already in the For You
+// rows (shownIds), keep one entry per franchise (For You's _recFranchiseKeys rule), stop at the cap.
+function _pickExtraRecs(media, shownIds) {
+  const usedFranchises = new Set();
+  const items = [];
+  for (const m of media) {
+    if (shownIds.has(m.id)) continue;
+    const fKeys = _recFranchiseKeys(m);
+    if (fKeys.some(k => usedFranchises.has(k))) continue;
+    fKeys.forEach(k => usedFranchises.add(k));
+    items.push({ media: m });
+    if (items.length >= EXTRA_RECS_PER_SECTION) break;
+  }
+  return items;
+}
+
 // Genre deep-dive: top-rated unseen anime in one of the user's top genres.
 // Rotates daily among the top 3 genres so repeated visits feel fresh.
-async function fetchGenreDeepDive() {
+// v1.0.256 — shownIds: the For You titles on screen, skipped by _pickExtraRecs.
+async function fetchGenreDeepDive(shownIds = new Set()) {
   const genreMap = {};
   animeList.forEach(a => {
     (a.genres || []).forEach(g => {
@@ -8675,9 +8763,10 @@ async function fetchGenreDeepDive() {
   const dayOfYear = Math.floor(Date.now() / 86400000); // ms → days
   const topGenre = pool[dayOfYear % pool.length].name;
   const ownIds = new Set(animeList.map(a => a.id));
+  // v1.0.256 — 50 titles (was 20), still one request, so 6 remain after owned, For You and same-franchise skips.
   const query = `
     query ($genre: String) {
-      Page(perPage: 20) {
+      Page(perPage: 50) {
         media(type: ANIME, genre_in: [$genre], sort: SCORE_DESC,
               averageScore_greater: 72, status_not_in: [NOT_YET_RELEASED, CANCELLED]) {
           id idMal title { romaji english } coverImage { large medium } averageScore format genres
@@ -8688,10 +8777,8 @@ async function fetchGenreDeepDive() {
     const res = await _anilistFetch({ query, variables: { genre: topGenre } });
     const json = await res.json();
     if (json.errors) throw new Error(json.errors[0].message);
-    const items = (json?.data?.Page?.media ?? [])
-      .filter(m => !ownIds.has(m.id))
-      .map(m => ({ media: m }))
-      .slice(0, 4);
+    // v1.0.256 — _pickExtraRecs replaces the hard cap of 4: For You skip, one per franchise, EXTRA_RECS_PER_SECTION cards
+    const items = _pickExtraRecs((json?.data?.Page?.media ?? []).filter(m => !ownIds.has(m.id)), shownIds);
     return { genre: topGenre, items };
   } catch (e) {
     // v1.0.251 — rethrow (was: resolve empty) so _loadRecsGrid shows a retry hint, not "No results found."
@@ -8701,14 +8788,16 @@ async function fetchGenreDeepDive() {
 }
 
 // Hidden gems: highly rated but under the radar (low popularity)
-async function fetchHiddenGems() {
+// v1.0.256 — shownIds: the For You titles on screen, skipped by _pickExtraRecs.
+async function fetchHiddenGems(shownIds = new Set()) {
   const ownIds = new Set(animeList.map(a => a.id));
   // No id_not_in — large arrays can hit AniList query complexity limits.
   // Fetch a big pool and filter client-side instead.
   // Step 1: fetch candidates — simple query, no nested data
+  // v1.0.256 — 50 candidates (was 20), still one request, so 6 can survive the filters below.
   const candidateQuery = `
     {
-      Page(perPage: 20) {
+      Page(perPage: 50) {
         media(type: ANIME, format: TV, sort: SCORE_DESC,
               averageScore_greater: 70,
               popularity_lesser: 150000,
@@ -8726,9 +8815,10 @@ async function fetchHiddenGems() {
 
     // Step 2: check only those candidate IDs for popular prequels — tiny query
     const ids = candidates.map(m => m.id);
+    // v1.0.256 — perPage 50 (was 20) to cover all 50 candidates; at 20, ids 21-50 would skip the sequel check.
     const relQuery = `
       query ($ids: [Int]) {
-        Page(perPage: 20) {
+        Page(perPage: 50) {
           media(id_in: $ids, type: ANIME) {
             id
             relations {
@@ -8752,10 +8842,8 @@ async function fetchHiddenGems() {
       if (isSequel) franchiseIds.add(m.id);
     }
 
-    return candidates
-      .filter(m => !franchiseIds.has(m.id))
-      .map(m => ({ media: m }))
-      .slice(0, 4);
+    // v1.0.256 — _pickExtraRecs replaces the hard cap of 4: For You skip, one per franchise, EXTRA_RECS_PER_SECTION cards
+    return _pickExtraRecs(candidates.filter(m => !franchiseIds.has(m.id)), shownIds);
   } catch (e) {
     // v1.0.251 — rethrow (was: resolve []) so _loadRecsGrid shows a retry hint, not "No hidden gems found."
     console.warn('Hidden gems fetch failed:', e);
@@ -9055,17 +9143,18 @@ async function _loadRecsGrid() {
   }
 
   // Render main recs + placeholder sections for async extras
-  // v1.0.254 — each extra shows 4 placeholder cards (its final count) instead of a "⏳ Loading…" line
+  // v1.0.254 — each extra shows placeholder cards (its final count) instead of a "⏳ Loading…" line
+  // v1.0.256 — that count is EXTRA_RECS_PER_SECTION (was 4), the cap both fetches use
   work.innerHTML = mainHtml + `
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading" id="genre-dive-heading">🎭 More of your top genre</h4>
       <p class="recs-extra-sub">Highly rated titles in your favourite genre that you haven't seen</p>
-      <div class="recs-subgrid" id="genre-dive-grid">${_recsSkeletonCards(4)}</div>
+      <div class="recs-subgrid" id="genre-dive-grid">${_recsSkeletonCards(EXTRA_RECS_PER_SECTION)}</div>
     </div>
     <div class="recs-extra-section">
       <h4 class="recs-extra-heading">💎 Hidden Gems</h4>
       <p class="recs-extra-sub">Well rated but under the radar — fewer than 100k followers on AniList</p>
-      <div class="recs-subgrid" id="hidden-gems-grid">${_recsSkeletonCards(4)}</div>
+      <div class="recs-subgrid" id="hidden-gems-grid">${_recsSkeletonCards(EXTRA_RECS_PER_SECTION)}</div>
     </div>`;
   commit('block'); // v1.0.250 — main recs paint now (if still on For You); extras fill in below
   if (superseded()) return _recsCache[tab]; // v1.0.251 — superseded: skip the extras' AniList requests
@@ -9073,7 +9162,9 @@ async function _loadRecsGrid() {
   // Load genre dive and hidden gems concurrently (non-blocking)
   // v1.0.251 — allSettled: a failed extra shows a retry hint in its own section
   // instead of rejecting the whole load (main recs, cache write and Refresh unaffected).
-  const [genreSettled, gemsSettled] = await Promise.allSettled([fetchGenreDeepDive(), fetchHiddenGems()]);
+  // v1.0.256 — both skip the titles already shown in the For You rows above (same ids as the relations batch)
+  const shownIds = new Set(allRecIds);
+  const [genreSettled, gemsSettled] = await Promise.allSettled([fetchGenreDeepDive(shownIds), fetchHiddenGems(shownIds)]);
   const genreFailed = genreSettled.status === 'rejected';
   const gemsFailed  = gemsSettled.status === 'rejected';
   const genreResult = genreFailed ? { genre: null, items: [] } : genreSettled.value;
@@ -13630,8 +13721,7 @@ async function startLoading() {
     }
 
     saveKey = existingSaveKey;
-    battleCount = 0;
-    excludedIds = new Set();
+    _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only; the last list's streak, history and undo leaked in
     _clearTasteSnapshots(); // fresh load — discard any leftovers from a prior session
     saveState();
     // Push initial state to cloud immediately for fresh loads
@@ -13648,7 +13738,9 @@ async function startLoading() {
     // §5.2.12 — If the user was battling in guest mode before logging in,
     // offer a one-time merge. Runs after the battle screen is visible so the
     // modal layers on top of real content.
-    if (isOAuthUser) maybeOfferGuestMerge(saveKey);
+    // v1.0.256 — only into the signed-in user's OWN list: loading someone else's username
+    // while logged in must never offer to merge guest battles into their list.
+    if (isOAuthUser && authUser && saveKey === KESSEN_KEYS.session.anilist(authUser.name)) maybeOfferGuestMerge(saveKey);
   } catch (err) {
     _clearLoadCancelTimer();
     hide('loading-screen');
@@ -13780,8 +13872,7 @@ async function startGuestMode() {
       return;
     }
     animeList = await fetchGuestPool();
-    battleCount = 0;
-    excludedIds = new Set();
+    _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only (loadState('guest') above has reset too)
     _clearTasteSnapshots(); // fresh guest pool — discard any leftovers from a prior session
     byId(IDS.loadingMsg).textContent =
       `Loaded ${animeList.length} popular anime. Let's go!`;
@@ -14743,6 +14834,17 @@ async function exportTasteStoryCard() {
 }
 
 // ─── SHARE LINK ───────────────────────────────────────────────────────────────
+// v1.0.256 — the name a share shows (image header, link payload u): '' for guests, else the display-cased
+// name that owns this save (saveKey is lowercased), else the name from the key. No requests.
+function _shareDisplayName() {
+  if (!saveKey || _isGuestSession()) return '';
+  if (authUser?.name && saveKey === KESSEN_KEYS.session.anilist(authUser.name)) return authUser.name;
+  if (malAuthUser?.name && saveKey === KESSEN_KEYS.session.mal(malAuthUser.name)) return malAuthUser.name;
+  const typed = (byId(IDS.usernameInput)?.value || '').trim(); // AniList username typed on the start screen
+  if (typed && saveKey === KESSEN_KEYS.session.anilist(typed)) return typed;
+  return saveKey.replace(/^kessen\.session\.(anilist|mal)\./, '');
+}
+
 function shareRankings() {
   // v1.0.241 — nothing ranked = nothing to share. Previously a fresh guest
   // could share "guest's Top 20" that was just the first 20 in list order.
@@ -14752,7 +14854,8 @@ function shareRankings() {
     return;
   }
   const top20 = ranked.slice(0, 20);
-  const user  = (saveKey || '').replace(/^kessen\.session\.(anilist|mal)\./, '');
+  // v1.0.256 — guests send u:'' (the page then says "Top N Anime"); was u:'guest'.
+  const user  = _shareDisplayName();
   const payload = {
     u: user,
     b: battleCount,
@@ -16154,8 +16257,10 @@ function _renderSharedPayload(payload) {
     const b  = Math.max(0, parseInt(payload.b, 10) || 0);
     const top = payload.top.slice(0, 50); // hard cap — share links are top-20 by design
 
+    // v1.0.256 — no name → "Top N Anime"; links made before 1.0.256 carry 'guest' or a raw guest key as u.
+    const name = ['guest', KESSEN_KEYS.session.guest, KESSEN_KEYS.session.anilist('guest')].includes(u) ? '' : u;
     byId(IDS.sharedTitle).textContent =
-      ms ? `${u} hit ${ms}` : `${u}'s Top ${top.length} Anime`;
+      ms ? `${u} hit ${ms}` : (name ? `${name}'s Top ${top.length} Anime` : `Top ${top.length} Anime`);
     // v1.0.242 — say where this came from; visitors arriving from a link
     // have no other context.
     byId(IDS.sharedSubtitle).textContent =
@@ -18832,12 +18937,13 @@ async function _predictorSearch(q) {
   const dd = byId(IDS.predictorDropdown);
   dd.innerHTML = '<div style="padding:10px 12px;color:#8b949e;font-size:0.8rem">⏳ Searching…</div>';
   dd.style.display = 'block';
+  // v1.0.256 — also idMal, episodes and the large cover: a pick becomes the result card's Discover pop-up
   const query = `
     query($search: String) {
       Page(perPage: 6) {
         media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
-          id title { romaji english } coverImage { medium }
-          format seasonYear averageScore genres
+          id idMal title { romaji english } coverImage { large medium }
+          format seasonYear episodes averageScore genres
         }
       }
     }`;
@@ -18990,12 +19096,13 @@ async function runPredictor(prefetched = null) {
   const lookupId = typeof prefetched === 'number' ? prefetched : null;
   let media = lookupId ? null : prefetched;
   if (!media) {
+    // v1.0.256 — both queries also fetch idMal and episodes for the result card's Discover pop-up (same request)
     const searchQuery = `
       query($search: String, $id: Int) {
         Media(search: $search, id: $id, type: ANIME) {
-          id title { romaji english }
+          id idMal title { romaji english }
           coverImage { large medium }
-          genres averageScore seasonYear format
+          genres averageScore seasonYear format episodes
         }
       }`;
     // v1.0.253 — a typed title fetches up to 8 matches (still one request) and keeps the closest
@@ -19003,9 +19110,9 @@ async function runPredictor(prefetched = null) {
       query($search: String) {
         Page(perPage: 8) {
           media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
-            id title { romaji english userPreferred } popularity
+            id idMal title { romaji english userPreferred } popularity
             coverImage { large medium }
-            genres averageScore seasonYear format
+            genres averageScore seasonYear format episodes
           }
         }
       }`;
@@ -19250,6 +19357,19 @@ function _predictElo(media) {
   return { predictedElo, tier, rankPos: rankPos + 1, totalAnime: total + 1, components, confidence };
 }
 
+// v1.0.256 — the Discover pop-up item for the Predict result (the fields recCardHtml registers).
+// Ids are parsed to integers because the card's href is built from them; relationNote is added on tap.
+function _predictorDetailItem(media) {
+  return {
+    id: Number(media.id) || 0, idMal: Number(media.idMal) || null,
+    title: media.title?.english || media.title?.romaji || '',
+    cover: media.coverImage?.large || media.coverImage?.medium || '',
+    format: media.format || null, seasonYear: media.seasonYear || null,
+    episodes: media.episodes || null, averageScore: media.averageScore || null,
+    genres: Array.isArray(media.genres) ? media.genres : [], relationNote: '',
+  };
+}
+
 function _renderPrediction(media, pred, container) {
   const title = media.title.english || media.title.romaji;
   const cover = media.coverImage?.large || media.coverImage?.medium;
@@ -19270,9 +19390,12 @@ function _renderPrediction(media, pred, container) {
   const conf = pred.confidence;
   const confColour = conf.level === 'high' ? '#3fb950' : conf.level === 'medium' ? '#d29922' : '#f85149';
 
+  // v1.0.256 — a link like the other Discover cards: the href (MAL or AniList, integer ids) serves new-tab /
+  // long-press and a tap opens the Discover pop-up (listener below). Cover alt="" — the title is already the link text.
+  const item = _predictorDetailItem(media);
   container.innerHTML = `
-    <div class="predictor-result">
-      <img class="predictor-cover"${coverCors(cover)} src="${safeUrl(cover)}" alt="${esc(title)}" />
+    <a class="predictor-result" href="${esc(_animeExternalUrl(item))}" target="_blank" rel="noopener noreferrer">
+      <img class="predictor-cover"${coverCors(cover)} src="${safeUrl(cover)}" alt="" />
       <div class="predictor-body">
         <div class="predictor-title">${esc(title)}</div>
         <div class="predictor-tier-badge ${tierClass}">${pred.tier} tier</div>
@@ -19285,7 +19408,12 @@ function _renderPrediction(media, pred, container) {
           ${reasons}
         </div>
       </div>
-    </div>`;
+    </a>`;
+  // v1.0.256 — straight to showDiscoverDetail (not via _discoverItems), so the title never becomes a "Try:" chip
+  container.querySelector('a.predictor-result')?.addEventListener('click', e => {
+    e.preventDefault();
+    showDiscoverDetail({ ...item, relationNote: _getRelationNote(media) });
+  });
 }
 
 // ─── BATTLE MODE (§5.2.3) ────────────────────────────────────────────────────
@@ -21043,7 +21171,7 @@ function renderFranchiseTable() {
         <td><img class="tbl-cover"${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
           <strong>${esc(group.name)}</strong>
-          ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>` : ''}
+          ${!isSingle ? `<span class="franchise-count" style="margin-left:8px">${group.members.length} entries</span>${_franchiseUnrankedBadge(group)}` : ''}<!-- v1.0.256 — "n unranked", as on the grid card -->
           ${(() => {
             // v1.0.165 — fuzzy count in the franchise table view. Same shape
             // as the grid badge.
@@ -22287,19 +22415,20 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.255 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.256 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🎭 With a mood picked, For You no longer shows the plain "Recommended for you" heading and description above that mood\'s picks when you come back to it.',
-    '🔄 In Discover ▸ Missing, the ↻ Rescan button now shows "Scanning…" and stays greyed out for as long as a scan is running, including the scan that starts when you open the tab.',
-    '🔒 If you log out or switch account while a Missing scan is still running, the scan now stops, and its results are never saved to or shown on the other account.',
-    '↩ Undoing the battle (or "✗ Not seen") that finished a Battle within run now puts the run back on, with its banner and pair count.',
-    '🧩 A franchise\'s pop-up now shows the same Avg ELO, Best, wins and losses as its card when some entries are excluded or filtered out, lists those entries greyed at the bottom, and now opens for a card left with one entry.',
-    '📅 The note at the top of Discover ▸ This Season now says titles you haven\'t watched come first, since a few ✓ Watched shows can fill out a season\'s 12 cards.',
+    '🔥 Logging out or switching user now clears the streak badge from the header, and the next list starts with its own streak, weekly recap, undo history and stats instead of picking up the previous list\'s.',
+    '🎭 The "More <Genre> you haven\'t seen" and 💎 Hidden Gems sections in Discover now show up to 6 picks instead of 4, without repeating titles from your For You rows or showing two entries from the same series.',
+    '🔗 If you use MyAnimeList, cards in Missing and the Discover pop-ups now open the title on MyAnimeList instead of AniList.',
+    '🔮 Tapping a Predict result now opens the same detail pop-up as other Discover cards, with the synopsis, Add to Planning and a link to MAL or AniList.',
+    '🏷️ Franchise cards now show a never-battled entry as \'–\' instead of 1200, with an \'n unranked\' note beside the entry count, so the Avg ELO adds up; the franchise pop-up no longer repeats its win rate or confidence, and no longer shows a \'Best now\' that is the same as the average.',
+    '📤 Share links made as a guest now read "Top N Anime" instead of "guest\'s Top 20 Anime", and signed-in shares show your name with its proper capitals.',
+    '🔀 Logging in after trying Kessen as a guest now offers to bring your guest battles into your account, as it was always meant to.',
   ],
 };
 
@@ -23433,16 +23562,26 @@ function dismissNewAnimeConfirm() {
 // merged additively. Runs once per (device, saveKey) pair.
 let _pendingGuestMergeContext = null; // { targetSaveKey, onDone }
 
+// v1.0.256 — where a guest save can be. Guests save under session.anilist('guest') (loadState('guest')
+// re-derives saveKey, see _isGuestSession); session.guest only holds an old migrated save, so it comes second.
+function _guestSaveKeys() {
+  return [KESSEN_KEYS.session.anilist('guest'), KESSEN_KEYS.session.guest];
+}
+
 function _readGuestSave() {
-  try {
-    const raw = localStorage.getItem(KESSEN_KEYS.session.guest);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.animeList?.length) return null;
-    const battles = Number(parsed.battleCount || 0);
-    if (battles <= 0) return null;
-    return parsed;
-  } catch { return null; }
+  // v1.0.256 — read every guest key form; reading only session.guest meant the merge offer never found a save.
+  for (const key of _guestSaveKeys()) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.animeList?.length) continue;
+      const battles = Number(parsed.battleCount || 0);
+      if (battles <= 0) continue;
+      return parsed;
+    } catch { /* storage blocked or bad JSON — try the next key */ }
+  }
+  return null;
 }
 
 function _guestMergeAlreadyOffered(targetSaveKey) {
@@ -23468,13 +23607,17 @@ function _markGuestMergeOffered(targetSaveKey) {
 // Call after a fresh OAuth load has set up animeList + saveKey. No-ops if
 // there's no guest progress or merge has already been offered for this save.
 function maybeOfferGuestMerge(targetSaveKey, onDone) {
-  if (!targetSaveKey || targetSaveKey === KESSEN_KEYS.session.guest) return false;
+  // v1.0.256 — skip both guest key forms (an AniList user named "guest" shares the anilist one).
+  if (!targetSaveKey || _guestSaveKeys().includes(targetSaveKey)) return false;
   const guest = _readGuestSave();
   if (!guest) return false;
   if (_guestMergeAlreadyOffered(targetSaveKey)) return false;
   // Only useful if at least one anime overlaps between the two lists.
   const activeIds = new Set(animeList.map(a => a.id));
-  const overlap = guest.animeList.filter(a => activeIds.has(a.id));
+  // v1.0.256 — count only anime the guest battled: the pool's ~250 unbattled anime are skipped by the
+  // merge, so counting them offered merges that merged nothing (and kept the guest save to offer again).
+  const battled = guest.animeList.filter(a => Number(a.battles || 0) > 0);
+  const overlap = battled.filter(a => activeIds.has(a.id));
   if (overlap.length === 0) {
     // No shared anime — silently mark offered so we don't re-check next time.
     _markGuestMergeOffered(targetSaveKey);
@@ -23484,7 +23627,7 @@ function maybeOfferGuestMerge(targetSaveKey, onDone) {
   const sub = byId(IDS.guestMergeSub);
   if (sub) {
     sub.textContent =
-      `Your guest session has ${_nBattles(guest.battleCount)} across ${guest.animeList.length} anime — ${overlap.length} of which are on your account.`; // v1.0.250 — singular at 1
+      `Your guest session has ${_nBattles(guest.battleCount)} across ${battled.length} anime — ${overlap.length} of which are on your account.`; // v1.0.250 — singular at 1; v1.0.256 — battled anime, not the whole pool
   }
   const detail = byId(IDS.guestMergeDetail);
   if (detail) {
@@ -23511,7 +23654,8 @@ function acceptGuestMerge() {
     _markGuestMergeOffered(ctx.targetSaveKey);
     if (result.merged > 0) {
       // Safe to clear the guest save now — its useful data has been merged.
-      try { localStorage.removeItem(KESSEN_KEYS.session.guest); } catch {}
+      // v1.0.256 — clear every guest key form; removing only session.guest left the real save behind.
+      _guestSaveKeys().forEach(k => { try { localStorage.removeItem(k); } catch {} });
       saveState();
       if (typeof renderRankingList === 'function') renderRankingList();
       if (typeof filterRankings === 'function')    filterRankings();
