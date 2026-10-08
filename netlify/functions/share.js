@@ -1,4 +1,5 @@
-// share.js — short share links for the "Top 20" shared-rankings page.
+// share.js — short share links for the "Top 10" shared-rankings page.
+// v1.0.258 — the app shares a Top 10 (was 20) with per-entry details; links made before keep their 20.
 //
 // v1.0.249 — the share link used to carry the whole payload in the URL hash
 // (~3,700 characters), which some chat apps truncate or refuse to unfurl.
@@ -17,8 +18,8 @@ import { getStore } from '@netlify/blobs';
 import { randomBytes } from 'crypto';
 
 export const STORE_NAME = 'kessen-shares';
-export const MAX_ENTRIES = 50;         // the app shares a top 20; leave headroom
-export const MAX_BODY_BYTES = 16_000;   // a 20-entry payload is ~3–4 KB
+export const MAX_ENTRIES = 50;         // v1.0.258 — the app shares a top 10 (a top 20 before); leave headroom
+export const MAX_BODY_BYTES = 16_000;   // v1.0.258 — a 10-entry payload with details is ~2 KB; an old 20-entry one ~3–4 KB
 const ID_RE = /^[A-Za-z0-9]{6,16}$/;
 const ALLOWED_IMG_HOSTS = new Set(['s4.anilist.co', 'img.anili.st', 'cdn.myanimelist.net']);
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'; // no 0/O/1/l/I
@@ -34,17 +35,32 @@ function safeCover(raw) {
   } catch { return ''; }
 }
 
+// v1.0.258 — optional per-entry details: i AniList id, m MAL id, f format, y year, n episodes, k tier letter.
+// Each is kept only when valid (the page re-checks with the same rules), so an old payload comes back byte-identical.
+const FORMATS = new Set(['TV', 'TV_SHORT', 'MOVIE', 'SPECIAL', 'OVA', 'ONA', 'MUSIC']);
+const TIERS = new Set(['S', 'A', 'B', 'C', 'D']);
+const intIn = (v, min, max) => (Number.isInteger(v) && v >= min && v <= max ? v : undefined);
+function entryDetails(a) {
+  return Object.fromEntries(Object.entries({
+    i: intIn(a.i, 1, 10_000_000), m: intIn(a.m, 1, 10_000_000),
+    f: FORMATS.has(a.f) ? a.f : undefined, y: intIn(a.y, 1900, 2100),
+    n: intIn(a.n, 1, 5000), k: TIERS.has(a.k) ? a.k : undefined,
+  }).filter(([, v]) => v !== undefined));
+}
+
 // Returns a cleaned copy of the payload, or null when it isn't a share payload.
 export function sanitisePayload(payload) {
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.top)) return null;
   const top = payload.top
     .filter(a => a && typeof a === 'object')
     .slice(0, MAX_ENTRIES)
-    .map(a => ({ r: clampInt(a.r, 10_000), t: clampStr(a.t, 200), e: clampInt(a.e, 10_000), c: safeCover(a.c) }))
+    // v1.0.258 — r,t,e,c first and unchanged, then any valid details
+    .map(a => ({ r: clampInt(a.r, 10_000), t: clampStr(a.t, 200), e: clampInt(a.e, 10_000), c: safeCover(a.c), ...entryDetails(a) }))
     .filter(a => a.t);
   if (!top.length) return null;
   const out = { u: clampStr(payload.u, 80), b: clampInt(payload.b), top };
   if (payload.ms) out.ms = clampStr(payload.ms, 80);
+  if (payload.p === 'mal') out.p = 'mal'; // v1.0.258 — MAL sharer: the page opens MyAnimeList where an entry has a MAL id
   return out;
 }
 
