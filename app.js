@@ -690,7 +690,7 @@ function safeUrl(u) {
 
 // v1.0.250 — "1 battles" fix: one place for count + noun, matching the header.
 function _nBattles(n) {
-  n = n || 0;
+  n = Number(n) || 0; // v1.0.262 — a count from a backup file or cloud save could be markup; callers print this into HTML
   return `${n} ${n === 1 ? 'battle' : 'battles'}`;
 }
 
@@ -3255,8 +3255,9 @@ function _maybeShowWeeklySummary() {
 function _renderWeeklySummaryCard(last) {
   const host = byId(IDS.weeklySummaryCard);
   if (!host) return;
-  const b = last.battles;
-  const s = last.streakEnd;
+  // v1.0.262 — numbers: last week's record syncs through the cloud save, and both are printed into innerHTML below
+  const b = Number(last.battles) || 0;
+  const s = Number(last.streakEnd) || 0;
   const vibe =
       b >= 100 ? '🚀 a monster week'
     : b >= 30  ? '💪 strong week'
@@ -3683,9 +3684,10 @@ function renderPair(ia, ib) {
   imgA.alt = displayTitle(a);
   byId(IDS.titleA).textContent = displayTitle(a);
   byId(IDS.eloA).textContent   = `ELO ${a.elo}`;
+  // v1.0.262 — episode counts (A and B) printed as numbers: a backup file or cloud save could carry markup in one
   byId(IDS.epMetaA).innerHTML =
     (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
-      : a.episodes ? `<span class="ep-badge">${a.episodes} ep</span>` : '') +
+      : Number(a.episodes) > 0 ? `<span class="ep-badge">${Number(a.episodes)} ep</span>` : '') +
     _statusBadge(a.status);
   _setCoverSrc(imgB, _coverForBattle(b.cover)); // v1.0.250 — crossorigin per URL, set before src
   imgB.alt = displayTitle(b);
@@ -3693,7 +3695,7 @@ function renderPair(ia, ib) {
   byId(IDS.eloB).textContent   = `ELO ${b.elo}`;
   byId(IDS.epMetaB).innerHTML =
     (b.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
-      : b.episodes ? `<span class="ep-badge">${b.episodes} ep</span>` : '') +
+      : Number(b.episodes) > 0 ? `<span class="ep-badge">${Number(b.episodes)} ep</span>` : '') +
     _statusBadge(b.status);
 
   // External links — AniList or MAL depending on session type
@@ -4486,16 +4488,17 @@ function _buildRankCard(anime, i, eloRankMap, totalLen) {
   // instead of being attached per card. At 6500 anime that's 6499 fewer closures +
   // listeners (substantial memory + GC savings on long sessions). The handler
   // reads dataset.animeId which is already set above.
+  // v1.0.262 — score, ELO and episodes (here and in epBadge) as numbers: a backup or cloud save could carry markup
   const sortExtra = currentSort === 'winrate'
     ? `<div class="rank-elo">${(a => (a.wins+a.losses)>0 ? Math.round(a.wins/(a.wins+a.losses)*100)+'% WR' : '–')(anime)}</div>`
     : currentSort === 'battles' ? `<div class="rank-elo">${_nBattles(anime.battles)}</div>` // v1.0.250 — singular at 1
-    : currentSort === 'score'   ? `<div class="rank-elo">${anime.globalScore ? anime.globalScore+'%' : 'Unscored'}</div>`
-    : `<div class="rank-elo">ELO ${anime.elo}</div>`;
+    : currentSort === 'score'   ? `<div class="rank-elo">${Number(anime.globalScore) > 0 ? Number(anime.globalScore) + '%' : 'Unscored'}</div>`
+    : `<div class="rank-elo">ELO ${Number(anime.elo) || 0}</div>`;
   // v1.0.245 — always emit the episode line (invisible placeholder when there
   // is nothing to say) so ELO/confidence rows line up across the grid.
   const epBadge = anime.format === 'MOVIE'
     ? `<span class="ep-badge">Movie</span>`
-    : anime.episodes ? `<span class="ep-badge">${anime.episodes} ep</span>`
+    : Number(anime.episodes) > 0 ? `<span class="ep-badge">${Number(anime.episodes)} ep</span>`
     : `<span class="ep-badge" style="visibility:hidden" aria-hidden="true">–</span>`;
   card.innerHTML = `
     ${isRanked ? `<span class="rank-number ${numClass}">#${displayRank}</span>` : ''}
@@ -5363,7 +5366,7 @@ function _franchiseGroupStats(members) {
   return {
     statMembers,
     bestElo:       Math.round(statMembers.reduce((s, a) => s + a.elo, 0) / statMembers.length),
-    peakElo:       statMembers[0].elo,
+    peakElo:       Number(statMembers[0].elo) || 0, // v1.0.262 — printed on the card and overview; a backup file or cloud save could carry markup here
     cover:         statMembers[0].cover,
     format:        statMembers[0].format,
     wins,
@@ -5732,11 +5735,13 @@ function _buildFranchiseCard(group, rank, _totalGroups) {
           ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
           : '';
         // v1.0.256 — an Unranked entry shows a muted '–' (as in the list table), not the 1200 that Avg ELO leaves out.
+        // v1.0.262 — the ELO as a number: a backup file or cloud save could carry markup in it
         const eloHtml = _isRanked(a)
-          ? `<span class="franchise-member-elo">${a.elo}</span>`
+          ? `<span class="franchise-member-elo">${Number(a.elo) || 0}</span>`
           : '<span class="franchise-member-elo is-unranked" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>';
+        // v1.0.262 — the id goes into the onclick as a number, so a crafted one can't run as script
         return `
-        <div class="franchise-member${fuzzyCls}" onclick="showAnimeDetail(${a.id})">
+        <div class="franchise-member${fuzzyCls}" onclick="showAnimeDetail(${Number(a.id) || 0})">
           <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
           <span class="franchise-member-title">${esc(a.titleEn || a.title)}${fuzzyPill}</span>
           ${eloHtml}
@@ -5867,15 +5872,17 @@ function showFranchiseDetail(groupName, opts) {
     // v1.0.256 — the label is a short "Not counted (n)" heading on a divider; a left-out row shows only why (a muted
     // pill) and its ELO ('Unranked' if never battled) — no tier or WR, as it is in none of the numbers above.
     const notCountedLabel = i === group.members.length ? `<div class="franchise-detail-hidden-label" title="Excluded or hidden by a filter, so left out of the numbers above">Not counted (${detail.hidden.length})</div>` : '';
+    // v1.0.262 — the ELO (both forms) as a number: a backup file or cloud save could carry markup in it
     const statsHtml = notCounted
       ? `<span class="franchise-detail-reason">${excludedIds.has(a.id) ? 'Excluded' : 'Hidden by filter'}</span>
-          <span>${_isRanked(a) ? `ELO ${a.elo}` : 'Unranked'}</span>`
+          <span>${_isRanked(a) ? `ELO ${Number(a.elo) || 0}` : 'Unranked'}</span>`
       : `${memberTier
             ? `<span class="tier-badge t-${memberTier.toLowerCase()}" style="position:static;display:inline-flex">${memberTier}</span>`
             : '<span class="tier-badge t-unranked" style="position:static;display:inline-flex">Unranked</span>'}
-          ${_isRanked(a) ? `<span>ELO ${a.elo}</span>
+          ${_isRanked(a) ? `<span>ELO ${Number(a.elo) || 0}</span>
           <span>${wr} WR</span>` : ''}`; // v1.0.256 — an unbattled entry shows just its Unranked pill, as on the card
-    return `${notCountedLabel}<div class="franchise-detail-member${fuzzyCls}${notCounted ? ' not-counted' : ''}" data-franchise="${esc(group.name)}" onclick="navigateToFranchiseMember(${a.id}, this.dataset.franchise)">
+    // v1.0.262 — the id goes into the onclick as a number, so a crafted one can't run as script
+    return `${notCountedLabel}<div class="franchise-detail-member${fuzzyCls}${notCounted ? ' not-counted' : ''}" data-franchise="${esc(group.name)}" onclick="navigateToFranchiseMember(${Number(a.id) || 0}, this.dataset.franchise)">
       <img${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" onerror="this.style.display='none'" />
       <div class="franchise-detail-member-info">
         <div class="franchise-detail-member-title">${esc(displayTitle(a))}${a.fuzzy ? ' <span class="member-fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️</span>' : ''}</div>
@@ -5996,9 +6003,10 @@ function showFranchiseDetail(groupName, opts) {
       const isWin = h.winnerId != null ? memberIds.has(h.winnerId) : memberTitles.has(h.winnerTitle);
       const subject = isWin ? h.winnerTitle : h.loserTitle;
       const opponent = isWin ? h.loserTitle : h.winnerTitle;
+      // v1.0.262 — the swing as a number: battle history comes from the save (a backup file or cloud save could carry markup)
       return `<div class="modal-recent-item">
         <span class="${isWin ? 'modal-win' : 'modal-loss'}">${isWin ? '✓ W' : '✗ L'} <em style="color:#8b949e;font-size:0.75rem">${esc(subject)}</em> vs ${esc(opponent)}</span>
-        <span style="color:#8b949e">${isWin ? '+' : '−'}${h.eloSwing} ELO</span>
+        <span style="color:#8b949e">${isWin ? '+' : '−'}${Number(h.eloSwing) || 0} ELO</span>
       </div>`;
     }).join('');
   } else {
@@ -6378,7 +6386,8 @@ function renderHistory() {
     row.className = 'history-item';
     row.dataset.titles = ((h.winnerTitle || '') + ' ' + (h.loserTitle || '')).toLowerCase();
     const num = battleHistory.length - i;
-    const swing = h.eloSwing > 0 ? `+${h.eloSwing}` : String(h.eloSwing);
+    const sw = Number(h.eloSwing) || 0; // v1.0.262 — a number: battle history comes from the save, and a backup file or cloud save could carry markup
+    const swing = sw > 0 ? `+${sw}` : String(sw);
     row.innerHTML = `
       <span class="history-num">#${num}</span>
       <span class="winner">🏆 ${esc(h.winnerTitle || '–')}</span>
@@ -7984,7 +7993,7 @@ function refreshFranchiseGaps() {
 function _gapMetaString(gap) {
   const bits = [];
   if (gap.format) bits.push(gap.format.replace(/_/g, ' '));
-  if (gap.episodes) bits.push(`${gap.episodes} ep`);
+  if (Number(gap.episodes) > 0) bits.push(`${Number(gap.episodes)} ep`); // v1.0.262 — episode counts print as numbers everywhere
   if (gap.seasonYear) bits.push(gap.seasonYear);
   // v1.0.248 — AniList's SUMMARY / COMPILATION read as "Recap"; a heuristic
   // recap under another relation type gets "Recap" appended.
@@ -8019,8 +8028,9 @@ function _renderGapCardGrid(gap) {
   const extUrl = esc(_animeExternalUrl(gap)); // v1.0.256 — MAL for MAL sessions when the scan has the MAL id (was always AniList)
   _registerGapItem(gap);
   // v1.0.250 — coverCors: same mode as the Discover detail modal this card opens
+  // v1.0.262 — the cover URL through safeUrl like every other card (it was printed raw inside src="…")
   const cover = gap.cover
-    ? `<img${coverCors(gap.cover)} src="${gap.cover}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
+    ? `<img${coverCors(gap.cover)} src="${safeUrl(gap.cover)}" alt="" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px 6px 0 0" />`
     : `<div style="width:100%;aspect-ratio:2/3;background:#161b22;border-radius:6px 6px 0 0"></div>`;
   return `
     <a href="${extUrl}" target="_blank" rel="noopener noreferrer" class="gap-card gap-card-grid"
@@ -8038,8 +8048,9 @@ function _renderGapCardList(gap) {
   const extUrl = esc(_animeExternalUrl(gap)); // v1.0.256 — MAL for MAL sessions when the scan has the MAL id (was always AniList)
   _registerGapItem(gap);
   // v1.0.250 — coverCors: same mode as the Discover detail modal this card opens
+  // v1.0.262 — the cover URL through safeUrl like every other card (it was printed raw inside src="…")
   const cover = gap.cover
-    ? `<img${coverCors(gap.cover)} src="${gap.cover}" alt="" loading="lazy" style="width:34px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
+    ? `<img${coverCors(gap.cover)} src="${safeUrl(gap.cover)}" alt="" loading="lazy" style="width:34px;aspect-ratio:2/3;object-fit:cover;border-radius:4px;flex-shrink:0" />`
     : `<div style="width:34px;aspect-ratio:2/3;background:#161b22;border-radius:4px;flex-shrink:0"></div>`;
   return `
     <a href="${extUrl}" target="_blank" rel="noopener noreferrer" class="gap-card gap-card-list"
@@ -8702,7 +8713,7 @@ function showDiscoverDetail(item) {
   if (item.averageScore) bits.push(`Community ${(item.averageScore / 10).toFixed(1)}/10`);
   if (fmtLabel) bits.push(fmtLabel);
   if (item.seasonYear) bits.push(String(item.seasonYear));
-  if (item.episodes) bits.push(`${item.episodes} ep`);
+  if (Number(item.episodes) > 0) bits.push(`${Number(item.episodes)} ep`); // v1.0.262 — episode counts print as numbers everywhere
   byId(IDS.modalRankLine).textContent = bits.join(' · ');
   // Meta line → relation note ("Sequel to X — you have it at #12") when we have one
   const metaEl = byId(IDS.modalMetaLine);
@@ -9498,7 +9509,8 @@ async function runCompatibility() {
   if (_socialPlatform === 'mal') return _runCompatibilityMal(username2);
 
   const resultsEl = byId(IDS.compatResults);
-  resultsEl.innerHTML = '<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ' + username2 + '\'s list…</p>';
+  // v1.0.262 — the typed name escaped, as the MAL twin (setProgress) and the results below already do
+  resultsEl.innerHTML = '<p style="color:#8b949e;text-align:center;padding:20px 0">⏳ Fetching ' + esc(username2) + '\'s list…</p>';
 
   try {
     // Use shared cache — avoids a second AniList round-trip when called right
@@ -9872,12 +9884,13 @@ function _renderSavedComparisons() {
         const dLabel    = _compatDeltaLabel(delta);
         const trend     = dLabel ? `<span class="scc-trend" style="color:${dLabel.color}">${dLabel.arrow}</span>` : '';
         const tip       = `${c.label} · ${c.date}${dLabel ? ` · ${delta > 0 ? '+' : ''}${delta}% — ${dLabel.text}` : ''} · click to re-run`;
+        // v1.0.262 — the emoji escaped and the score a number, like the name: stored text, printed into innerHTML
         return `
         <span class="saved-comp-chip" role="button" tabindex="0" data-username="${esc(c.username)}" data-platform="${esc(platform)}" title="${esc(tip)}">
-          <span>${c.emoji || ''}</span>
+          <span>${esc(c.emoji || '')}</span>
           <span class="scc-name">${esc(displayName)}</span>
           ${platform === 'mal' ? '<span class="scc-plat">MAL</span>' : ''}
-          <span class="scc-score">${c.score}%</span>${trend}
+          <span class="scc-score">${Number(c.score) || 0}%</span>${trend}
           <button type="button" class="scc-x" data-remove="1" aria-label="Remove saved comparison">×</button>
         </span>`;
       }).join('')}
@@ -10317,6 +10330,80 @@ function _lcGenerateCode() {
 // accept the 6-char codes we mint plus a small buffer for future tweaks.
 function _isValidSessionCode(code) {
   return typeof code === 'string' && /^[A-Z0-9]{4,8}$/.test(code);
+}
+
+// v1.0.262 — Live Challenge and Watch Together sessions are written by the other
+// player (or anyone holding the code), so nothing read back from one is trusted.
+// These reshape session values before they reach the page: text must be a string,
+// a count a real number, a round a whole number; anything else becomes '' or 0.
+// They never call String()/Number() on a sent object (that can throw).
+function _mpText(v) {
+  return typeof v === 'string' ? v : '';
+}
+function _mpCount(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+function _mpIndex(v) {
+  return Number.isInteger(v) && v >= 0 ? v : 0;
+}
+
+// v1.0.262 — Live Challenge pairs from the session. A pair without both titles
+// is skipped; every other field is forced to the type the cards expect.
+function _lcCleanPairs(v) {
+  if (!Array.isArray(v)) return [];
+  return v.map(p => {
+    const aTitle = _mpText(p?.aTitle), bTitle = _mpText(p?.bTitle);
+    if (!aTitle || !bTitle) return null;
+    return {
+      aId:       _mpIndex(p.aId),       bId:       _mpIndex(p.bId),
+      aTitle,                           bTitle,
+      aCover:    _mpText(p.aCover),     bCover:    _mpText(p.bCover),
+      aFormat:   _mpText(p.aFormat),    bFormat:   _mpText(p.bFormat),
+      aEpisodes: _mpCount(p.aEpisodes), bEpisodes: _mpCount(p.bEpisodes),
+    };
+  }).filter(Boolean);
+}
+
+// v1.0.262 — Watch Together shows, players and the whole session snapshot.
+// A show without a title is skipped; a pair or result missing a show is skipped.
+function _collabCleanShow(s) {
+  const title = _mpText(s?.title);
+  if (!title) return null;
+  return { title, cover: _mpText(s.cover), format: _mpText(s.format), episodes: _mpCount(s.episodes) };
+}
+function _collabCleanShows(v) {
+  return Array.isArray(v) ? v.map(_collabCleanShow).filter(Boolean) : [];
+}
+function _collabCleanPlayers(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const [pid, p] of Object.entries(v)) {
+    if (!p || typeof p !== 'object') continue;
+    out[pid] = {
+      ...p,
+      name:        _mpText(p.name),
+      nominations: _collabCleanShows(p.nominations),
+      rankedIds:   Array.isArray(p.rankedIds) ? p.rankedIds : [],
+    };
+  }
+  return out;
+}
+function _collabCleanSnapshot(raw) {
+  const d = raw && typeof raw === 'object' ? raw : {};
+  const twoShows = v => {
+    const a = _collabCleanShow(v?.a), b = _collabCleanShow(v?.b);
+    return a && b ? { a, b } : null;
+  };
+  return {
+    ...d,
+    players:     _collabCleanPlayers(d.players),
+    pairs:       Array.isArray(d.pairs) ? d.pairs.map(twoShows).filter(Boolean) : [],
+    pool:        _collabCleanShows(d.pool),
+    results:     Array.isArray(d.results)
+      ? d.results.map(r => { const s = twoShows(r); return s && { ...s, winner: _mpText(r.winner) || null }; }).filter(Boolean)
+      : [],
+    currentPair: _mpIndex(d.currentPair),
+  };
 }
 
 // Scoring: 1 pt for correctly predicting opponent's pick + 1 bonus pt if
@@ -10835,7 +10922,7 @@ async function lcRejoinSession() {
     const data     = snap.val();
     const players  = data.players || {};
     const oppPid   = Object.keys(players).find(id => id !== stored.playerId);
-    const oppName  = oppPid ? (players[oppPid]?.name || 'Opponent') : '';
+    const oppName  = oppPid ? (_mpText(players[oppPid]?.name) || 'Opponent') : ''; // v1.0.262 — text only
     const myPicks  = players[stored.playerId]?.picks || {};
     const myPreds  = players[stored.playerId]?.predictions || {};
 
@@ -11040,7 +11127,7 @@ async function lcJoinSession() {
 
     const pid      = 'p_' + Math.random().toString(36).slice(2, 10);
     const hostId   = data.hostId;
-    const hostName = data.players?.[hostId]?.name || 'Host';
+    const hostName = _mpText(data.players?.[hostId]?.name) || 'Host'; // v1.0.262 — text only
 
     _lc = {
       mode: 'guest', isP1: false,
@@ -11121,7 +11208,7 @@ function _lcSync(data) {
   const oppPid = Object.keys(data.players || {}).find(id => id !== myPid);
   if (oppPid && !_lc.opponentId) _lc.opponentId = oppPid;
   if (oppPid) {
-    _lc.opponentName        = data.players[oppPid]?.name        || _lc.opponentName;
+    _lc.opponentName        = _mpText(data.players[oppPid]?.name) || _lc.opponentName; // v1.0.262 — text only
     _lc.opponentPicks       = data.players[oppPid]?.picks       || {};
     _lc.opponentPredictions = data.players[oppPid]?.predictions || {};
   }
@@ -11162,13 +11249,17 @@ function _lcSync(data) {
   }
 
   if (data.phase === 'playing') {
-    if (!_lc.pairs.length && data.pairs?.length) {
-      _lc.pairs       = data.pairs;
-      _lc.currentPair = data.currentPair || 0;
+    // v1.0.262 — pairs and the round number come from the other player: reshape
+    // them (broken pairs skipped, numeric episodes, whole-number round) first
+    const pairs = _lcCleanPairs(data.pairs);
+    const cp    = _mpIndex(data.currentPair);
+    if (!_lc.pairs.length && pairs.length) {
+      _lc.pairs       = pairs;
+      _lc.currentPair = cp;
       _lcPanel(IDS.lcPanelGame);
       _lcRenderPair();
-    } else if (data.currentPair !== undefined && data.currentPair !== _lc.currentPair) {
-      _lc.currentPair = data.currentPair;
+    } else if (data.currentPair !== undefined && cp !== _lc.currentPair) {
+      _lc.currentPair = cp;
       _lcRenderPair();
     } else {
       // Same pair — maybe opponent just answered, update scores + check for reveal
@@ -11178,7 +11269,7 @@ function _lcSync(data) {
   }
 
   if (data.phase === 'results') {
-    _lc.pairs = data.pairs || _lc.pairs;
+    _lc.pairs = data.pairs ? _lcCleanPairs(data.pairs) : _lc.pairs; // v1.0.262 — reshaped like 'playing'
     _lcShowResults();
     // Guest can ask for a rematch by writing rematchRequested. Host fulfills
     // by running the normal rebuild. _handlingRematch guards re-entry — sync
@@ -11204,12 +11295,13 @@ function _lcRenderLobby(data) {
   const myPid       = _lc?.myPlayerId;
   const isHost      = _lc?.mode === 'host';
 
+  // v1.0.262 — player names are read as text only (_mpText) and escaped: another player writes them
   byId(IDS.lcPlayerList).innerHTML = playerArr.map(([pid, p]) => {
     const isMe   = pid === myPid;
     const offline = p.connected === false;
     return `<div class="collab-player-chip ${offline ? 'collab-chip-offline' : ''}">
       <span class="collab-chip-dot ${offline ? 'dot-offline' : 'dot-online'}"></span>
-      <span>${esc(p.name || 'Player')}${isMe ? ' (you)' : ''}</span>
+      <span>${esc(_mpText(p.name) || 'Player')}${isMe ? ' (you)' : ''}</span>
     </div>`;
   }).join('');
 
@@ -11331,9 +11423,11 @@ function _lcRenderPair() {
       el.disabled    = false;
       el.style.outline = '';
       el.style.opacity = '';
+      // v1.0.262 — episodes come from the session: show a number or no badge, never raw text
+      const epCount = _mpCount(episodes);
       const epBadge = format === 'MOVIE'
         ? '<span class="ep-badge">Movie</span>'
-        : episodes ? `<span class="ep-badge">${episodes} ep</span>` : '';
+        : epCount ? `<span class="ep-badge">${epCount} ep</span>` : '';
       el.innerHTML = cover
         ? `<img${coverCors(cover)} src="${safeUrl(cover)}" alt="${esc(title)}" />
            <div class="challenge-card-title">${esc(title)}</div>
@@ -11381,8 +11475,9 @@ function liveChallengePick(side) {
   byId(other).style.opacity = '0.45';
 
   // Transition to predict phase
+  // v1.0.262 — textContent is already safe: esc() here showed "Lewis & Co" as "Lewis &amp; Co"
   byId(IDS.lcPickPrompt).textContent =
-    `You chose. Now — which will ${esc(_lc.opponentName)} pick?`;
+    `You chose. Now — which will ${_mpText(_lc.opponentName) || 'your opponent'} pick?`;
   byId(IDS.lcPredictSection).style.display = '';
 }
 
@@ -12370,7 +12465,8 @@ async function collabJoinSession() {
 
   // Snapshot the full player list for immediate local render
   const freshSnap = await ref.child('players').once('value');
-  _collab.players = freshSnap.val() || {};
+  // v1.0.262 — the lobby renders straight from this read: reshape it like a synced snapshot
+  _collab.players = _collabCleanPlayers(freshSnap.val());
 
   _collabSetupPresence(ref, pid);
   _collabSaveSession();
@@ -12591,10 +12687,12 @@ function _collabRenderLobby(data) {
       const isMe      = pid === _collab.myPlayerId;
       const isH       = pid === data.hostId;
       const isOffline = p.connected === false;
+      // v1.0.262 — initial escaped and taken from text only: a name sent as ["<img …>"] made [0] the whole tag
+      const name      = _mpText(p.name);
       return `<div class="collab-lobby-player ${isOffline ? 'collab-lobby-disconnected' : ''}">
-        <span class="collab-lobby-avatar">${(p.name || '?')[0].toUpperCase()}</span>
+        <span class="collab-lobby-avatar">${esc((name || '?')[0].toUpperCase())}</span>
         <span class="collab-lobby-name">
-          ${esc(p.name)}${isMe ? ' <em>(you)</em>' : ''}${isH ? ' 👑' : ''}
+          ${esc(name)}${isMe ? ' <em>(you)</em>' : ''}${isH ? ' 👑' : ''}
           ${isOffline ? '<span class="collab-disconnected-badge">disconnected</span>' : ''}
         </span>
       </div>`;
@@ -12626,8 +12724,11 @@ function _collabRenderLobby(data) {
   }
 }
 
-function _collabSyncFromFirebase(data) {
+function _collabSyncFromFirebase(raw) {
   if (!_collab) return;
+  // v1.0.262 — the snapshot is written by other players: reshape players, pairs,
+  // pool, results and the round number before anything below reads it
+  const data = _collabCleanSnapshot(raw);
   // Always update local players mirror and check for host promotion
   _collab.players = data.players || {};
   // Update isHost in case we were promoted
@@ -12669,7 +12770,7 @@ function _collabSyncFromFirebase(data) {
     const friendEl = byId('collab-friend-nom-count');
     if (friendEl && others.length) {
       friendEl.innerHTML = others.map(([, p]) => {
-        const n          = (p.nominations || []).length;
+        const n          = Array.isArray(p.nominations) ? p.nominations.length : 0; // v1.0.262 — a real count, never a sent value
         const isOffline  = p.connected === false;
         const statusIcon = isOffline ? ' 🔌' : p.ready ? ' ✓' : '';
         return `<span class="collab-friend-pill ${isOffline ? 'collab-pill-offline' : ''}">${esc(p.name)}: ${n} show${n !== 1 ? 's' : ''}${statusIcon}</span>`;
@@ -13171,9 +13272,11 @@ function _collabRenderVoteCards(pair) {
     // and the browser's focus ring leaves the previously-tapped card glowing
     // blue in the new round — looks identical to the "you picked this" state.
     if (document.activeElement === el) el.blur();
+    // v1.0.262 — episodes come from another player's nomination: a number or no badge
+    const epCount = _mpCount(show.episodes);
     const epBadge = show.format === 'MOVIE'
       ? '<span class="ep-badge">Movie</span>'
-      : show.episodes ? `<span class="ep-badge">${show.episodes} ep</span>` : '';
+      : epCount ? `<span class="ep-badge">${epCount} ep</span>` : '';
     el.innerHTML = `
       ${show.cover ? `<img${coverCors(show.cover)} src="${safeUrl(show.cover)}" alt="${esc(show.title)}" loading="lazy" />` : '<div class="collab-no-cover">🎬</div>'}
       <div class="challenge-card-title">${esc(show.title)}</div>
@@ -14310,6 +14413,9 @@ function getTier(zeroIndex, total) {
 
 // ─── SPARKLINE ────────────────────────────────────────────────────────────────
 function buildSparkline(history) {
+  // v1.0.262 — numbers only, from a real array: eloHistory comes from the save, and the first and last ELO are printed
+  if (!Array.isArray(history) || history.length < 2) return '';
+  history = history.map(e => Number(e) || 0);
   const W = 220, H = 54, pad = 6;
   const minE = Math.min(...history) - 5;
   const maxE = Math.max(...history) + 5;
@@ -16066,9 +16172,10 @@ function renderBattlesTab() {
   // show the first five titles with a 0 next to each.
   const mostBattled = animeList.filter(a => (a.battles || 0) > 0)
     .sort((a, b) => (b.battles || 0) - (a.battles || 0)).slice(0, 5);
+  // v1.0.262 — the count as a number: a backup file or cloud save could carry markup in battles
   byId(IDS.statMostBattled).innerHTML = mostBattled.length
     ? mostBattled.map(a =>
-        `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${a.battles || 0}</span></div>`
+        `<div class="stat-anime-row"><span>${esc(a.title)}</span><span>${Number(a.battles) || 0}</span></div>`
       ).join('')
     : '<div style="color:#8b949e;font-size:0.8rem;padding:8px 0">No battles yet.</div>';
 
@@ -16243,7 +16350,7 @@ function _computeFranchiseRivalries() {
     Object.entries(matchupStats).forEach(([key, m]) => {
       const [idAStr, idBStr] = key.split('-');
       const idA = Number(idAStr), idB = Number(idBStr);
-      bump(idA, idB, m.wins[idA] || 0, m.wins[idB] || 0);
+      bump(idA, idB, Number(m.wins[idA]) || 0, Number(m.wins[idB]) || 0); // v1.0.262 — numbers: summed and printed into the rivalry list; a backup file or cloud save could carry markup
     });
   } else {
     battleHistory.forEach(h => {
@@ -17402,8 +17509,9 @@ function renderFormatSplit() {
   const maxCount = Math.max(...formats.map(f => f.count));
   el.innerHTML = formats.map(f => {
     const pct = Math.round((f.count / maxCount) * 100);
+    // v1.0.262 — escaped: an unknown format prints as-is, and a backup file or cloud save can carry any text there
     return `<div class="genre-chart-row">
-      <div class="genre-chart-label">${f.label}</div>
+      <div class="genre-chart-label">${esc(f.label)}</div>
       <div class="genre-chart-track"><div class="genre-chart-fill format-fill" style="width:${pct}%"></div></div>
       <div class="genre-chart-value">${f.count} <span style="color:#6e7681">avg ${f.avg}</span></div>
     </div>`;
@@ -17505,11 +17613,10 @@ async function renderStudioAffinity() {
     const sign    = s.diff >= 0 ? '+' : '';
     const color   = positive ? '#3fb950' : '#f85149';
     const panelId = `sa-panel-${_studioPanelKey++}`;
-    // Encode studio name safely for the data attribute
-    const safeName = s.name.replace(/'/g, "\\'");
+    // v1.0.262 — the name rides in an esc()'d data-studio read by el.onclick below (a \ or " in an onclick string ran as script)
     return `
-      <div class="stat-anime-row studio-affinity-row" onclick="toggleStudioAnimePanel('${panelId}','${safeName}')">
-        <span>${s.name} <span style="color:#6e7681;font-size:0.8em">(${s.count})</span></span>
+      <div class="stat-anime-row studio-affinity-row" data-panel-id="${panelId}" data-studio="${esc(s.name)}">
+        <span>${esc(s.name)} <span style="color:#6e7681;font-size:0.8em">(${s.count})</span></span>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:${color};font-weight:600">${sign}${s.diff}</span>
           <span id="${panelId}-chev" style="color:#6e7681;font-size:0.75em">▶</span>
@@ -17533,6 +17640,11 @@ async function renderStudioAffinity() {
 
   // Store the ranked index on the element so toggleStudioAnimePanel can use it
   el._rankedIds = rankedIds;
+  // v1.0.262 — one delegated click for the studio rows (re-bound each render; a panel is a sibling, so never matches)
+  el.onclick = (ev) => {
+    const row = ev.target?.closest?.('.studio-affinity-row');
+    if (row && el.contains(row)) toggleStudioAnimePanel(row.dataset.panelId, row.dataset.studio);
+  };
 }
 
 function toggleStudioAnimePanel(panelId, studioName) {
@@ -17579,13 +17691,14 @@ function toggleStudioAnimePanel(panelId, studioName) {
     // for titles, which is the actual scarce resource on a phone).
     const rankHtml = rank >= 0 ? `<span class="rank-hash">#</span>${rank + 1}` : '—';
     const idx     = animeList.indexOf(a);
+    // v1.0.262 — ELO as a number: a backup file or cloud save could carry markup in it
     return `
       <div class="studio-anime-item" onclick="openDetail(${idx})">
         <span class="studio-anime-rank">${rankHtml}</span>
         <img class="studio-anime-cover"${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy"
              onerror="this.style.display='none'" />
         <span class="studio-anime-title">${esc(displayTitle(a))}</span>
-        <span class="studio-anime-elo">${a.elo}</span>
+        <span class="studio-anime-elo">${Number(a.elo) || 0}</span>
       </div>`;
   }).join('');
 }
@@ -18124,8 +18237,9 @@ async function renderTasteProfile(forceRefetch = false) {
 
   const metaEl = byId(IDS.tasteMeta);
   if (metaEl) {
+    const nb = Number(battleCount) || 0; // v1.0.262 — a number: a backup file can carry markup in battleCount, and this is innerHTML
     metaEl.innerHTML =
-      `<span>${profile.totalRanked} anime</span><span>·</span><span>${battleCount} ${battleCount === 1 ? 'battle' : 'battles'}</span>`; // v1.0.246 — "ranked" dropped: unbattled anime are shown as Unranked elsewhere
+      `<span>${profile.totalRanked} anime</span><span>·</span><span>${nb} ${nb === 1 ? 'battle' : 'battles'}</span>`; // v1.0.246 — "ranked" dropped: unbattled anime are shown as Unranked elsewhere
   }
 
   if (unlocked) {
@@ -18640,7 +18754,7 @@ function _paintTasteEvolution(el) {
         </div>`;
       }).join('');
 
-      const label = snap.isCurrent ? `Now · ${battleCount} battles` : `Battle ${snap.battleCount}`;
+      const label = snap.isCurrent ? `Now · ${Number(battleCount) || 0} battles` : `Battle ${snap.battleCount}`; // v1.0.262 — printed into innerHTML; a backup file can carry markup in battleCount
       return `<div class="evo-card${snap.isCurrent ? ' evo-card-current' : ''}">
         <div class="evo-card-label">${label}</div>
         ${rows}
@@ -18746,7 +18860,7 @@ function showAnimeDetail(id, opts) {
   _setCoverSrc(coverEl, anime.cover); // v1.0.250 — same crossorigin mode as the Rankings grid
   coverEl.alt = displayTitle(anime);
   byId(IDS.modalTitle).textContent = displayTitle(anime);
-  const scoreStr = anime.globalScore ? `· Community ${anime.globalScore}%` : '';
+  const scoreStr = Number(anime.globalScore) > 0 ? `· Community ${Number(anime.globalScore)}%` : ''; // v1.0.262 — a number: printed into innerHTML below
   byId(IDS.modalRankLine).innerHTML = isRanked
     ? `<span class="tier-badge t-${tier.toLowerCase()}" style="position:static;display:inline-flex;margin-right:6px">${tier}</span>Rank #${rank} of ${rankedTotal} ranked ${scoreStr}`
     : `<span class="tier-badge t-unranked" style="position:static;display:inline-flex;margin-right:6px">Unranked</span>Not battled yet ${scoreStr}`;
@@ -18759,7 +18873,8 @@ function showAnimeDetail(id, opts) {
   // Genre tags
   const genresEl = byId(IDS.modalGenres);
   const genres = Array.isArray(anime.genres) ? anime.genres.slice(0, 6) : [];
-  genresEl.innerHTML = genres.map(g => `<span class="modal-genre-tag">${g}</span>`).join('');
+  // v1.0.262 — escaped, as the Discover pop-up already does: a backup file, cloud save or new-anime entry can carry any text
+  genresEl.innerHTML = genres.map(g => `<span class="modal-genre-tag">${esc(g)}</span>`).join('');
   genresEl.style.display = genres.length ? 'flex' : 'none';
   byId(IDS.modalWins).textContent    = anime.wins;
   byId(IDS.modalLosses).textContent  = anime.losses;
@@ -18824,10 +18939,11 @@ function showAnimeDetail(id, opts) {
     recentEl.innerHTML = '<h4>Recent Battles</h4>' + related.map(h => {
       const won = h.winnerId != null ? h.winnerId === anime.id : h.winnerTitle === anime.title;
       const opponent = won ? h.loserTitle : h.winnerTitle;
+      // v1.0.262 — escaped like the franchise view's Recent Battles; the title is saved text and a crafted one ran here
       return `<div class="modal-recent-item">
-        <span class="${won ? 'modal-win' : 'modal-loss'}">${won ? '✓ W' : '✗ L'} vs ${opponent}</span>
-        <span style="color:#8b949e">${won ? '+' : '−'}${h.eloSwing} ELO</span>
-      </div>`;
+        <span class="${won ? 'modal-win' : 'modal-loss'}">${won ? '✓ W' : '✗ L'} vs ${esc(opponent)}</span>
+        <span style="color:#8b949e">${won ? '+' : '−'}${Number(h.eloSwing) || 0} ELO</span>
+      </div>`; // v1.0.262 — the swing as a number: battle history comes from the save (a backup file or cloud save)
     }).join('');
   } else {
     recentEl.innerHTML = '<p style="color:#8b949e;font-size:0.78rem;margin-top:8px">No battles recorded yet.</p>';
@@ -19328,8 +19444,9 @@ async function _predictorSearch(q) {
       const year  = m.seasonYear || '';
       const fmt   = m.format || '';
       const cover = m.coverImage?.medium || '';
+      // v1.0.262 — the AniList id as a parsed number inside onmousedown (network data never goes into a handler as-is)
       return `<div class="predictor-dropdown-item" data-idx="${i}"
-                   onmousedown="predictorPick(${m.id})"
+                   onmousedown="predictorPick(${Number(m.id) || 0})"
                    onmouseover="predictorHover(${i})">
         <img${coverCors(cover)} src="${safeUrl(cover)}" alt="" aria-hidden="true" />
         <div class="predictor-dropdown-item-info">
@@ -19749,7 +19866,8 @@ function _renderPrediction(media, pred, container) {
   // v1.0.251 — escape titles in the prediction card
   const reasons = pred.components.map(c => {
     if (c.isKnn && c.detail?.length) {
-      const examples = c.detail.map(x => `${esc(x.name)} <span style="color:#6e7681">(${x.elo})</span>`).join(', ');
+      // v1.0.262 — the neighbours' ELO as numbers (they come from the save)
+      const examples = c.detail.map(x => `${esc(x.name)} <span style="color:#6e7681">(${Number(x.elo) || 0})</span>`).join(', ');
       return `<div>• <span>${c.label}</span>: ${examples}</div>`;
     }
     const detail = c.detail
@@ -20593,13 +20711,14 @@ function _paintTrio(fresh = false) {
       const badgeEl = rank > 0 ? `<div class="trio-badge">${BADGES[rank]}</div>` : '';
       const rankCls = rank > 0 ? RANK_CLASS[rank] : '';
 
+      // v1.0.262 — ELO and episode count as numbers: a backup file or cloud save could carry markup in either
       const eloEl = !blindMode
-        ? `<div class="elo-badge">ELO ${a.elo}</div>`
+        ? `<div class="elo-badge">ELO ${Number(a.elo) || 0}</div>`
         : '';
 
       const epMeta =
         (a.format === 'MOVIE' ? '<span class="ep-badge">Movie</span>'
-          : a.episodes         ? `<span class="ep-badge">${a.episodes} ep</span>`
+          : Number(a.episodes) > 0 ? `<span class="ep-badge">${Number(a.episodes)} ep</span>`
           : '') +
         _statusBadge(a.status);
 
@@ -21097,10 +21216,11 @@ function populateTowerList(q) {
   sorted.slice(0, 60).forEach(({ i, a }) => {
     const el = document.createElement('div');
     el.className = 'tower-anime-item';
+    // v1.0.262 — ELO as a number: a backup file or cloud save could carry markup in it
     el.innerHTML = `
       <img${coverCors(a.cover)} src="${safeUrl(a.cover)}" alt="${esc(displayTitle(a))}" />
       <span>${esc(displayTitle(a))}</span>
-      <span class="tower-anime-elo">ELO ${a.elo}</span>
+      <span class="tower-anime-elo">ELO ${Number(a.elo) || 0}</span>
     `;
     el.addEventListener('click', () => startTower(i));
     container.appendChild(el);
@@ -21298,11 +21418,12 @@ function finishTower() {
     const row = document.createElement('div');
     row.className = `tower-result-row ${r.championWon ? 'won' : 'lost'}`;
     // v1.0.250 — singular "battle" at 1
+    // v1.0.262 — ELO as a number: a backup file or cloud save could carry markup in it
     row.innerHTML = `
       <img${coverCors(opp.cover)} src="${safeUrl(opp.cover)}" alt="${esc(displayTitle(opp))}" />
       <div class="tower-result-info">
         <div class="name">${esc(displayTitle(opp))}</div>
-        <div class="meta">ELO ${opp.elo} · ${_nBattles(opp.battles)}</div>
+        <div class="meta">ELO ${Number(opp.elo) || 0} · ${_nBattles(opp.battles)}</div>
       </div>
       <div class="tower-result-outcome">${r.championWon ? '✅ Win' : '❌ Loss'}</div>
     `;
@@ -21505,17 +21626,18 @@ function _vsRenderTableSlice() {
       : '';
     // v1.0.251 — Tier cell: Unranked shows a muted '–' like the # column; the
     // "UNRANKED" pill is wider than the 56px Tier column and was clipped.
+    // v1.0.262 — the id goes into the onclick as a number and the title is escaped, so neither can run as script
     html += `<tr class="ranking-table-row${anime.fuzzy ? ' is-fuzzy' : ''}">
       <td class="tbl-rank">${displayIdx}</td>
       <td><img class="tbl-cover"${coverCors(anime.cover)} src="${safeUrl(anime.cover)}" alt="" aria-hidden="true" loading="lazy" /></td>
-      <td class="tbl-title" onclick="showAnimeDetail(${anime.id})">${title}${fuzzyPill}${sb ? ' ' + sb : ''}</td>
-      <td>${anime.elo}</td>
+      <td class="tbl-title" onclick="showAnimeDetail(${Number(anime.id) || 0})">${esc(title)}${fuzzyPill}${sb ? ' ' + sb : ''}</td>
+      <td>${Number(anime.elo) || 0}</td>
       <td>${wr}</td>
-      <td>${anime.battles || 0}</td>
-      <td>${anime.globalScore ? anime.globalScore + '%' : '–'}</td>
+      <td>${Number(anime.battles) || 0}</td>
+      <td>${Number(anime.globalScore) > 0 ? Number(anime.globalScore) + '%' : '–'}</td>
       <td>${tier === 'unranked' ? '<span class="tbl-tier-none" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>' : `<span class="tier-badge t-${tier.toLowerCase()}">${tier}</span>`}</td>
       <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
-    </tr>`;
+    </tr>`; // v1.0.262 — ELO, battles and score as numbers: a backup file or cloud save could carry markup in them
   }
 
   if (botPx > 0)
@@ -21539,14 +21661,15 @@ function renderFranchiseTable() {
     const wrStr    = group.winRate !== null ? group.winRate + '%' : '–';
     const scoreStr = group.avgScore ? group.avgScore + '%' : '–';
     const clickHandler = isSingle
-      ? `showAnimeDetail(${group.members[0].id})`
+      ? `showAnimeDetail(${Number(group.members[0].id) || 0})` // v1.0.262 — a number, so a crafted id can't run as script
       : 'showFranchiseDetail(this.dataset.franchise)'; // v1.0.253 — name in data-franchise (apostrophes broke the quoted form)
     // v1.0.162 — mirror the grid card fix: display the ELO rank, not the
     // current-sort position. v1.0.241 — '–' for Unranked groups.
     const displayRank = group.unranked ? '–' : (group.eloRank ?? rank) + 1;
     // v1.0.258 — the franchise name; a lone entry's own title goes on a muted line under it, after any fuzzy pill (data-franchise stays the key)
+    // v1.0.262 — member ids are written as numbers (a crafted id could break out of the attribute)
     html += `
-      <tr class="franchise-table-group" data-gid="${gid}" data-franchise="${esc(group.name)}" data-member-ids="${group.members.map(a => a.id).join(',')}" onclick="${clickHandler}">
+      <tr class="franchise-table-group" data-gid="${gid}" data-franchise="${esc(group.name)}" data-member-ids="${group.members.map(a => Number(a.id) || 0).join(',')}" onclick="${clickHandler}">
         <td class="tbl-rank">${displayRank}</td>
         <td><img class="tbl-cover"${coverCors(group.cover)} src="${esc(group.cover || '')}" alt="" loading="lazy" /></td>
         <td class="tbl-title">
@@ -21585,17 +21708,18 @@ function renderFranchiseTable() {
         const fuzzyPill = a.fuzzy
           ? ' <span class="fuzzy-tag" title="Fuzzy — flagged as uncertain">〰️ Fuzzy</span>'
           : '';
-        html += `<tr class="franchise-table-member${a.fuzzy ? ' is-fuzzy' : ''}" data-member-gid="${gid}" style="display:none" onclick="showAnimeDetail(${a.id})">
+        // v1.0.262 — the id goes into the onclick as a number, so a crafted one can't run as script
+        html += `<tr class="franchise-table-member${a.fuzzy ? ' is-fuzzy' : ''}" data-member-gid="${gid}" style="display:none" onclick="showAnimeDetail(${Number(a.id) || 0})">
           <td></td>
           <td><img class="tbl-cover"${coverCors(a.cover)} src="${esc(a.cover || '')}" alt="" loading="lazy" /></td>
           <td class="tbl-title" style="padding-left:24px">${esc(a.titleEn || a.title)}${fuzzyPill}</td>
-          <td>${a.elo}</td>
+          <td>${Number(a.elo) || 0}</td>
           <td>${wr}</td>
-          <td>${a.battles || 0}</td>
-          <td>${a.globalScore ? a.globalScore + '%' : '–'}</td>
+          <td>${Number(a.battles) || 0}</td>
+          <td>${Number(a.globalScore) > 0 ? Number(a.globalScore) + '%' : '–'}</td>
           <td>${memberTier ? `<span class="tier-badge t-${memberTier.toLowerCase()}">${memberTier}</span>` : '<span class="tbl-tier-none" role="img" aria-label="Unranked" title="Unranked — not battled yet">–</span>'}</td>
           <td><span class="confidence ${conf.cls}">${conf.dot} ${conf.label}</span></td>
-        </tr>`;
+        </tr>`; // v1.0.262 — ELO, battles and score as numbers: a backup file or cloud save could carry markup in them
       });
     }
   });
@@ -22616,10 +22740,62 @@ function startFinishTower() {
 
 // ─── NOTIFICATION CENTRE ──────────────────────────────────────────────────────
 
+// v1.0.262 — One anime carried by a new_anime / removed_anime item, rebuilt from the fields the AniList and
+// MAL pollers set (fetchAllAnime, checkForNewAnimeMAL). The ranking views write numbers, format and genres
+// into markup without esc(), so numbers must be finite and format / status / genres / studios plain words.
+// Titles stay free text (real ones contain &, < and quotes), so they are escaped where they are shown.
+// A genre or studio list that fails is left off (the background AniList enrichment fills it in).
+// null (no integer id, or no title) drops the item.
+function _ncCleanAnime(a) {
+  if (!a || !Number.isInteger(a.id) || a.id <= 0 || typeof a.title !== 'string') return null;
+  const word = v => typeof v === 'string' && /^\w[\w .:-]{0,59}$/.test(v);
+  const out  = { id: a.id, title: a.title, cover: typeof a.cover === 'string' ? a.cover : '' };
+  const keep = (keys, ok) => keys.forEach(k => { if (ok(a[k])) out[k] = a[k]; });
+  keep(['titleEn', 'titleRo', 'description'], v => typeof v === 'string');
+  keep(['format', 'status', 'listStatus'], v => v === null || word(v));
+  keep(['episodes', 'globalScore', 'seasonYear', 'popularity', 'anilistScore', 'malScore', 'idMal',
+        'elo', 'seedElo', 'wins', 'losses', 'comparisons', 'battles'], v => v === null || Number.isFinite(v));
+  keep(['genres', 'studios'], v => Array.isArray(v) && v.every(word));
+  keep(['eloHistory'], v => Array.isArray(v) && v.every(Number.isFinite));
+  keep(['fuzzy'], v => typeof v === 'boolean');
+  return out;
+}
+
+// v1.0.262 — Notification items reach the bell from Firebase (users/<id>/notifications, which any signed-in
+// Firebase client can write today) and from localStorage, and were trusted as they came: a crafted id ran as
+// script when the bell opened, and a crafted anime reached animeList through "Add to rankings". Every entry
+// point now passes its items through here. Only items shaped like the ones _ncAdd makes are kept (id
+// "nc-<time>-<random>", one of its four types, the data that type uses), each rebuilt from those fields alone.
+function _ncCleanItems(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(n => {
+    if (!n || typeof n.id !== 'string' || !/^nc-\d{1,16}-[a-z0-9]{1,8}$/.test(n.id)) return null;
+    if (typeof n.msg !== 'string' || !Number.isFinite(n.timestamp)) return null;
+    const d = n.data || {};
+    let data;
+    if (n.type === 'finish_prompt') {
+      if (!Number.isInteger(d.animeId) || d.animeId <= 0) return null;
+      data = { animeId: d.animeId, title: typeof d.title === 'string' ? d.title : '' };
+    } else if (n.type === 'new_anime' || n.type === 'removed_anime') {
+      const anime = Array.isArray(d.anime) ? d.anime.map(_ncCleanAnime) : [];
+      if (!anime.length || anime.includes(null)) return null;
+      data = { anime };
+    } else if (n.type === 'app_update') {
+      const str = v => (typeof v === 'string' ? v : '');
+      data = { fromVersion: str(d.fromVersion), toVersion: str(d.toVersion), title: str(d.title),
+               bullets: Array.isArray(d.bullets) ? d.bullets.filter(b => typeof b === 'string') : [] };
+    } else {
+      return null;
+    }
+    return { id: n.id, type: n.type, msg: n.msg, timestamp: n.timestamp, read: n.read === true, data };
+  }).filter(Boolean);
+}
+
 function _ncLoad() {
   try {
     const raw = localStorage.getItem(KESSEN_KEYS.data.notifCentre(saveKey));
-    _notifCentre = raw ? JSON.parse(raw) : [];
+    // v1.0.262 — stored items are checked like remote ones, so one planted before this fix can't render again
+    _notifCentre = raw ? _ncCleanItems(JSON.parse(raw)) : [];
   } catch { _notifCentre = []; }
   // v1.0.239 — Drop any finish_prompt whose anime the user has already
   // acted on. Closes a cold-start ordering gap: tapping a Tower push boots
@@ -22648,7 +22824,7 @@ function _ncLoad() {
     if (saveKey && saveKey !== KESSEN_KEYS.session.guest) {
       const gRaw = localStorage.getItem(KESSEN_KEYS.data.notifCentre(''));  // '' → 'guest'
       const guestNc = gRaw ? JSON.parse(gRaw) : [];
-      const stray = guestNc.filter(n => n.type === 'app_update');
+      const stray = _ncCleanItems(guestNc).filter(n => n.type === 'app_update'); // v1.0.262 — checked like the rest
       if (stray.length) {
         const haveVersions = new Set(_notifCentre.filter(n => n.type === 'app_update').map(n => n.data?.toVersion));
         const adopt = stray.filter(n => !haveVersions.has(n.data?.toVersion));
@@ -22719,9 +22895,10 @@ function _ncStartSync() {
     // still there after adding an anime" bug the user reported.
     const tombstones = _ncLoadTombstones();
     const existingIds = new Set(_notifCentre.map(n => n.id));
-    const newItems = remote.items.filter(n =>
-      n && n.id
-      && !existingIds.has(n.id)
+    // v1.0.262 — only items shaped like the ones _ncAdd makes get in (_ncCleanItems); any signed-in
+    // Firebase client can write this node today, and a crafted item ran as script when the bell opened.
+    const newItems = _ncCleanItems(remote.items).filter(n =>
+      !existingIds.has(n.id)
       && !tombstones.has(n.id)
       && !n.read,
     );
@@ -22797,14 +22974,14 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.261 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.262 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔗 Opening a short share link while signed in with MyAnimeList now shows the shared rankings, instead of loading your own list over them.',
+    '🔒 Security fixes for the notification bell, Live Challenge and Watch Together.',
   ],
 };
 
@@ -22965,27 +23142,44 @@ function _isFinishedListStatus(status) {
   return status === 'COMPLETED' || status === 'REPEATING';
 }
 
+// v1.0.262 — Each button carries data-action and data-id and is run by the bell list's one delegated click
+// listener (_ncRenderList → _ncRunAction), like the ✕ button. n.id used to go raw into an inline onclick
+// string, so a crafted id ran as script; esc() alone would not do there, because the browser decodes it
+// again before it runs the handler.
 function _ncActionBtn(n) {
+  const btn = (action, label) =>
+    `<button class="nc-action-btn" data-action="${action}" data-id="${esc(String(n.id || ''))}">${label}</button>`;
   if (n.type === 'finish_prompt')
-    return `<button class="nc-action-btn" onclick="ncActionFinishTower('${n.id}')">⚡ Battle in Tower</button>`;
+    return btn('finishTower', '⚡ Battle in Tower');
   if (n.type === 'new_anime') {
     // Single-anime entries get an extra "Add & Tower" button so users can add
     // and immediately stress-test a freshly-completed film/short without
     // hunting for it in the rankings first. Bulk grouped entries (>=5) keep
     // just the review-modal button.
     const single = n.data?.anime?.length === 1;
-    const addBtn = `<button class="nc-action-btn" onclick="ncActionAddAnime('${n.id}')">➕ Add to rankings</button>`;
-    const a0 = n.data.anime[0];
+    const addBtn = btn('addAnime', '➕ Add to rankings');
+    const a0 = n.data?.anime?.[0]; // v1.0.262 — an item with no data no longer throws and stops the list
     const towerBtn = single && _isFinishedListStatus(a0?.listStatus ?? a0?.status) // v1.0.257 — finished series only
-      ? `<button class="nc-action-btn" onclick="ncActionAddAndTower('${n.id}')">⚡ Add &amp; Tower</button>`
+      ? btn('addAndTower', '⚡ Add &amp; Tower')
       : '';
     return addBtn + towerBtn;
   }
   if (n.type === 'removed_anime')
-    return `<button class="nc-action-btn" onclick="ncActionReviewRemoved('${n.id}')">📋 Review</button>`;
+    return btn('reviewRemoved', '📋 Review');
   if (n.type === 'app_update')
-    return `<button class="nc-action-btn" onclick="ncActionShowWhatsNew('${n.id}')">📖 View details</button>`;
+    return btn('whatsNew', '📖 View details');
   return '';
+}
+
+// v1.0.262 — runs the handler a bell action button names in its data-action (see _ncActionBtn)
+function _ncRunAction(action, id) {
+  switch (action) {
+    case 'finishTower':   return ncActionFinishTower(id);
+    case 'addAnime':      return ncActionAddAnime(id);
+    case 'addAndTower':   return ncActionAddAndTower(id);
+    case 'reviewRemoved': return ncActionReviewRemoved(id);
+    case 'whatsNew':      return ncActionShowWhatsNew(id);
+  }
 }
 
 // v1.0.121 — adds the new anime to animeList with smart-ELO seeding, then
@@ -22999,11 +23193,12 @@ function ncActionAddAndTower(id) {
   // its sibling) synchronously so the tap is unambiguous.
   const notif = _notifCentre.find(n => n.id === id);
   const newAnime = notif?.data?.anime?.[0];
-  if (!newAnime) return;
+  if (!newAnime || !Number.isInteger(newAnime.id) || newAnime.id <= 0) return; // v1.0.262 — only a real AniList id goes into animeList
   // v1.0.257 — a stale button for a series still being watched only adds it; no Tower yet.
   // Checked before the button is disabled so it can't be left on "Loading…".
   if (!_isFinishedListStatus(newAnime.listStatus ?? newAnime.status)) { ncActionAddAnime(id); return; }
-  const btn = document.querySelector(`.nc-action-btn[onclick*="ncActionAddAndTower('${id}')"]`);
+  // v1.0.262 — found by its data attributes; the onclick text this used to match is gone
+  const btn = [...document.querySelectorAll('.nc-action-btn[data-action="addAndTower"]')].find(b => b.dataset.id === id);
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
   // If somehow already in the list, just start Tower against the existing one
   const existingIdx = animeList.findIndex(a => a.id === newAnime.id);
@@ -23043,7 +23238,8 @@ function _ncRenderList() {
   // attached via a delegated listener below instead of inline onclick,
   // sidestepping the esc()-then-decoded attribute-context bypass.
   // _ncIcon / _ncTimeAgo / _ncActionBtn return trusted markup we control.
-  list.innerHTML = _notifCentre.map(n => `
+  // v1.0.262 — an item that can't be drawn is skipped instead of stopping the whole list
+  list.innerHTML = _notifCentre.map(n => { try { return `
     <div class="nc-item" data-id="${esc(String(n.id || ''))}">
       <div class="nc-item-body">
         <div class="nc-item-msg">${_ncIcon(n.type)} ${esc(String(n.msg || ''))}</div>
@@ -23053,7 +23249,7 @@ function _ncRenderList() {
         ${_ncActionBtn(n)}
         <button class="nc-dismiss-btn" data-dismiss="${esc(String(n.id || ''))}" title="Dismiss">✕</button>
       </div>
-    </div>`).join('');
+    </div>`; } catch { return ''; } }).join('');
   // Delegated dismiss handler — one listener regardless of how many
   // items render, no quote-context shenanigans, and event.target gives
   // us the trusted DOM node directly.
@@ -23061,6 +23257,9 @@ function _ncRenderList() {
     list.addEventListener('click', e => {
       const btn = e.target.closest('.nc-dismiss-btn');
       if (btn?.dataset?.dismiss) ncDismiss(btn.dataset.dismiss);
+      // v1.0.262 — the action buttons use this listener too: data-action picks the handler, data-id the item
+      const act = e.target.closest('.nc-action-btn');
+      if (act?.dataset?.id && !act.disabled) _ncRunAction(act.dataset.action, act.dataset.id);
     });
     list._dismissBound = true;
   }
@@ -23503,7 +23702,10 @@ function ncActionReviewRemoved(id) {
     showToast('Finish or exit your Tower run first, then review removed anime.');
     return;
   }
-  _pendingRemovedAnime = notif.data.anime.filter(a => animeList.some(e => e.id === a.id));
+  // v1.0.262 — review (and archive) the live ranked entries, not the item's copies: the archive is written from
+  // these and comes back into animeList on a re-add, and a copy can come from a planted item or be out of date
+  const removedIds = new Set(notif.data.anime.map(a => a.id));
+  _pendingRemovedAnime = animeList.filter(e => removedIds.has(e.id));
   if (!_pendingRemovedAnime.length) {
     showToast('These anime have already been handled.');
     ncDismiss(id);
@@ -23775,13 +23977,17 @@ function _seedNewAnime(a) {
   delete a.listStatus; // v1.0.257 — MAL list status was only for the Add & Tower offer; never saved
   const arch = _archivedEntryFor(a.id);
   if (arch && Number.isFinite(arch.elo)) {
+    // v1.0.262 — archived counts come back as numbers only: the ranking views print them without esc(), and an
+    // archive written from a planted bell item by an older version could hold text
+    const num  = v => (Number.isFinite(v) ? v : 0);
+    const hist = Array.isArray(arch.eloHistory) ? arch.eloHistory.filter(Number.isFinite) : [];
     a.elo         = arch.elo;
-    a.battles     = arch.battles || 0;
-    a.wins        = arch.wins || 0;
-    a.losses      = arch.losses || 0;
-    a.comparisons = arch.comparisons || 0;
+    a.battles     = num(arch.battles);
+    a.wins        = num(arch.wins);
+    a.losses      = num(arch.losses);
+    a.comparisons = num(arch.comparisons);
     a.fuzzy       = !!arch.fuzzy;
-    a.eloHistory  = Array.isArray(arch.eloHistory) && arch.eloHistory.length ? arch.eloHistory.slice() : [arch.elo];
+    a.eloHistory  = hist.length ? hist : [arch.elo];
     a.seedElo     = Number.isFinite(arch.seedElo) ? arch.seedElo : a.eloHistory[0];
     _removeFromArchive(a.id);
     return { restored: true, elo: arch.elo, battles: a.battles };
@@ -23921,9 +24127,12 @@ function closeNewAnimeConfirmOverlay(e) {
 
 function confirmAddNewAnime() {
   if (!_pendingNewAnime.length) { closeNewAnimeConfirm(); return; }
-  const n = _pendingNewAnime.length;
+  // v1.0.262 — only entries with a real (integer) AniList id go into animeList; a crafted id from a bell
+  // item was written into the ranking views' onclick and ran as script
+  const adding = _pendingNewAnime.filter(a => Number.isInteger(a?.id) && a.id > 0);
+  const n = adding.length;
   let restored = 0;
-  _pendingNewAnime.forEach(a => {
+  adding.forEach(a => {
     if (_seedNewAnime(a).restored) restored++; // v1.0.249 — archive history comes back
     animeList.push(a);
   });
