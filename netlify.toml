@@ -1,5 +1,10 @@
 [build]
-  publish = "."
+  # v1.0.261 — publish only the site's own files (tools/build-site.mjs copies them into dist/). Publishing the repo
+  # root ("." until now) made function sources, tests, tools and docs downloadable; redirect rules can't hide them
+  # reliably (static files are served in any letter case). A missing listed file fails the build, so the last good
+  # deploy stays live. Functions are unaffected: they are built from netlify/functions, relative to the repo root.
+  command = "node tools/build-site.mjs"
+  publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
