@@ -1205,6 +1205,9 @@ function clearAuth({ keepLoad = false } = {}) {
   // box, so signing in as another account on this page opened this account's list and uploaded it over theirs
   const input = byId(IDS.usernameInput);
   if (input && authUser?.name && input.value.trim().toLowerCase() === authUser.name.toLowerCase()) input.value = '';
+  // v1.0.264 — this device stops getting this account's pushes (critical pass L4): unregister it with the token before
+  // it is cleared. keepLoad is the 401 interceptor: that token is dead, so this device is only reset, nothing is sent.
+  _pushForgetDevice(keepLoad ? null : 'anilist');
   authToken = null;
   authUser  = null;
   localStorage.removeItem(KESSEN_KEYS.auth.anilist);
@@ -1561,6 +1564,7 @@ function clearMALAuth() {
 function logoutMAL() {
   // v1.0.263 — a Logout tap ends a load still running, as Cancel does (see clearAuth); only Logout buttons call this
   cancelLoading();
+  _pushForgetDevice('mal'); // v1.0.264 — as clearAuth (L4); left alone while an AniList sign-in is stored (see there)
   clearMALAuth();
   _clearRankingState();
   _updateMALAuthUI(); // v1.0.263 — after the clear (it turns sync off), so an AniList sign-in that stays keeps syncing
@@ -7102,18 +7106,22 @@ function resetAll() {
 // The function is intentionally chatty about failure modes so the toast in
 // deleteAllData can tell the user *why* their cloud data wasn't wiped if
 // something went wrong, instead of falsely claiming success.
-async function _wipeCloudSession() {
-  const body = authToken
+// v1.0.264 — deleteAll (only "Delete all my data" sets it) asks delete-session to remove the account's push
+// record and invite history too; the result then carries what it reported (pushRecord, inviteStamps). Reset
+// leaves it out, so a Reset keeps that account's phone notifications working. `auth` and `wipedAt` let Delete
+// all also wipe the MAL account's save when both are signed in, under the same wipe time.
+async function _wipeCloudSession({ deleteAll = false, auth = null, wipedAt: sameWipeAs = '' } = {}) {
+  const body = auth || (authToken
     ? { token: authToken }
     : (malAuthToken
         ? { malToken: malAuthToken, malUserId: malAuthUser?.id }
-        : null);
+        : null));
   if (!body) return { ok: false, reason: 'not-signed-in' };
 
   const headers = { 'Content-Type': 'application/json' };
   // v1.0.263 — one wipedAt per wipe (the retry below reuses it; it used to make a second time). Returned as
   // wipedAt so the caller can remember it once this device's saves are gone (checkAndApplyCloudSave).
-  const wipedAt = new Date().toISOString();
+  const wipedAt = sameWipeAs || new Date().toISOString(); // v1.0.264 — or the first account's, so one stored time matches both
   const wipeBody = () => JSON.stringify({
     ...body,
     session: JSON.stringify({ _wiped: true, wipedAt }),
@@ -7121,11 +7129,16 @@ async function _wipeCloudSession() {
 
   // (a) Hard-delete the blob
   let firstError = '';
+  let removed = {}; // v1.0.264 — deleteAll: what delete-session says it removed besides the save (an older one says nothing)
   try {
     const r = await fetch('/.netlify/functions/delete-session', {
-      method: 'POST', headers, body: JSON.stringify(body),
+      method: 'POST', headers, body: JSON.stringify(deleteAll ? { ...body, deleteAll: true } : body), // v1.0.264 — see above
     });
     if (!r.ok) firstError = 'http-' + r.status + '@delete';
+    else if (deleteAll) { // v1.0.264
+      try { const j = await r.json(); removed = { pushRecord: j?.pushRecord, inviteStamps: j?.inviteStamps }; }
+      catch { /* nothing reported: counted as not removed */ }
+    }
   } catch (e) { firstError = (e && e.message) || 'delete-failed'; }
 
   // (b) Write the wipe marker
@@ -7154,14 +7167,66 @@ async function _wipeCloudSession() {
         if (r2.ok) {
           const { session: s2 } = await r2.json();
           if (s2 && !s2._wiped && s2.animeList) {
-            return { ok: false, reason: 'verify-failed', wipedAt }; // v1.0.263 — wipedAt: see above
+            return { ok: false, reason: 'verify-failed', wipedAt, ...removed }; // v1.0.263 — wipedAt: see above; v1.0.264 — removed
           }
         }
       }
     }
   } catch (_e) { /* verification is best-effort — fall through */ }
 
-  return { ok: !firstError, reason: firstError || 'success', wipedAt }; // v1.0.263 — wipedAt: see above
+  return { ok: !firstError, reason: firstError || 'success', wipedAt, ...removed }; // v1.0.263 — wipedAt: see above; v1.0.264 — removed
+}
+
+// v1.0.264 — "Delete all my data" also removes what the account keeps outside its cloud save (H2): its push
+// records on the server (with the AniList token Tower retry polls with), its invite history there, this browser's
+// push subscription, and its Firebase sync ping and notification list. All were left behind, and with the tokens
+// and kessen.ui.push cleared the user could no longer turn the pushes off. `acct` is the sign-in deleteAllData read
+// before its first await; `wipes` holds each account's _wipeCloudSession result (what delete-session reported
+// removing). A guest makes no server or Firebase call (every such step is per signed-in account). Each step is
+// best-effort and never throws; returns what could not be removed, for the toast.
+async function _deleteAccountExtras(acct, wipes = {}) {
+  const failed = [];
+  // (1) Server push records: no endpoint removes every device's registration. The server files a record under the
+  // account it verifies (AniList first), so each signed-in provider's token is sent on its own. Removed if this
+  // call or delete-session (deleteAll) confirms it.
+  let pushOk = true;
+  if (acct.token)    pushOk = ((await _pushUnregisterServer(undefined, { token: acct.token })) || wipes.anilist?.pushRecord === 'deleted') && pushOk;
+  if (acct.malToken) pushOk = ((await _pushUnregisterServer(undefined, { malToken: acct.malToken })) || wipes.mal?.pushRecord === 'deleted') && pushOk;
+  if (!pushOk) failed.push('notification record'); // v1.0.264 — short names: the toast lists them after "Couldn't remove:"
+  // Invite history (push-send-invite's stamps naming the account as inviter or invitee): only delete-session removes it.
+  if ((acct.token && wipes.anilist?.inviteStamps !== 'deleted') || (acct.malToken && wipes.mal?.inviteStamps !== 'deleted')) {
+    failed.push('invite history');
+  }
+  // (2) This browser's subscription, guests included: one left by an earlier account's logout still delivers that
+  // account's pushes here. getRegistration, not serviceWorker.ready: ready never settles without a worker.
+  try {
+    const reg = ('serviceWorker' in navigator) ? await navigator.serviceWorker.getRegistration() : null;
+    const sub = reg?.pushManager ? await reg.pushManager.getSubscription() : null;
+    if (sub && !(await sub.unsubscribe())) failed.push('notifications on this browser');
+  } catch { failed.push('notifications on this browser'); }
+  // (3) Firebase users/<al_|mal_><id>, named as _getUserFirebasePath names it. The rules allow writes only at its
+  // state and notifications children, so each is removed. Capped at 10 s: a write made offline never settles.
+  const bases = [];
+  if (acct.token && acct.user)       bases.push(`users/al_${acct.user.id || acct.user.name || acct.user.username}`);
+  if (acct.malToken && acct.malUser) bases.push(`users/mal_${acct.malUser.id || acct.malUser.name || acct.malUser.username}`);
+  if (bases.length) {
+    let timer = null;
+    try {
+      clearTimeout(_ncFirebasePushTimer); // a bell change still waiting would write the list back
+      if (!_FIREBASE_READY || typeof firebase === 'undefined' || !_initFirebase()) throw new Error('Firebase unavailable');
+      await Promise.race([
+        (async () => {
+          await _ensureFirebaseAuth(); // the rules require auth for these writes
+          const db = _firebaseApp.database();
+          await Promise.all(bases.flatMap(b => [db.ref(`${b}/state`).remove(), db.ref(`${b}/notifications`).remove()]));
+        })(),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Firebase timeout')), 10000); }),
+      ]);
+    } catch { failed.push('sync and notification data'); }
+    clearTimeout(timer);
+    clearTimeout(_ncFirebasePushTimer);
+  }
+  return failed;
 }
 
 async function deleteAllData() {
@@ -7176,6 +7241,11 @@ async function deleteAllData() {
     'Yes, delete everything'
   );
   if (!ok) return;
+  // v1.0.264 — the steps below can take several seconds (Firebase alone is capped at 10 s); the result toast replaces this
+  showToast('🗑️ Deleting your data…', 60000);
+  // v1.0.264 — the sign-ins being deleted, read before the first await: a Logout tap during the wipe clears them,
+  // which skipped the push and Firebase removals below.
+  const acct = { token: authToken, user: authUser, malToken: malAuthToken, malUser: malAuthUser };
 
   // Cancel any pending debounced cloud save and block all future ones for
   // the rest of this function. Without this guard, a battle finished within
@@ -7199,7 +7269,19 @@ async function deleteAllData() {
   //    'not-signed-in' (user was in guest mode — cloud wasn't ours to wipe),
   //    or a short HTTP/network error string so the user can report it
   //    accurately rather than seeing a misleading "deleted ✓" message.
-  const cloudResult = await _wipeCloudSession();
+  const cloudResult = await _wipeCloudSession({ deleteAll: true }); // v1.0.264 — the server drops the push record and invite history too
+  // v1.0.264 — signed in to both: that wipe was the AniList save's (it prefers AniList), and the MAL account can hold
+  // its own save from when it was used alone. Wipe that too, under the same wipe time (one ownCloudWipeAt below).
+  const malWipe = (acct.token && acct.malToken)
+    ? await _wipeCloudSession({ deleteAll: true, auth: { malToken: acct.malToken, malUserId: acct.malUser?.id }, wipedAt: cloudResult.wipedAt })
+    : null;
+  // v1.0.264 — then what the account keeps outside the save, while its sign-ins are known. Keep this the last await:
+  // the waiting-save drop below must come after it.
+  const extrasFailed = await _deleteAccountExtras(acct, {
+    anilist: acct.token ? cloudResult : null,
+    mal:     malWipe || (acct.malToken ? cloudResult : null),
+  });
+  if (malWipe && !malWipe.ok) extrasFailed.unshift('MyAnimeList cloud save'); // v1.0.264
   // v1.0.263 — drop a local save still waiting from a battle made while the wipe ran, so nothing below can
   // write the deleted list back (this device's own wipe marker no longer clears it at the next sign-in).
   clearTimeout(_saveStateTimer);
@@ -7230,17 +7312,24 @@ async function deleteAllData() {
   // nothing can upload now; left set, signing back in without a reload never auto-saved again.
   _suppressCloudSave = false;
 
-  if (cloudDeleteOk) {
+  // v1.0.264 — say what else could not be removed, so the toast never claims more than was deleted (kept short: it
+  // is read in a few seconds)
+  const notRemoved = extrasFailed.length ? ` Couldn't remove: ${extrasFailed.join(', ')}.` : '';
+  if (cloudDeleteOk && !notRemoved) {
     showToast('✓ All your data has been deleted (local + cloud).');
+  } else if (cloudDeleteOk) {
+    showToast(`⚠️ Your rankings were deleted.${notRemoved} Log in and try again, or email feedback@kessen.co.uk.`, 8000);
   } else if (cloudResult.reason === 'not-signed-in') {
     // v1.0.250 — a guest was just told "device only"; don't follow with a cloud warning
-    showToast(deviceOnly
+    // v1.0.264 — unless this browser's notification subscription could not be removed
+    if (deviceOnly && notRemoved) showToast(`⚠️ Kessen data on this device was deleted.${notRemoved}`, 8000);
+    else showToast(deviceOnly
       ? '✓ All Kessen data on this device has been deleted.'
-      : "⚠️ Local data cleared. You weren't signed in, so nothing to delete from cloud.", 6000);
+      : "⚠️ Local data cleared. You weren't signed in, so nothing to delete from cloud." + notRemoved, 6000);
   } else if (cloudResult.reason === 'verify-failed') {
-    showToast('⚠️ Local data cleared, but the cloud copy keeps coming back — another device may be re-uploading. Sign out everywhere and try again.', 8000);
+    showToast('⚠️ Local data cleared, but the cloud copy keeps coming back — another device may be re-uploading. Sign out everywhere and try again.' + notRemoved, 8000); // v1.0.264 — + notRemoved
   } else {
-    showToast(`⚠️ Local data cleared, but cloud delete failed (${cloudResult.reason}). Log back in and try again, or email feedback@kessen.co.uk.`, 6000);
+    showToast(`⚠️ Local data cleared, but cloud delete failed (${cloudResult.reason}).${notRemoved} Log back in and try again, or email feedback@kessen.co.uk.`, notRemoved ? 8000 : 6000); // v1.0.264 — + notRemoved
   }
   // v1.0.263 — remember this device's wipe (a time, no rankings) now that its saves are gone, so signing back
   // in here isn't told "deleted from another device". A guest delete wipes no cloud and stores nothing.
@@ -23160,17 +23249,17 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.263 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.264 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔄 Battles ranked after "Reset everything" or "Delete all my data" now sync to the cloud as normal.',
-    '↩️ Undo is cleared after archiving removed anime or a cloud sync, so it can\'t change the wrong anime.',
-    '🗼 After a cloud sync or Change User, Tower and Trio picks always count for the anime on screen.',
-    '⏹️ Cancel and Logout now fully stop a list that is still loading.',
+    '🗑️ "Delete all my data" now also removes your notification sign-up, invite history and sync data.',
+    // v1.0.264 — says it starts off only for new sign-ups: an existing Tower retry setting is kept
+    '🔔 Tower retry starts off for new sign-ups and asks first; existing settings stay. Logging out turns push off here.',
+    '🔒 Manage and Help now link to the privacy policy and a clearer note on what "Delete all my data" removes.',
   ],
 };
 
@@ -23507,8 +23596,10 @@ const PUSH_API = {
   unregister: '/.netlify/functions/push-unregister',
 };
 
+// v1.0.264 — Tower retry starts off (critical pass M9): it keeps the AniList sign-in on the server, so it only turns
+// on after its own Confirm (setPushCategory). A choice already saved on this device is kept (_pushLoadLocal).
 const PUSH_DEFAULT_CATEGORIES = Object.freeze({
-  towerRetry:    true,
+  towerRetry:    false,
   watchTogether: true,
   liveChallenge: true,
 });
@@ -23613,14 +23704,54 @@ async function _pushRegisterServer(subscription, categories) {
   return res.json();
 }
 
-async function _pushUnregisterServer(endpoint) {
-  const auth = _pushAuthTokens();
-  if (!auth.token && !auth.malToken) return; // silent — nothing to unregister
-  await fetch(PUSH_API.unregister, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...auth, endpoint }),
-  }).catch(() => { /* best-effort */ });
+// v1.0.264 — `auth` lets Delete all send one account's token at a time (the server removes the record of the
+// account it verifies), and the result says whether the server confirmed it (Delete all reports a failure).
+// The push toggle passes neither and ignores the result, as before.
+async function _pushUnregisterServer(endpoint, auth = _pushAuthTokens()) {
+  if (!auth.token && !auth.malToken) return false; // silent — nothing to unregister
+  try {
+    const res = await fetch(PUSH_API.unregister, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...auth, endpoint }),
+    });
+    return res.ok;
+  } catch { return false; /* best-effort */ }
+}
+
+// v1.0.264 — Logout (critical pass L4): this device stops getting the signed-out account's pushes, and whoever signs
+// in here next starts with push off. `account` is 'anilist' or 'mal' (the one logging out; its stored token is read
+// here, before the caller clears it, as that is the token the device was registered with), or null when that token is
+// dead (the 401 interceptor): then nothing is sent and only this device is reset. The browser subscription is
+// cancelled too, so a server record still holding this endpoint can't reach the device. Never throws: Logout goes on.
+function _pushForgetDevice(account) {
+  try {
+    const local = _pushLoadLocal();
+    if (!local) return;                              // push never set up here: no request, no service worker call
+    const stored = _pushAuthTokens();
+    const unregister = (auth) => fetch(PUSH_API.unregister, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...auth, endpoint: local.endpoint }),
+      keepalive: true,                               // still goes if the app is closed straight after Logout
+    }).catch(() => { /* best-effort */ });
+    // MAL logout with an AniList sign-in stored too: the device is registered under AniList (the register request sends
+    // both and the server picks AniList), which stays signed in, so its push is left as it is.
+    // v1.0.264 — but it can also still be registered under MAL (push turned on before AniList was signed in): that
+    // account's registration of this device is removed, so its invites stop arriving here
+    if (account === 'mal' && stored.token) {
+      if (local.endpoint && stored.malToken) unregister({ malToken: stored.malToken });
+      return;
+    }
+    try { localStorage.removeItem(KESSEN_KEYS.ui.push); } catch { /* storage blocked */ }
+    if (!local.enabled && !local.endpoint) return;   // it was off: nothing is subscribed
+    const auth = account === 'anilist' ? { token: stored.token } : account === 'mal' ? { malToken: stored.malToken } : null;
+    if (local.endpoint && (auth?.token || auth?.malToken)) unregister(auth);
+    navigator.serviceWorker?.getRegistration()
+      .then(reg => reg?.pushManager?.getSubscription())
+      .then(sub => sub?.unsubscribe())
+      .catch(() => { /* best-effort */ });
+  } catch { /* best-effort: never stop a Logout */ }
 }
 
 async function togglePushMaster(checked) {
@@ -23660,7 +23791,11 @@ async function togglePushMaster(checked) {
       });
 
       const local = _pushLoadLocal() || { categories: PUSH_DEFAULT_CATEGORIES };
-      const result = await _pushRegisterServer(sub, local.categories);
+      // v1.0.264 — Tower retry is left out, so the server keeps the account's own choice (another device's opt-in
+      // stays on, a new account starts off) and this switch never turns it on: only its own Confirm does (M9)
+      const categories = { ...local.categories };
+      delete categories.towerRetry;
+      const result = await _pushRegisterServer(sub, categories);
       _pushSaveLocal({
         enabled:    true,
         categories: result.categories || local.categories,
@@ -23711,7 +23846,28 @@ async function togglePushMaster(checked) {
   requestAnimationFrame(_pushRefreshUI);
 }
 
+// v1.0.264 — the notice shown when Tower retry is ticked (critical pass M9), in the shared confirm dialog. Resolves
+// true on Confirm; Cancel or a tap outside unticks the box. Focus moves into the dialog, then back to the box.
+function _pushConfirmTowerRetry() {
+  const box = byId(IDS.ncPushCatTower);
+  const answer = _confirmAsync(
+    'Turn on Tower retry prompts?',
+    'Kessen will keep your AniList sign-in on its server and check your completed list every 15 minutes while this is on. Untick to delete it.',
+    'Confirm',
+    { okStyle: 'primary' }
+  );
+  byId(IDS.confirmModalCancel)?.focus();
+  return answer.then(ok => {
+    if (box) { box.checked = ok; box.focus(); }     // the answer wins over a refresh made while the dialog was open
+    return ok;
+  });
+}
+
 async function setPushCategory(name, checked) {
+  // v1.0.264 — ticking Tower retry keeps the AniList sign-in on the server: wait for Confirm before anything is saved
+  // or sent (M9). Checked against the stored AniList sign-in, which is what the request sends (another tab may have
+  // signed in since this page loaded). With none (MAL only) it is skipped: the server keeps no token for MAL.
+  if (name === 'towerRetry' && checked && _pushAuthTokens().token && !(await _pushConfirmTowerRetry())) return;
   const local = _pushLoadLocal() || { enabled: false, categories: { ...PUSH_DEFAULT_CATEGORIES }, endpoint: null };
   const previousCategories = { ...local.categories };
   local.categories = { ...local.categories, [name]: !!checked };
@@ -23723,7 +23879,9 @@ async function setPushCategory(name, checked) {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        const result = await _pushRegisterServer(sub, local.categories);
+        // v1.0.264 — send only the category changed: the server keeps the others, so a change here can't turn
+        // Tower retry back on (and store the token) after it was unticked on another device (M9)
+        const result = await _pushRegisterServer(sub, { [name]: !!checked });
         // v1.0.218 — server is source of truth for categories. If the
         // snapshot failed when ticking the Tower-retry checkbox, the
         // server forces towerRetry off in the saved record AND returns
@@ -23737,8 +23895,16 @@ async function setPushCategory(name, checked) {
         }
         if (result?.towerRetryError) {
           toast(`Tower-retry couldn’t set up (${result.towerRetryError}) — try again in a moment.`, 'warn');
-          _pushRefreshUI();
+        } else if (name === 'towerRetry' && checked && result?.categories && !result.categories.towerRetry) {
+          // v1.0.264 — the server turned it off again: it keeps no sign-in for MAL accounts (no AniList token was sent)
+          toast('Tower retry prompts need an AniList sign-in.', 'warn');
         }
+        // v1.0.264 — the boxes show what the server kept: a MAL-only tick of Tower retry stayed ticked though it was off
+        _pushRefreshUI();
+      } else {
+        // v1.0.264 — the browser has dropped this device's subscription, so nothing reaches the server: an untick of
+        // Tower retry would be saved here only and its token kept there. Undo it and say so, as for a failed save (M9).
+        throw new Error('notifications have stopped on this device: turn them off and on again');
       }
     } catch (e) {
       // v1.0.231 — previously the catch was a bare `{ }`, which meant a
@@ -24732,6 +24898,9 @@ window.addEventListener('beforeunload', () => {
   // this is the safety valve that keeps a fast-clicker from losing the last
   // battle's ELO when they immediately close the tab.
   flushSaveState();
+  // v1.0.264 — no upload while Delete all or Reset is wiping the cloud save (both hold _suppressCloudSave, which
+  // scheduleCloudSave already obeys): closing the tab then wrote the whole list over the wipe marker, unseen.
+  if (_suppressCloudSave) return;
   if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey) return;
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
 

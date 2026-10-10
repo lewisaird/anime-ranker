@@ -121,6 +121,10 @@ export default async (request, context) => {
     upsertSubscription(record, subscription, ua);
     const prevTowerRetry = !!record.categories?.towerRetry && !!record.aniListToken;
     record.categories = sanitizeCategories(categories, record.categories);
+    // v1.0.264 — the app sends towerRetry only when the user ticks or unticks it (critical pass M9). Without it, keep
+    // the account's choice only while its token is still stored: a new record starts off, and a token the poll dropped
+    // (revoked or expired) needs a new tick and Confirm, not a silent re-store by turning push on or another change
+    if (!Object.hasOwn(categories ?? {}, 'towerRetry') && !record.aniListToken) record.categories.towerRetry = false;
     const wantsTowerRetry = !!record.categories.towerRetry;
 
     // Phase 2C state transitions — only meaningful for AniList users.
@@ -146,8 +150,10 @@ export default async (request, context) => {
           record.optedInAt             = 0;
           towerRetryError = e?.message || 'Snapshot failed';
         }
-      } else if (!wantsTowerRetry && record.aniListToken) {
+      } else if (!wantsTowerRetry) {
         // ON → OFF: clear the stored token + snapshot.
+        // v1.0.264 — whenever it is off, not only while a token is stored (critical pass M9): tower-retry-poll drops just
+        // the token on a 401/403, and the completed-anime ids, user id and opt-in time then stayed after an untick
         record.aniListToken        = null;
         record.aniListUserId       = null;
         record.notifiedCompletions = [];

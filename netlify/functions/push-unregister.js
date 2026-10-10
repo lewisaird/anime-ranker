@@ -11,10 +11,11 @@
 //
 // On success: { ok: true, remaining: <count> }
 
+// v1.0.264 — the versioned read and conditional write replace loadPushRecord / savePushRecord (see below)
 import {
   resolveUserId,
-  loadPushRecord,
-  savePushRecord,
+  loadPushRecordVersioned,
+  writePushRecordChange,
   deletePushRecord,
   removeSubscription,
 } from './_push-shared.js';
@@ -38,16 +39,30 @@ export default async (request, context) => {
   }
 
   try {
-    const record = await loadPushRecord(userId, context);
-    removeSubscription(record, endpoint);
-    if (record.subscriptions.length === 0) {
+    // v1.0.264 — this read the record and wrote the whole of it back, so a Logout on one device undid a Delete all on
+    // another (the record and its AniList token came back). Now only this removal is written, into the copy still
+    // stored (writePushRecordChange, by etag): a record deleted meanwhile stays deleted, a device added meanwhile stays.
+    const read = await loadPushRecordVersioned(userId, context);
+    let remaining = 0;
+    const written = read.exists && await writePushRecordChange(userId, context, read, (record) => {
+      remaining = removeSubscription(record, endpoint).subscriptions.length;
+    });
+    if (!written) {
+      // v1.0.264 — not written: the record is gone (nothing to remove), or it kept changing under us (say so)
+      if (read.exists && (await loadPushRecordVersioned(userId, context)).exists) {
+        return Response.json({ error: 'Storage error: record busy, try again' }, { status: 500 });
+      }
+      return Response.json({ ok: true, remaining: 0 });
+    }
+    if (remaining === 0) {
       // No devices left — drop the blob entirely so we don't keep an
       // empty record hanging around.
-      await deletePushRecord(userId, context);
-    } else {
-      await savePushRecord(userId, record, context);
+      // v1.0.264 — only while the stored copy is still empty: a device registered since the write above is kept
+      const now = await loadPushRecordVersioned(userId, context);
+      remaining = now.exists ? now.record.subscriptions.length : 0;
+      if (now.exists && remaining === 0) await deletePushRecord(userId, context);
     }
-    return Response.json({ ok: true, remaining: record.subscriptions.length });
+    return Response.json({ ok: true, remaining });
   } catch (e) {
     return Response.json({ error: 'Storage error: ' + e.message }, { status: 500 });
   }

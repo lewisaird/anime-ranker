@@ -17,10 +17,11 @@
 // turned off — we still accept the call so the client doesn't need to
 // check state before sending. No data is created for un-registered users.
 
+// v1.0.264 — versioned read + conditional write-back
 import {
   resolveUserId,
-  loadPushRecord,
-  savePushRecord,
+  loadPushRecordVersioned,
+  writePushRecordChange,
 } from './_push-shared.js';
 
 const MAX_IDS_PER_CALL = 100;
@@ -45,22 +46,28 @@ export default async (request, context) => {
   }
 
   try {
-    const record = await loadPushRecord(userId, context);
+    const read = await loadPushRecordVersioned(userId, context); // v1.0.264 — with its etag, see below
     // If the user has no subscription or Tower-retry off, silently accept and
     // do nothing — caller doesn't need to know our internal state.
-    if (!record.subscriptions?.length || !record.categories?.towerRetry) {
+    const optedIn = (r) => !!r.subscriptions?.length && !!r.categories?.towerRetry;
+    if (!optedIn(read.record)) {
       return Response.json({ ok: true, added: 0, skipped: 'not-tower-opted-in' });
     }
 
-    const known = new Set((record.notifiedCompletions || []).map(Number));
     let added = 0;
-    for (const raw of mediaIds.slice(0, MAX_IDS_PER_CALL)) {
-      const id = Number(raw);
-      if (!Number.isFinite(id)) continue;
-      if (!known.has(id)) { known.add(id); added++; }
-    }
-    record.notifiedCompletions = [...known];
-    await savePushRecord(userId, record, context);
+    // v1.0.264 — written only into the record just read, or a newer copy still opted in: a whole-record write could
+    // put back a record deleted meanwhile (Delete all) or a completed list Tower retry's untick had just cleared
+    const written = await writePushRecordChange(userId, context, read, (record) => {
+      const known = new Set((record.notifiedCompletions || []).map(Number));
+      added = 0;
+      for (const raw of mediaIds.slice(0, MAX_IDS_PER_CALL)) {
+        const id = Number(raw);
+        if (!Number.isFinite(id)) continue;
+        if (!known.has(id)) { known.add(id); added++; }
+      }
+      record.notifiedCompletions = [...known];
+    }, optedIn);
+    if (!written) return Response.json({ ok: true, added: 0, skipped: 'record-changed' }); // v1.0.264
     return Response.json({ ok: true, added });
   } catch (e) {
     return Response.json({ error: 'Storage error: ' + e.message }, { status: 500 });

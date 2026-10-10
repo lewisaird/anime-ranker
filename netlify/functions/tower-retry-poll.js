@@ -12,16 +12,23 @@
 // Failure handling:
 //   - AniList 401/403 means the user revoked Kessen's access. We mark the
 //     token null + clear the snapshot so we stop polling them. They'll need
-//     to re-enable Tower-retry to opt back in.
+//     to re-enable Tower-retry to opt back in. (v1.0.264 — Tower retry is
+//     turned off too, with the completed list: turnOffTowerRetry.)
+//   - v1.0.264 — the record is written back only if it is unchanged since it
+//     was read (writePushRecordChange): a Delete all during the AniList call
+//     is never undone.
 //   - AniList 429 (rate limit) — back off. The next scheduled run picks them up.
 //   - Push delivery 410 Gone — the device subscription is dead; the
 //     sendPushToUser helper already prunes it from the record.
 //   - We yield to the event loop between users (300ms) to keep AniList
 //     happy across users.
 
+// v1.0.264 — conditional write-backs (writePushRecordChange) replace savePushRecord
 import {
   iteratePushRecords,
-  savePushRecord,
+  writePushRecordChange,
+  turnOffTowerRetry,
+  dropSubscriptions,
   fetchCompletedAnime,
   callAniList,
   sendPushToUser,
@@ -78,12 +85,25 @@ function buildPushPayload(newOnes) {
   };
 }
 
-async function pollOne(userId, record, context) {
+async function pollOne(userId, record, context, etag) {
   // Sanity gates
   if (!record.categories?.towerRetry)   return { skipped: 'not-opted-in' };
   if (!record.subscriptions?.length)    return { skipped: 'no-subscriptions' };
   if (!record.aniListToken)             return { skipped: 'no-token' };
   if (!record.aniListUserId)            return { skipped: 'no-anilist-id' };
+
+  // v1.0.264 — every write below comes after an AniList call, and a whole-record write put back a record that Delete
+  // all removed meanwhile, with its token. Each is now conditional on the record read before the call (etag), and is
+  // skipped ({ stale }) if it was deleted or no longer holds this token with Tower retry on (writePushRecordChange).
+  const token = record.aniListToken;
+  const read = { record, etag, exists: true };
+  const sameOptIn = (r) => r.aniListToken === token && !!r.categories?.towerRetry;
+  const save = async (change, stillApplies = sameOptIn) =>
+    writePushRecordChange(userId, context, read, change, stillApplies);
+  // v1.0.264 — AniList rejected the token: Tower retry is turned off and its completed list, opt-in time and poll time
+  // go with the token (as push-register does on an untick), so no completed list is kept without a token.
+  const revoke = async () =>
+    (await save(turnOffTowerRetry, (r) => r.aniListToken === token)) ? { revoked: true } : { stale: true };
 
   // If we didn't manage the initial snapshot at register time (network blip,
   // etc.) take it now and skip any push this round — the user's existing
@@ -107,18 +127,18 @@ async function pollOne(userId, record, context) {
         20,
         cutoffSec !== null ? { beforeSeconds: cutoffSec } : {},
       );
-      record.notifiedCompletions = completed.map(c => c.id);
-      record.initialSnapshotDone = true;
-      record.lastPolledAt        = Date.now();
-      if (!record.optedInAt) record.optedInAt = Date.now();
-      await savePushRecord(userId, record, context);
-      return { snapshot: completed.length };
+      const now = Date.now();
+      // v1.0.264 — conditional (see above); also skipped if push-register took the snapshot meanwhile. Merged with
+      // the stored ids, so ones push-mark-seen added during the AniList call are kept
+      const written = await save((r) => {
+        r.notifiedCompletions = [...new Set([...asIdSet(r.notifiedCompletions), ...completed.map(c => c.id)])];
+        r.initialSnapshotDone = true;
+        r.lastPolledAt        = now;
+        if (!r.optedInAt) r.optedInAt = now;
+      }, (r) => sameOptIn(r) && !r.initialSnapshotDone);
+      return written ? { snapshot: completed.length } : { stale: true };
     } catch (e) {
-      if (e.status === 401 || e.status === 403) {
-        record.aniListToken = null;
-        await savePushRecord(userId, record, context);
-        return { revoked: true };
-      }
+      if (e.status === 401 || e.status === 403) return revoke(); // v1.0.264 — was: only the token dropped
       return { error: e.message };
     }
   }
@@ -130,13 +150,8 @@ async function pollOne(userId, record, context) {
   try {
     completed = await fetchCompletedAnime(record.aniListToken, record.aniListUserId, 1);
   } catch (e) {
-    if (e.status === 401 || e.status === 403) {
-      record.aniListToken = null;
-      record.aniListUserId = null;
-      record.initialSnapshotDone = false;
-      await savePushRecord(userId, record, context);
-      return { revoked: true };
-    }
+    // v1.0.264 — was: token, user id and snapshot flag dropped, but the completed list and Tower retry kept
+    if (e.status === 401 || e.status === 403) return revoke();
     if (e.status === 429) {
       // Rate-limited — skip this user for this cycle, try again next hour.
       return { rateLimited: true };
@@ -152,9 +167,8 @@ async function pollOne(userId, record, context) {
   }
 
   if (newOnes.length === 0) {
-    record.lastPolledAt = Date.now();
-    await savePushRecord(userId, record, context);
-    return { noNew: true };
+    const now = Date.now();
+    return (await save((r) => { r.lastPolledAt = now; })) ? { noNew: true } : { stale: true }; // v1.0.264 — conditional
   }
 
   // Send the push BEFORE persisting the new known-set, so a delivery failure
@@ -171,12 +185,19 @@ async function pollOne(userId, record, context) {
   // re-fire the same notification on every cycle. The user opted in; the
   // push pipeline did its job; transient delivery failures are the push
   // provider's problem to retry.
-  for (const item of newOnes) knownIds.add(item.id);
-  record.notifiedCompletions = [...knownIds];
-  record.lastPolledAt        = Date.now();
-  await savePushRecord(userId, record, context);
+  // v1.0.264 — conditional (see above), merged into the stored list so ids marked seen meanwhile are kept;
+  // `gone` (dead endpoints) stays out of the result, which is logged
+  const { gone, ...pushCounts } = pushResult;
+  const now = Date.now();
+  const written = await save((r) => {
+    dropSubscriptions(r, gone);
+    const known = asIdSet(r.notifiedCompletions);
+    for (const item of newOnes) known.add(item.id);
+    r.notifiedCompletions = [...known];
+    r.lastPolledAt        = now;
+  });
 
-  return { pushed: newOnes.length, ...pushResult };
+  return { pushed: newOnes.length, ...pushCounts, ...(written ? {} : { stale: true }) };
 }
 
 // Soft capacity ceiling — based on Netlify scheduled function 10-minute soft
@@ -198,23 +219,25 @@ export default async (_request, context) => {
     revoked:               0,    // AniList returned 401/403; we cleared the token
     rateLimited:           0,    // AniList returned 429; will retry next cron
     snapshots:             0,    // late initial-snapshot runs (carryover from register-time blip)
+    stale:                 0,    // v1.0.264 — record deleted or changed during the AniList call; nothing written back
     errors:                0,
   };
 
   try {
-    for await (const { userId, record } of iteratePushRecords(context)) {
+    for await (const { userId, record, etag } of iteratePushRecords(context)) { // v1.0.264 — etag: see pollOne
       summary.users++;
       const wasOptedIn = !!record.categories?.towerRetry && !!record.aniListToken;
       if (wasOptedIn) summary.optedInTowerRetry++;
       try {
-        const r = await pollOne(userId, record, context);
+        const r = await pollOne(userId, record, context, etag);
         if (r.skipped)        summary.skipped++;
         if (r.revoked)        summary.revoked++;
         if (r.rateLimited)    summary.rateLimited++;
         if (r.snapshot)       summary.snapshots++;
         if (r.error)          summary.errors++;
+        if (r.stale)          summary.stale++; // v1.0.264
         // pollOne actually called AniList iff we got a real outcome (not skipped/no-token)
-        if (r.pushed != null || r.noNew || r.snapshot != null) summary.polled++;
+        if (r.pushed != null || r.noNew || r.snapshot != null || r.stale) summary.polled++;
         if (r.pushed) {
           summary.pushed++;
           summary.newCompletions += r.pushed;
@@ -223,7 +246,7 @@ export default async (_request, context) => {
         // v1.0.224 — per-user log for any non-boring outcome (push sent,
         // error, revoked token, initial snapshot). "noNew" and "skipped"
         // are the healthy quiet paths and don't need per-user log spam.
-        if (r.pushed || r.error || r.revoked || r.snapshot) {
+        if (r.pushed || r.error || r.revoked || r.snapshot || r.stale) { // v1.0.264 — + stale
           console.log('[tower-retry-poll] user', userId, '->', JSON.stringify(r));
         }
       } catch (e) {

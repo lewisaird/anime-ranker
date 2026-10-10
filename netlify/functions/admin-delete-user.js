@@ -9,9 +9,14 @@
 //   GET /.netlify/functions/admin-delete-user?username=AniELOTest&key=YOUR_SECRET
 //
 // The secret key is set via the ADMIN_DELETE_KEY environment variable in Netlify.
+//
+// v1.0.264 — deletes the cloud save AND the push data: the push record (device subscriptions and any AniList
+// token Tower retry polls with) and the invite stamps naming the account. Names the Firebase node to remove
+// by hand (this function has no Firebase access).
 
 import { getStore } from '@netlify/blobs';
 import { timingSafeEqual } from 'node:crypto';
+import { PUSH_BLOB_STORE, pushUserIdFromSessionId, deleteInviteStamps } from './_push-shared.js';
 
 async function lookupAniListId(username) {
   // v1.0.152 — use a GraphQL variable instead of string interpolation.
@@ -49,7 +54,10 @@ async function lookupMALId(username) {
   return data?.data?.mal_id ?? null;
 }
 
-export default async (request, context) => {
+// v1.0.264 — the handler takes its store factory as a parameter so the tests can hand it an in-memory
+// store (as share.js does); Netlify gets the real @netlify/blobs one below.
+export function createHandler(storeFactory = getStore) {
+  return async (request, context) => {
   const url = new URL(request.url);
   const key      = url.searchParams.get('key');
   const id       = url.searchParams.get('id');
@@ -91,17 +99,36 @@ export default async (request, context) => {
   }
 
   try {
-    const store = getStore({ name: 'anime-elo-sessions', context });
+    const store = storeFactory({ name: 'anime-elo-sessions', context });
     const blobKey = `session_${userId}`;
+    // v1.0.264 — the push record and invite stamps too (they were left behind, and an account with only push
+    // data got "No data found"). The two stores name the account differently: <id> / mal_<id> here,
+    // anilist_<id> / mal_<id> there. A MAL account without an id in the app is filed in Firebase by username.
+    const pushStore = storeFactory({ name: PUSH_BLOB_STORE, context });
+    const pushId    = pushUserIdFromSessionId(userId);
+    const pushKey   = `subs_${pushId}`;
+    const firebase  = `users/${userId.startsWith('mal_') ? userId : `al_${userId}`}`;
+    const fbNote    = `${firebase}${userId.startsWith('mal_') ? ' (or users/mal_<their MAL username>)' : ''}`;
 
-    const existing = await store.get(blobKey);
-    if (!existing) {
-      return Response.json({ ok: false, message: `No data found for id: ${userId}` }, { status: 404 });
+    const existing     = await store.get(blobKey);
+    const existingPush = await pushStore.get(pushKey);
+    const stamps       = await deleteInviteStamps(pushStore, pushId);
+    if (!existing && !existingPush && !stamps) {
+      return Response.json({ ok: false, message: `No data found for id: ${userId}. Check ${fbNote} in the Firebase console.`, firebase }, { status: 404 });
     }
 
-    await store.delete(blobKey);
-    return Response.json({ ok: true, message: `Data deleted for id: ${userId}` });
+    const deleted = [];
+    if (existing)     { await store.delete(blobKey);   deleted.push('cloud save'); }
+    if (existingPush) { await pushStore.delete(pushKey); deleted.push('push record'); }
+    if (stamps)       deleted.push(`${stamps} invite stamp${stamps === 1 ? '' : 's'}`);
+    return Response.json({
+      ok: true, deleted, firebase,
+      message: `Deleted for id ${userId}: ${deleted.join(', ')}. Also remove ${fbNote} in the Firebase console.`,
+    });
   } catch (e) {
     return Response.json({ error: 'Blob store error: ' + e.message }, { status: 500 });
   }
-};
+  };
+}
+
+export default createHandler();

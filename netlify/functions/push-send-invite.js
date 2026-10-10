@@ -30,11 +30,13 @@
 // On 5xx error: returns { ok: false, error }.
 
 import { getStore } from '@netlify/blobs';
+// v1.0.264 — versioned read + conditional write-back (step 7)
 import {
   resolveUserId,
   resolveAniListUsername,
-  loadPushRecord,
-  savePushRecord,
+  loadPushRecordVersioned,
+  writePushRecordChange,
+  dropSubscriptions,
   sendPushToUser,
   PUSH_BLOB_STORE,
 } from './_push-shared.js';
@@ -104,7 +106,9 @@ export default async (request, context) => {
   }
 
   // Step 3 — load invitee's subscription record
-  const record = await loadPushRecord(inviteeId, context);
+  // v1.0.264 — with its etag: step 7 writes back after the AniList and push calls (see writePushRecordChange)
+  const read = await loadPushRecordVersioned(inviteeId, context);
+  const { record } = read;
   if (!record.subscriptions.length) {
     return Response.json({ ok: true, status: 'no-subscription' });
   }
@@ -145,7 +149,11 @@ export default async (request, context) => {
   // Step 7 — persist cooldown + prune any dead subscriptions
   await cooldownStore.setJSON(cdKey, { at: now });
   if (result.removed > 0) {
-    await savePushRecord(inviteeId, record, context);
+    // v1.0.264 — only into the record read at step 3 or a newer copy of it: a whole-record write put back a record
+    // the invitee deleted meanwhile (Delete all), with its AniList token. Gone: nothing to prune, nothing written.
+    // v1.0.264 — best-effort: the push was already sent, so a storage failure here must not fail the invite
+    try { await writePushRecordChange(inviteeId, context, read, (r) => dropSubscriptions(r, result.gone)); }
+    catch (e) { console.warn('push-send-invite: pruning dead subscriptions failed:', e.message); }
   }
 
   return Response.json({

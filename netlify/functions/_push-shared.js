@@ -98,6 +98,11 @@ export async function resolveUserId({ token, malToken }) {
 export async function loadPushRecord(userId, context) {
   const store = getStore({ name: PUSH_BLOB_STORE, context });
   const raw = await store.get(`subs_${userId}`, { type: 'json' });
+  return withPushDefaults(raw);
+}
+
+// v1.0.264 — loadPushRecord's defaults, shared with the versioned read below.
+function withPushDefaults(raw) {
   if (!raw || typeof raw !== 'object') {
     return {
       subscriptions: [],
@@ -120,6 +125,93 @@ export async function loadPushRecord(userId, context) {
     ...raw,
     schemaVersion: 2,
   };
+}
+
+// v1.0.264 — read with the record's etag, for writePushRecordChange. A strong read where the environment allows it (as
+// share.js does), so a retry sees the newest copy. exists is false when there is no record (record has the defaults).
+async function readPushRecordVersioned(store, key) {
+  let got;
+  try {
+    got = await store.getWithMetadata(key, { type: 'json', consistency: 'strong' });
+  } catch (e) {
+    if (e?.name !== 'BlobsConsistencyError') throw e;
+    got = await store.getWithMetadata(key, { type: 'json' });
+  }
+  const exists = !!got?.data && typeof got.data === 'object';
+  return { record: withPushDefaults(exists ? got.data : null), etag: (exists && got.etag) || null, exists };
+}
+
+// v1.0.264 — loadPushRecord plus the etag, for a write-back after slow work (see writePushRecordChange).
+export async function loadPushRecordVersioned(userId, context) {
+  return readPushRecordVersioned(getStore({ name: PUSH_BLOB_STORE, context }), `subs_${userId}`);
+}
+
+// v1.0.264 — tower-retry-poll, push-send-invite and push-mark-seen read a record, do slow work (an AniList call, a
+// push send), then wrote the whole record back: after a Delete all (delete-session + push-unregister) in between,
+// that put the record back with its AniList token. Now `change` is written only if the stored record is still the
+// one `read` (from loadPushRecordVersioned) got, by its etag. If it changed, it is read again: gone, or
+// `stillApplies(record)` false (e.g. its token changed), and nothing is written; otherwise `change` is applied to the
+// newer copy, so a change made meanwhile on another device is kept. Without an etag, it re-reads just before writing
+// and skips the same way. Returns true if written, false if skipped.
+export async function writePushRecordChange(userId, context, read, change, stillApplies = () => true) {
+  const store = getStore({ name: PUSH_BLOB_STORE, context });
+  const key = `subs_${userId}`;
+  let cur = read;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (cur.exists && !cur.etag) cur = await readPushRecordVersioned(store, key);
+    if (!cur.exists || !stillApplies(cur.record)) return false;
+    change(cur.record);
+    // v1.0.264 — set(JSON string), not setJSON: @netlify/blobs 10.7.4's setJSON drops onlyIfMatch (no If-Match is
+    // sent, so the write was unconditional and still put a deleted record back). set() sends it; see share.js.
+    const { modified, etag } = await store.set(key, JSON.stringify(cur.record), cur.etag ? { onlyIfMatch: cur.etag } : {});
+    // v1.0.264 — set() reports modified:true for any status but 412 (a 5xx after its retries too), so only an etag
+    // proves the write landed, as share.js checks; an unconfirmed write throws, so the caller reports a failure.
+    if (modified && etag) return true;
+    if (modified) throw new Error('Push record write not confirmed');
+    cur = await readPushRecordVersioned(store, key); // lost the race: look at what is there now
+  }
+  return false;
+}
+
+// v1.0.264 — Tower retry off, with what is kept for it, as push-register does on an untick. tower-retry-poll uses it
+// when AniList rejects the stored token: it used to drop only the token and keep the completed list (and towerRetry on).
+export function turnOffTowerRetry(record) {
+  record.categories          = { ...(record.categories || {}), towerRetry: false };
+  record.aniListToken        = null;
+  record.aniListUserId       = null;
+  record.notifiedCompletions = [];
+  record.initialSnapshotDone = false;
+  record.lastPolledAt        = 0;
+  record.optedInAt           = 0;
+  return record;
+}
+
+// v1.0.264 — drops the subscriptions sendPushToUser found dead (its `gone` endpoints), so the same pruning can be
+// applied again to a newer copy of the record by writePushRecordChange.
+export function dropSubscriptions(record, endpoints = []) {
+  record.subscriptions = (record.subscriptions || []).filter(s => !endpoints.includes(s.endpoint));
+  return record;
+}
+
+// v1.0.264 — the session store (save-session, delete-session, admin-delete-user) names accounts <id> (AniList)
+// and mal_<id>; this store anilist_<id> and mal_<id>. Maps the first to the second, for deleting both.
+export function pushUserIdFromSessionId(sessionUserId) {
+  const id = String(sessionUserId);
+  return id.startsWith('mal_') ? id : `anilist_${id}`;
+}
+
+// v1.0.264 — push-send-invite keeps a cooldown_<inviter>_<invitee>_<code> stamp ({at}) in this store for every
+// invite it sends and never removes it, so the stamps record who invited whom, to which session and when. Deletes
+// the ones naming this account (anilist_<id> / mal_<id>) in either role from `store` and returns how many; throws
+// on a store error. Keys are parsed, not substring-matched, so anilist_111 never matches anilist_1110 or mal_111.
+export async function deleteInviteStamps(store, pushUserId) {
+  const { blobs = [] } = await store.list({ prefix: 'cooldown_' });
+  const mine = blobs.map(b => b.key).filter(key => {
+    const m = /^cooldown_((?:anilist|mal)_[^_]+)_((?:anilist|mal)_[^_]+)_/.exec(key);
+    return !!m && (m[1] === pushUserId || m[2] === pushUserId);
+  });
+  for (const key of mine) await store.delete(key);
+  return mine.length;
 }
 
 export async function savePushRecord(userId, record, context) {
@@ -304,9 +396,10 @@ export async function* iteratePushRecords(context) {
     const page = await store.list({ prefix: 'subs_', cursor });
     for (const blob of page.blobs || []) {
       const userId = blob.key.replace(/^subs_/, '');
-      const record = await store.get(blob.key, { type: 'json' });
-      if (record && typeof record === 'object') {
-        yield { userId, record };
+      // v1.0.264 — with its etag, so the poll's write-back can't put back a record deleted meanwhile (writePushRecordChange)
+      const { record, etag, exists } = await readPushRecordVersioned(store, blob.key);
+      if (exists) {
+        yield { userId, record, etag };
       }
     }
     cursor = page.cursor;
@@ -319,7 +412,7 @@ export async function* iteratePushRecords(context) {
 // Caller is responsible for re-saving the record if removed > 0.
 export async function sendPushToUser(record, payload) {
   if (!record || !record.subscriptions?.length) {
-    return { sent: 0, failed: 0, removed: 0 };
+    return { sent: 0, failed: 0, removed: 0, gone: [] }; // v1.0.264 — gone: see below
   }
   const { default: webpush } = await import('web-push');
   const publicKey  = process.env.VAPID_PUBLIC_KEY;
@@ -357,6 +450,8 @@ export async function sendPushToUser(record, payload) {
     }
   });
   const removed = record.subscriptions.length - keep.length;
+  // v1.0.264 — gone: the dropped endpoints, for dropSubscriptions (callers keep them out of logs and responses)
+  const gone = record.subscriptions.filter(s => !keep.includes(s)).map(s => s.endpoint);
   record.subscriptions = keep;
-  return { sent, failed, removed };
+  return { sent, failed, removed, gone };
 }

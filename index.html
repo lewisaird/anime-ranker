@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.263" />
+  <meta name="version" content="1.0.264" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -777,8 +777,9 @@
          Shorter label (the subline covers the pool); min-width + nowrap keeps it on one line. -->
     <button class="btn-secondary" onclick="startGuestMode()" style="min-width:240px;white-space:nowrap">🎲 Try it as a guest</button>
     <p class="warm-start-info" style="margin-top:4px">No account needed · 250 popular shows</p>
-    <p style="margin-top:28px;font-size:0.72rem;color:#484f58">
-      <a href="/privacy.html" style="color:#484f58;text-decoration:none" onmouseover="this.style.color='#8b949e'" onmouseout="this.style.color='#484f58'">Privacy Policy</a>
+    <!-- v1.0.264 — readable privacy link (L9): it was #484f58 on the page background (2.28:1); colour and hover now come from .landing-privacy-link, no inline handlers -->
+    <p style="margin-top:28px;font-size:0.72rem">
+      <a href="/privacy.html" class="landing-privacy-link">Privacy Policy</a>
     </p>
   </div>
 
@@ -1680,6 +1681,11 @@
             <!-- v1.0.250 — id so renderManageTab can swap in device-only copy for guest sessions -->
             <p id="manage-delete-all-note" style="color:#8b949e;font-size:0.85rem;margin:12px 0 10px">Deletes all your data from this device and from cloud storage, and logs you out. For privacy removal requests.</p>
             <button class="manage-btn manage-btn-danger" onclick="deleteAllData()">🗑️ Delete all my data</button>
+            <!-- v1.0.264 — L9: the policy was only linked from the landing screen, which signed-in users rarely see -->
+            <div class="privacy-links">
+              <a href="/privacy.html" target="_blank" rel="noopener">Privacy policy ↗</a>
+              <a href="/privacy.html#deleting-your-data" target="_blank" rel="noopener">How deletion works ↗</a>
+            </div>
           </div>
         </div>
 
@@ -1858,6 +1864,16 @@
         <div class="help-section">
           <h4>🔔 Notifications</h4>
           <p>The bell icon in the header shows alerts for anime newly added to or removed from your list, finish-watching prompts, and a one-time <strong>✨ What's new</strong> entry whenever Kessen updates to a new version (tap it to see the release highlights). Tap the bell to open the notification centre and review or clear alerts.</p>
+        </div>
+
+        <!-- v1.0.264 — L9: privacy policy and deletion links in Help as well as Manage -->
+        <div class="help-section">
+          <h4>🔒 Your data</h4>
+          <p>Your rankings are saved on this device and, when you're signed in, backed up to the cloud so they sync between your devices. <strong>Manage → Delete all my data</strong> deletes them from both, along with your push notification sign-up and synced notifications, and logs you out. Log out on your other devices first, or they can upload their copy again. If you're not signed in, it clears this device only.</p>
+          <div class="privacy-links">
+            <a href="/privacy.html" target="_blank" rel="noopener">Privacy policy ↗</a>
+            <a href="/privacy.html#deleting-your-data" target="_blank" rel="noopener">How deletion works ↗</a>
+          </div>
         </div>
 
                 <div class="help-section" id="help-anilist-section" style="display:none">
