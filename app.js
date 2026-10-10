@@ -882,6 +882,10 @@ const KESSEN_KEYS = {
     // cross-device sync is actually working (the v1.0.209 sync work was
     // invisible without this).
     lastCloudSaveTs:     'kessen.ui.lastCloudSaveTs',
+    // v1.0.263 — wipedAt of the last cloud wipe this device made (Reset everything / Delete all my data), stored
+    // once the wiped list's save here is gone. checkAndApplyCloudSave compares it with the cloud's wipe marker,
+    // so only a wipe made on another device clears this device's save and shows "deleted from another device".
+    ownCloudWipeAt:      'kessen.ui.ownCloudWipeAt',
     // v1.0.248 — share-image format last picked in the share modal ('top10' | 'grid3').
     // v1.0.254 — unused since v1.0.254 (3×3 dropped, Top 10 only); kept because old values may still be stored.
     shareImageKind:      'kessen.ui.shareImageKind',
@@ -1047,7 +1051,7 @@ function loadAuthFromStorage() {
     const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
     const res = await _origFetch.apply(this, args);
     if (res.status === 401 && url.includes('graphql.anilist.co') && authToken) {
-      clearAuth();
+      clearAuth({ keepLoad: true }); // v1.0.263 — not a Logout tap: an expired AniList token must not cancel a MAL load running now
       showToast('⚠️ AniList session expired — please log in again.');
     }
     return res;
@@ -1072,6 +1076,7 @@ function _clearRankingState() {
   hiddenStatusesBattle    = new Set();
   saveKey           = '';
   _cloudSyncEnabled = false;
+  _resetHereThisVisit = false; // v1.0.263 — list closed: other devices' copies apply as usual again
   _metrics          = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };  // v1.0.239
   _metricsSessionCounted = false;
   // v1.0.211 — Clear mode flags + per-mode session state. Without this, a
@@ -1192,12 +1197,19 @@ function _resetPerListState() {
   dismissWeeklySummary(); // v1.0.256 — the previous list's weekly card must not linger (DOM only, never saves)
 }
 
-function clearAuth() {
+function clearAuth({ keepLoad = false } = {}) {
+  // v1.0.263 — a Logout tap ends a load still running, as Cancel does: it went on to land, save and show the battle
+  // screen, and with MAL still signed in it uploaded the AniList list over that account's cloud save.
+  if (!keepLoad) cancelLoading();
+  // v1.0.263 — empty the username box when it holds the account logging out: _updateAuthUI only fills an empty
+  // box, so signing in as another account on this page opened this account's list and uploaded it over theirs
+  const input = byId(IDS.usernameInput);
+  if (input && authUser?.name && input.value.trim().toLowerCase() === authUser.name.toLowerCase()) input.value = '';
   authToken = null;
   authUser  = null;
   localStorage.removeItem(KESSEN_KEYS.auth.anilist);
-  _updateAuthUI();
   _clearRankingState();
+  _updateAuthUI(); // v1.0.263 — after the clear (it turns sync off), so a MAL sign-in that stays keeps syncing
 }
 
 // Update the "AniList Avg" sort button and table header to reflect the active service.
@@ -1547,9 +1559,11 @@ function clearMALAuth() {
 }
 
 function logoutMAL() {
+  // v1.0.263 — a Logout tap ends a load still running, as Cancel does (see clearAuth); only Logout buttons call this
+  cancelLoading();
   clearMALAuth();
-  _updateMALAuthUI();
   _clearRankingState();
+  _updateMALAuthUI(); // v1.0.263 — after the clear (it turns sync off), so an AniList sign-in that stays keeps syncing
 }
 
 function _updateMALAuthUI() {
@@ -1854,7 +1868,8 @@ async function _fetchMALAnimeListViaAPI() {
 // autoResume: true when called automatically on page load (not by explicit user action).
 //   On failure the user is silently returned to the home screen — they're still logged
 //   in and can press "Login with MyAnimeList" to retry, rather than seeing a raw error.
-async function _startMALOAuthSession({ autoResume = false } = {}) {
+// v1.0.263 — skipCloudCheck: only resetAll's reload passes it (the cloud was just wiped; see there).
+async function _startMALOAuthSession({ autoResume = false, skipCloudCheck = false } = {}) {
   const username        = malAuthUser.name;
   const existingSaveKey = KESSEN_KEYS.session.mal(username);
   // Seed from scores on a fresh load only — same behaviour as AniList OAuth.
@@ -1872,15 +1887,16 @@ async function _startMALOAuthSession({ autoResume = false } = {}) {
   if (_cb) _cb.style.display = 'none';
 
   // Check for a cloud save newer than what's stored locally
-  if (_cloudSyncEnabled) {
+  if (_cloudSyncEnabled && !skipCloudCheck) { // v1.0.263 — skipped by resetAll's reload
     byId(IDS.loadingMsg).textContent = '☁️ Checking for cloud save…';
     const applied = await checkAndApplyCloudSave(existingSaveKey);
+    if (myGen !== _loadGeneration) return; // v1.0.263 — cancelled during the cloud check: don't go on to restore or fetch the list
     if (applied) {
       byId(IDS.loadingMsg).textContent = '☁️ Cloud save loaded!';
       await new Promise(r => setTimeout(r, 500));
+      if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change: a cancelled load must not hide a newer load's loading screen
       _clearLoadCancelTimer();
       hide('loading-screen');
-      if (myGen !== _loadGeneration) return;
       show('battle-screen');
       _showChangeUserBtn();
       snapshotSessionStart();
@@ -1895,9 +1911,9 @@ async function _startMALOAuthSession({ autoResume = false } = {}) {
   if (!seedFromScores && loadState(username, 'mal')) {
     byId(IDS.loadingMsg).textContent = 'Restoring your saved MAL session…';
     await new Promise(r => setTimeout(r, 600));
+    if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change (was after hide('loading-screen'))
     _clearLoadCancelTimer();
     hide('loading-screen');
-    if (myGen !== _loadGeneration) return;
     show('battle-screen');
     _showChangeUserBtn();
     snapshotSessionStart();
@@ -1909,9 +1925,11 @@ async function _startMALOAuthSession({ autoResume = false } = {}) {
 
   try {
     const entries = await _fetchMALAnimeListViaAPI();
+    if (myGen !== _loadGeneration) return; // v1.0.263 — cancelled while fetching: build, save and show nothing
     if (entries.length === 0) throw new Error('No completed or watching anime found on your MAL list.');
     await _buildAnimeListFromMalEntries(entries, username, seedFromScores, existingSaveKey, myGen);
   } catch (err) {
+    if (myGen !== _loadGeneration) return; // v1.0.263 — a cancelled load's late error must not bring the login screen back over the list the user moved on to
     _clearLoadCancelTimer();
     hide('loading-screen');
     showFlex('username-screen');
@@ -2239,6 +2257,9 @@ function flushSaveState() {
 function _saveStateNow() {
   if (!saveKey) return;
   if (_saveCollision) return; // another user's data lives at this key — don't clobber
+  // v1.0.263 — never write an empty list over a save (the cloud save and the tab-close upload skip it too). A list
+  // is only empty between loads (loadState, logout), never as something to keep.
+  if (!animeList.length) return;
   const owner = _currentOwnerTag();
 
   // Build either a full payload (with the entire animeList) or a slim payload
@@ -2346,10 +2367,16 @@ let _firebaseSyncRef      = null; // Firebase DatabaseReference for the user's s
 let _firebaseSyncListener = null; // 'value' listener handle (needed to detach cleanly)
 let _lastFirebaseSyncTs   = 0;    // ms timestamp of the last snapshot we applied or pushed
 let _pendingSyncData      = null; // remote snapshot queued for user confirmation (banner)
+// v1.0.263 — true after a signed-in Reset on this device, until the list is closed (logout, Delete all) or the
+// page reloads. Another device's newer copy is then offered in the banner, never applied silently: a device
+// that was closed during the Reset still holds the old rankings and its next battle uploads them.
+let _resetHereThisVisit   = false;
 
 // ─── LOADING CANCELLATION ─────────────────────────────────────────────────────
 // Each load function increments _loadGeneration and captures the value.
 // cancelLoading() increments it so in-flight async checks fail → no battle-screen nav.
+// v1.0.263 — every load checks it straight after each await, so a cancelled or replaced load changes no state,
+// saves nothing and shows nothing (one exception: another device's wipe marker, see checkAndApplyCloudSave).
 let _loadGeneration  = 0;
 let _loadCancelTimer = null; // setTimeout handle — reveals cancel button after 8s
 
@@ -2501,13 +2528,15 @@ function _startFirebaseSyncAttach() {
     if ((data.battleCount || 0) <= battleCount) return;
 
     const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
-    if (!onBattle || !animeList.length) {
+    // v1.0.263 — after a Reset on this device (this visit), ask even off the battle screen (see _resetHereThisVisit).
+    if ((!onBattle && !_resetHereThisVisit) || !animeList.length) {
       // Not actively battling — apply silently
       _lastFirebaseSyncTs = remoteTs;
       if (animeList.length) {
         _applyCloudSaveToMemory(data);
         showToast('✨ Picked up where you left off');
         syncFormatButtons(); syncEpRangeButtons();
+        _paintBattleAfterCloudApply(); // v1.0.263 — the hidden battle cards still showed the old pair
       }
     } else {
       // Mid-battle — show banner so they can choose when to apply
@@ -2517,7 +2546,10 @@ function _startFirebaseSyncAttach() {
       const msg = byId(IDS.realtimeSyncMsg);
       // v1.0.241 — say what ✕ means: this device's next save replaces the
       // other device's progress (last-write-wins, no merge).
-      if (msg) msg.textContent = `📱 Your other device ranked ${count} more anime. Apply them, or your next battle here replaces them.`;
+      // v1.0.263 — after a Reset here the copy may be the old rankings, not "more anime": say so.
+      if (msg) msg.textContent = _resetHereThisVisit
+        ? `📱 Another device saved ${_nBattles(data.battleCount || 0)} — it may be your rankings from before the Reset. Apply them, or your next battle here replaces them.`
+        : `📱 Your other device ranked ${count} more anime. Apply them, or your next battle here replaces them.`;
       byId(IDS.realtimeSyncBanner)?.classList.add('active');
     }
   }, err => {
@@ -2532,6 +2564,15 @@ function _startFirebaseSyncAttach() {
   _ncStartSync();
 }
 
+// v1.0.263 — after a live-sync or Manage → Load from cloud apply, paint the applied list's pair (a fresh trio
+// in Trio mode) whichever screen is showing. Only the battle screen was repainted, and Keep Ranking doesn't
+// repaint, so the old cards (or a Tower run the apply ended) stayed up while a tap credited other anime.
+function _paintBattleAfterCloudApply() {
+  if (trioMode) renderTrio();
+  else if (currentA !== null && currentB !== null) renderCurrentPair();
+  else renderBattle();
+}
+
 // Called by the "Apply" button in the realtime-sync-banner.
 function applyRealtimeSync() {
   byId(IDS.realtimeSyncBanner)?.classList.remove('active');
@@ -2542,10 +2583,8 @@ function applyRealtimeSync() {
   _applyCloudSaveToMemory(data);
   showToast('✨ Picked up where you left off');
   const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
-  if (onBattle) {
-    syncFormatButtons(); syncEpRangeButtons();
-    if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
-  }
+  if (onBattle) { syncFormatButtons(); syncEpRangeButtons(); }
+  _paintBattleAfterCloudApply(); // v1.0.263 — any screen: the banner stays up on Rankings too
 }
 
 // Called by the "✕" button in the realtime-sync-banner.
@@ -2675,7 +2714,12 @@ async function _loadCloudSave() {
 // Applies a cloud save object directly into memory and navigates to battle screen.
 // Avoids a full page reload so _cloudSyncEnabled stays true and auto-save keeps working.
 function _applyCloudSaveToMemory(cloud) {
+  const prevList = animeList; // v1.0.263 — this device's positions, for _onListPositionsChanged below
   animeList      = cloud.animeList;
+  // v1.0.263 — undo snapshots from before the apply would write this device's older copies over the
+  // cloud's anime (at positions that may now name another anime) and roll battleCount back, and a Tower
+  // run would go on crediting its old positions: drop them.
+  _onListPositionsChanged(prevList);
   battleCount    = cloud.battleCount    ?? 0;
   currentA       = cloud.currentA       ?? null;
   currentB       = cloud.currentB       ?? null;
@@ -2773,10 +2817,29 @@ function _applyCloudSaveToMemory(cloud) {
 
 async function checkAndApplyCloudSave(localSaveKey) {
   if (!_cloudSyncEnabled || !_activeCloudUser()) return false;
+  const myGen = _loadGeneration; // v1.0.263 — the calling load's generation (both callers bump it just before calling)
   const cloud = await _loadCloudSave();
+  // v1.0.263 — that load was cancelled or replaced: no toast, no "Newer cloud save" prompt, nothing applied.
+  // Only another device's wipe marker is still acted on (below, silently): a later cloud save can replace the
+  // marker before this account's next load sees it, and the deleted rankings would then come back.
+  const superseded = myGen !== _loadGeneration;
+  if (superseded && !(cloud && cloud._wiped)) return false;
 
   // Wipe marker — another device deleted all data. Clear local copy and start fresh.
   if (cloud && cloud._wiped) {
+    // v1.0.263 — only a wipe made on another device clears this device's save and shows that toast. After this
+    // device's own wipe (Reset / Delete all) the wiped list's save here was already removed, so a save still here
+    // is usually battles ranked since whose cloud saves failed (or another list, or one a second tab wrote back):
+    // keep it; the caller loads it and its next cloud save replaces the marker. It used to be deleted, with a
+    // false "deleted from another device" toast.
+    let ownWipe = false;
+    try { ownWipe = !!cloud.wipedAt && localStorage.getItem(KESSEN_KEYS.ui.ownCloudWipeAt) === cloud.wipedAt; } catch { /* storage blocked */ }
+    if (ownWipe) return false;
+    // v1.0.263 — cancelled load: clear the deleted save without a toast, unless it is the list now open here
+    if (superseded) {
+      if (localSaveKey !== saveKey) localStorage.removeItem(localSaveKey);
+      return false;
+    }
     localStorage.removeItem(localSaveKey);
     showToast('Your data was deleted from another device. Starting fresh.');
     return false; // caller proceeds as if no local data
@@ -2819,6 +2882,7 @@ async function checkAndApplyCloudSave(localSaveKey) {
     'Load cloud save',
     { cancelLabel: hasLocal ? "Keep this device's copy" : 'Start fresh instead', dismissable: false, okStyle: 'primary' }
   );
+  if (myGen !== _loadGeneration) return false; // v1.0.263 — load cancelled while the prompt was open: apply nothing
   if (!ok) return false;
 
   try {
@@ -2869,13 +2933,12 @@ async function manualCloudPull() {
       hide('username-screen');
       show('battle-screen');
       _showChangeUserBtn();
-      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
     } else if (onBattle) {
       syncFormatButtons(); syncEpRangeButtons();
-      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
     } else {
       renderRankingList();
     }
+    _paintBattleAfterCloudApply(); // v1.0.263 — on Rankings too (the Manage tab): Keep Ranking doesn't repaint
     showToast('☁️ Your rankings are back');
   } catch (err) {
     showToast('Failed to load cloud save: ' + (err.message || 'unknown error'));
@@ -2956,6 +3019,9 @@ function loadState(username, source = 'anilist') {
   // v1.0.256 — saveKey now points at the new list: start it clean so undo, the streak and anything a
   // save lacks can't carry over from the previous list (a name with no save starts fresh too).
   _resetPerListState();
+  // v1.0.263 — the list too: with no usable save the previous list stayed in memory under this key while the
+  // load fetched, and after a Cancel a background save (or the tab-close flush) wrote it there.
+  animeList = [];
   // v1.0.211 fix — Safari private-mode throws SecurityError for storage
   // access, which used to crash the entire login flow with no user message.
   // Treat any storage exception as "no save found" so cold-start path takes
@@ -3069,6 +3135,7 @@ function loadState(username, source = 'anilist') {
     // most battles (most established), tiebreak by highest ELO. Preserves
     // animeList order so UI positions stay stable. saveState() isn't called
     // here — the next regular save picks it up.
+    const _savedList = animeList; // v1.0.263 — positions as saved, for the two filters below
     const _byId = new Map();
     for (const a of animeList) {
       const cur = _byId.get(a.id);
@@ -3092,6 +3159,14 @@ function loadState(username, source = 'anilist') {
     if (animeList.length < _beforeMusic) {
       console.warn('[migrate] removed', _beforeMusic - animeList.length, 'MUSIC-format entries');
     }
+    // v1.0.263 — the two filters above move later anime up: the saved pair would name other anime or point
+    // past the end (1.0.262's Archive-then-Undo bug saved lists with an anime in twice) and the Winner Stays
+    // champion would change. The champion follows its anime; a fresh pair is picked.
+    if (animeList.length !== _savedList.length) {
+      _onListPositionsChanged(_savedList);
+      currentA = null;
+      currentB = null;
+    }
     // v1.0.211 — load local-only view preferences (rankingView / franchiseMode
     // / avoidSameFranchise) at session-restore time. Previously this only ran
     // inside showResults, which left avoidSameFranchise as `false` at the
@@ -3105,7 +3180,7 @@ function loadState(username, source = 'anilist') {
     // _ncLoad is idempotent, so the later call from showResults is harmless.
     _ncLoad();
     return true;
-  } catch { return false; }
+  } catch { animeList = []; return false; } // v1.0.263 — a save that fails part-way leaves no half-loaded list
 }
 
 // ─── UI HELPERS ─────────────────────────────────────────────────────────────
@@ -4060,6 +4135,7 @@ function pickWinner(side) {
   if (towerMode) { pickWinnerTower(side); return; }
   const winnerIdx = side === 0 ? currentA : currentB;
   const loserIdx  = side === 0 ? currentB : currentA;
+  if (!animeList[winnerIdx] || !animeList[loserIdx]) return; // v1.0.263 — no pair on screen: ignore the tap instead of throwing a TypeError
 
   // Capture everything needed to undo BEFORE any mutations
   // Also snapshot the matchup entry so undo can restore it exactly
@@ -4206,6 +4282,32 @@ function _updateUndoBtn() {
   if (!btn) return;
   btn.disabled = undoStack.length === 0;
   btn.title    = undoStack.length > 1 ? `Undo (${undoStack.length} available)` : 'Undo last battle';
+}
+
+// v1.0.263 — undo snapshots, the queued and preloaded pairs, the Winner Stays champion, the trio on screen
+// and a Tower run hold positions in animeList, so once entries are removed or the list is replaced they name
+// other anime (Undo wrote a copy over the wrong anime or added a second one; the champion silently changed;
+// the next Tower round credited anime that weren't on screen). prevList is the list before the change: undo,
+// the queued pairs and a Tower run are dropped, and the champion, its faced list and the trio follow their
+// anime to the new positions (a champion that is gone ends the streak; a trio missing one is dropped).
+// Never renders or saves: the callers do.
+function _onListPositionsChanged(prevList) {
+  if (towerMode) _exitTowerState(); // before _updateUndoBtn: it re-enables Undo
+  undoStack        = [];
+  nextPairOverride = null;
+  nextTrioOverride = null;
+  _preloadedPair   = null;
+  _preloadedImgs   = []; // not null: _bootPrefetchCovers' timers push into it
+  _updateUndoBtn();
+  const pos   = new Map(animeList.map((a, i) => [a?.id, i]));
+  const moved = (i) => { const id = prevList?.[i]?.id; return id != null && pos.has(id) ? pos.get(id) : -1; };
+  if (wsoWinnerIdx != null) {
+    wsoWinnerIdx = moved(wsoWinnerIdx);
+    if (wsoWinnerIdx < 0) { wsoWinnerIdx = null; wsoStreak = 0; }
+  }
+  wsoFacedOrder = wsoFacedOrder.map(moved).filter(i => i >= 0);
+  const trio = currentTrio.map(moved);
+  if (trio.includes(-1)) { currentTrio = []; trioOrder = []; } else currentTrio = trio;
 }
 
 // v1.0.244 — Put back the daily streak, the weekly tally and any achievements
@@ -6909,29 +7011,56 @@ function resetAll() {
       const wasAniList     = !!(authToken && authUser);
       const wasMAL         = !!(malAuthToken && malAuthUser);
       const rememberedName = authUser?.name || '';
+      const rememberedMAL  = malAuthUser?.name || ''; // v1.0.263 — the MAL account whose list is reset (see the reload below)
+      // v1.0.263 — the list being reset. A Logout during the wipe below clears saveKey, and its save, Taste records and
+      // bell were then kept (the reload brought the old rankings back).
+      const resetKey = saveKey;
       let cloudResult = { ok: true, reason: 'not-signed-in' };
       if (wasAniList || wasMAL) {
         cloudResult = await _wipeCloudSession();
       }
 
-      if (saveKey) localStorage.removeItem(saveKey);
+      // v1.0.263 — drop a local save still waiting from a battle made while the wipe ran: _clearRankingState
+      // below would flush it, writing the old list back after its save is removed (the reload would then load it).
+      // A different list opened during the wipe (Logout, then the guest list) keeps its last battle: flush that one.
+      if (saveKey && saveKey !== resetKey) flushSaveState();
+      else { clearTimeout(_saveStateTimer); _saveStateTimer = null; }
+      if (resetKey) localStorage.removeItem(resetKey); // v1.0.263 — resetKey, not saveKey: see above
+      // v1.0.263 — remember this device's wipe now that its save here is gone, so the reload below and later
+      // starts here don't treat the wipe marker as one from another device (checkAndApplyCloudSave).
+      // Only when there was a list save to remove (resetKey): otherwise a save left here would be kept as "own".
+      if (cloudResult.wipedAt && resetKey) {
+        try { localStorage.setItem(KESSEN_KEYS.ui.ownCloudWipeAt, cloudResult.wipedAt); } catch { /* storage blocked: read as another device's wipe, as before */ }
+      }
       // Clear taste snapshots, milestone seen-state, and saved comparisons
       // so taste profile, taste story, and social tab start completely fresh.
-      _clearTasteRecords(); // v1.0.260 — this list's snapshots, Taste Story seen record and badge (saveKey still set here)
+      _clearTasteRecords(resetKey); // v1.0.263 — the reset list's snapshots, Taste Story seen record and badge (saveKey may be cleared by now)
       localStorage.removeItem(KESSEN_KEYS.data.savedComparisons);
       localStorage.removeItem(KESSEN_KEYS.data.finishPrompts);
       localStorage.removeItem(KESSEN_KEYS.data.finishPromptedIds);
-      localStorage.removeItem(KESSEN_KEYS.data.notifCentre(saveKey));
+      localStorage.removeItem(KESSEN_KEYS.data.notifCentre(resetKey)); // v1.0.263 — resetKey: with saveKey '' this was the guest's bell
       _finishPromptQueue = [];
       _notifCentre = [];
       byId(IDS.finishPromptBanner)?.classList.remove('active');
       _ncUpdateBell();
       _clearRankingState();
+      // v1.0.263 — _clearRankingState turns cloud sync off; set it again from whoever is still signed in.
+      // Without this nothing ranked after a Reset synced, and the next start deleted it as a wipe "from
+      // another device".
+      _updateAuthUI();
+      _updateMALAuthUI();
+      // v1.0.263 — reload only while the account whose list was reset is still signed in. After a Logout during the
+      // wipe, the AniList reload opened the same list as a typed name and the MAL one threw on the cleared user.
+      const reloadAniList = wasAniList && !!(authToken && authUser) && authUser.name === rememberedName;
+      const reloadMAL     = !wasAniList && wasMAL && !!(malAuthToken && malAuthUser) && malAuthUser.name === rememberedMAL;
+      _resetHereThisVisit = reloadAniList || reloadMAL; // v1.0.263 — other devices' copies are offered, not applied silently
       // Re-enter the normal loading flow so the user gets a fresh session
       // with the same list they started from. Guest mode just lands on home.
       // _suppressCloudSave is reset by _applyCloudSaveToMemory the next time
       // the user logs in (or by the fresh saveState below for guest).
-      if (wasAniList) {
+      // v1.0.263 — the reload skips the cloud check: a read straight after the wipe can still return the copy from
+      // before it, offered as "Newer cloud save found". This device starts fresh; sync stays on for later saves.
+      if (reloadAniList) {
         const input = byId(IDS.usernameInput);
         if (input) input.value = rememberedName;
         // v1.0.211 fix — release the cloud-save block BEFORE startLoading
@@ -6939,12 +7068,12 @@ function resetAll() {
         // follow re-fetch are silently dropped and every battle made before
         // the next login cycle fails to sync.
         _suppressCloudSave = false;
-        startLoading();
-      } else if (wasMAL) {
+        startLoading({ skipCloudCheck: true });
+      } else if (reloadMAL) {
         _suppressCloudSave = false;
-        _startMALOAuthSession();
+        _startMALOAuthSession({ skipCloudCheck: true });
       } else {
-        _suppressCloudSave = false; // guest — no cloud anyway
+        _suppressCloudSave = false; // guest — no cloud anyway; v1.0.263 — or logged out during the wipe: stay on the start screen
       }
       // Surface cloud-wipe failure so the user knows their data isn't fully
       // gone if something went wrong. 'not-signed-in' is the guest case and
@@ -6982,9 +7111,12 @@ async function _wipeCloudSession() {
   if (!body) return { ok: false, reason: 'not-signed-in' };
 
   const headers = { 'Content-Type': 'application/json' };
+  // v1.0.263 — one wipedAt per wipe (the retry below reuses it; it used to make a second time). Returned as
+  // wipedAt so the caller can remember it once this device's saves are gone (checkAndApplyCloudSave).
+  const wipedAt = new Date().toISOString();
   const wipeBody = () => JSON.stringify({
     ...body,
-    session: JSON.stringify({ _wiped: true, wipedAt: new Date().toISOString() }),
+    session: JSON.stringify({ _wiped: true, wipedAt }),
   });
 
   // (a) Hard-delete the blob
@@ -7022,14 +7154,14 @@ async function _wipeCloudSession() {
         if (r2.ok) {
           const { session: s2 } = await r2.json();
           if (s2 && !s2._wiped && s2.animeList) {
-            return { ok: false, reason: 'verify-failed' };
+            return { ok: false, reason: 'verify-failed', wipedAt }; // v1.0.263 — wipedAt: see above
           }
         }
       }
     }
   } catch (_e) { /* verification is best-effort — fall through */ }
 
-  return { ok: !firstError, reason: firstError || 'success' };
+  return { ok: !firstError, reason: firstError || 'success', wipedAt }; // v1.0.263 — wipedAt: see above
 }
 
 async function deleteAllData() {
@@ -7050,8 +7182,8 @@ async function deleteAllData() {
   // the last ~5s before the user clicked Delete will fire its debounced
   // save AFTER our wipe marker is written, overwriting the wipe with the
   // pre-deletion session — which is exactly the "Newer cloud save found"
-  // surprise we hit during beta testing. _suppressCloudSave is reset by
-  // _applyCloudSaveToMemory the next time the user logs in.
+  // surprise we hit during beta testing. v1.0.263 — the block is released at
+  // the end of the teardown below, once sign-out has turned cloud sync off.
   clearTimeout(_cloudSaveTimer);
   _cloudSaveTimer = null;
   _suppressCloudSave = true;
@@ -7068,6 +7200,10 @@ async function deleteAllData() {
   //    or a short HTTP/network error string so the user can report it
   //    accurately rather than seeing a misleading "deleted ✓" message.
   const cloudResult = await _wipeCloudSession();
+  // v1.0.263 — drop a local save still waiting from a battle made while the wipe ran, so nothing below can
+  // write the deleted list back (this device's own wipe marker no longer clears it at the next sign-in).
+  clearTimeout(_saveStateTimer);
+  _saveStateTimer = null;
   const cloudDeleteOk = cloudResult.ok;
 
   // 2. Remove every Kessen key from localStorage. Covers the consolidated
@@ -7090,6 +7226,9 @@ async function deleteAllData() {
   _updateAuthUI();
   _updateMALAuthUI();
   _clearRankingState();
+  // v1.0.263 — release the cloud-save block, as resetAll does. Nobody is signed in and sync is off, so
+  // nothing can upload now; left set, signing back in without a reload never auto-saved again.
+  _suppressCloudSave = false;
 
   if (cloudDeleteOk) {
     showToast('✓ All your data has been deleted (local + cloud).');
@@ -7102,6 +7241,11 @@ async function deleteAllData() {
     showToast('⚠️ Local data cleared, but the cloud copy keeps coming back — another device may be re-uploading. Sign out everywhere and try again.', 8000);
   } else {
     showToast(`⚠️ Local data cleared, but cloud delete failed (${cloudResult.reason}). Log back in and try again, or email feedback@kessen.co.uk.`, 6000);
+  }
+  // v1.0.263 — remember this device's wipe (a time, no rankings) now that its saves are gone, so signing back
+  // in here isn't told "deleted from another device". A guest delete wipes no cloud and stores nothing.
+  if (cloudResult.wipedAt) {
+    try { localStorage.setItem(KESSEN_KEYS.ui.ownCloudWipeAt, cloudResult.wipedAt); } catch { /* storage blocked */ }
   }
 }
 
@@ -7128,9 +7272,17 @@ function changeUser() {
   _doChangeUser();
 }
 function _doChangeUser() {
+  // v1.0.263 — end Trio, as a Tower run is ended below: its cards (this list's anime) stayed on screen over the next
+  // list and did nothing. Done first, so the pair setMode draws for this list is in the save flushed next.
+  if (trioMode) setMode('normal');
   // v1.0.256 — write this list's pending save to its own key now; the next list's load resets the
   // per-list state, so nothing is zeroed here and the old list's save stays intact.
   flushSaveState();
+  // v1.0.263 — a Tower run and the trio on screen hold positions in this list, and the next list's load doesn't
+  // reset them (logout does): its first tap credited that list's anime at these positions, not the ones on
+  // screen. End the run and drop the trio; neither is saved (Winner Stays is saved per list and reloads).
+  if (towerMode) _exitTowerState();
+  currentTrio = []; trioOrder = []; nextTrioOverride = null;
   // v1.0.256 — as logout does: a pending cloud upload must not fire after the next list's
   // saveKey/reset lands (it would upload this list's anime under the new key).
   clearTimeout(_cloudSaveTimer); _cloudSaveTimer = null;
@@ -7171,6 +7323,7 @@ async function handleMalFile(file) {
   if (!file) return;
   const errEl = byId(IDS.errorMsg);
   errEl.style.display = 'none';
+  let myGen = null; // v1.0.263 — set when the import starts loading; the catch below reads it
   try {
     const text = await file.text();
     const parser = new DOMParser();
@@ -7194,13 +7347,14 @@ async function handleMalFile(file) {
     if (entries.length === 0) throw new Error('No completed anime found in export.');
 
     const existingSaveKey = KESSEN_KEYS.session.mal(malUsername);
-    const myGen = ++_loadGeneration;
+    myGen = ++_loadGeneration; // v1.0.263 — declared above so the catch can see it
     hide('username-screen');
     errEl.style.display = 'none';
     showFlex('loading-screen');
     _startLoadCancelTimer();
     await _buildAnimeListFromMalEntries(entries, malUsername, seedFromScores, existingSaveKey, myGen);
   } catch (err) {
+    if (myGen !== null && myGen !== _loadGeneration) return; // v1.0.263 — a cancelled import's late error must not touch a newer load's screen
     _clearLoadCancelTimer();
     errEl.textContent = 'MAL import failed: ' + err.message;
     errEl.style.display = 'block';
@@ -7209,8 +7363,9 @@ async function handleMalFile(file) {
 
 // Shared: fetch AniList metadata for MAL entries and launch the session.
 // genCheck: optional generation value from the calling load function; when provided,
-//   the navigation to battle-screen is skipped if the load was cancelled.
+//   a cancelled load stops at its next await and changes, saves and shows nothing (v1.0.263 — was: only the battle-screen nav was skipped).
 async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScores, existingSaveKey, genCheck) {
+  const superseded = () => genCheck !== undefined && genCheck !== _loadGeneration; // v1.0.263 — checked straight after every await below
   const malIds  = entries.map(e => e.malId);
   const scoreMap = new Map(entries.map(e => [e.malId, e.score]));
   const PAGE_SIZE = 50;
@@ -7243,14 +7398,21 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
       { query, variables: { ids: chunk } },
       { onStatus: msg => { if (msgEl2) msgEl2.textContent = msg; } }
     );
+    if (superseded()) return; // v1.0.263 — cancelled while this page was loading
     const json = await res.json();
+    if (superseded()) return; // v1.0.263 — cancelled while this page was read
     (json?.data?.Page?.media ?? []).forEach(m => { mediaMap[m.idMal] = m; });
     byId(IDS.loadingMsg).textContent =
       `Matching to AniList… ${Math.min(i + PAGE_SIZE, malIds.length)}/${malIds.length}`;
-    if (i + PAGE_SIZE < malIds.length) await new Promise(r => setTimeout(r, 350));
+    if (i + PAGE_SIZE < malIds.length) {
+      await new Promise(r => setTimeout(r, 350));
+      if (superseded()) return; // v1.0.263 — no more AniList requests for a cancelled load
+    }
   }
 
-  animeList = entries
+  // v1.0.263 — built into a local: it becomes animeList together with its saveKey, after the last check below.
+  // (A Cancel in the 800 ms pause used to leave this list in memory under the previous list's key and battles.)
+  const builtList = entries
     .filter(e => mediaMap[e.malId])
     // v1.0.133 — mirror the AniList-import MUSIC filter so MAL users don't
     // pick up music-video entries either.
@@ -7278,21 +7440,22 @@ async function _buildAnimeListFromMalEntries(entries, malUsername, seedFromScore
       };
     });
 
-  if (animeList.length === 0) throw new Error('Could not match any MAL entries to AniList data. Make sure your MAL list is public and has completed anime.');
-  if (animeList.length === 1) throw new Error('Only 1 anime matched — you need at least 2 to start ranking. Add more completed anime on MAL first.');
+  if (builtList.length === 0) throw new Error('Could not match any MAL entries to AniList data. Make sure your MAL list is public and has completed anime.');
+  if (builtList.length === 1) throw new Error('Only 1 anime matched — you need at least 2 to start ranking. Add more completed anime on MAL first.');
 
   const seedMsg = seedFromScores ? ' · ELO seeded from MAL scores' : '';
   byId(IDS.loadingMsg).textContent =
-    `Loaded ${animeList.length} anime from MAL${seedMsg}. Preparing first battle…`;
+    `Loaded ${builtList.length} anime from MAL${seedMsg}. Preparing first battle…`;
   await new Promise(r => setTimeout(r, 800));
+  if (superseded()) return; // v1.0.263 — before anything changes (was after hide('loading-screen'), once the list was already swapped and saved)
 
+  animeList = builtList;
   saveKey = existingSaveKey;
   _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only; the last list's streak, history and undo leaked in
   _clearTasteRecords(); // v1.0.260 — fresh load from 0 battles: this list's Taste records start clean
   saveState();
   _clearLoadCancelTimer();
   hide('loading-screen');
-  if (genCheck !== undefined && genCheck !== _loadGeneration) return;
   show('battle-screen');
   _showChangeUserBtn();
   snapshotSessionStart();
@@ -13914,6 +14077,13 @@ function _clearLoadCancelTimer() {
 }
 
 function cancelLoading() {
+  // v1.0.263 — as Change User and logout do: write the list in memory to its own key now and drop a queued cloud
+  // upload. Cancelled after a cloud copy was applied, that upload fired after the next list (e.g. the guest list)
+  // loaded and sent that list to this account's cloud. (loadState clears the list when it finds no save, so the
+  // flush always writes a list under its own key.)
+  flushSaveState();
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = null;
   _loadGeneration++;          // invalidate any in-flight load
   _clearLoadCancelTimer();
   hide('loading-screen');
@@ -13921,7 +14091,8 @@ function cancelLoading() {
 }
 
 // ─── ENTRY POINT ─────────────────────────────────────────────────────────────
-async function startLoading() {
+// v1.0.263 — skipCloudCheck: only resetAll's reload passes it (the cloud was just wiped; see there).
+async function startLoading({ skipCloudCheck = false } = {}) {
   const username = byId(IDS.usernameInput).value.trim();
   if (!username) return;
 
@@ -13944,6 +14115,7 @@ async function startLoading() {
       'You have a saved session for this user. Warm start will re-seed all ELO scores from your AniList ratings and reset battle progress.\n\nCancel to restore your saved session instead.',
       'Yes, warm start'
     );
+    if (myGen !== _loadGeneration) return; // v1.0.263 — another load started while this prompt was open
     if (!ok) {
       // User declined — load saved session normally
       hide('username-screen');
@@ -13953,9 +14125,9 @@ async function startLoading() {
       loadState(username);
       byId(IDS.loadingMsg).textContent = 'Restoring your saved session…';
       await new Promise(r => setTimeout(r, 600));
+      if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change (was after hide('loading-screen'))
       _clearLoadCancelTimer();
       hide('loading-screen');
-      if (myGen !== _loadGeneration) return;
       show('battle-screen');
       _showChangeUserBtn();
       snapshotSessionStart();
@@ -13973,16 +14145,17 @@ async function startLoading() {
 
   // For AniList users: check if cloud has a newer save than what's on this device.
   // If it does, prompt and apply in-memory — no page reload needed.
-  if (isOAuthUser) {
+  if (isOAuthUser && !skipCloudCheck) { // v1.0.263 — skipped by resetAll's reload
     byId(IDS.loadingMsg).textContent = '☁️ Checking for cloud save…';
     const applied = await checkAndApplyCloudSave(existingSaveKey);
+    if (myGen !== _loadGeneration) return; // v1.0.263 — cancelled during the cloud check: don't go on to restore or fetch the list
     if (applied) {
       // Cloud state is now in memory — go straight to battle screen
       byId(IDS.loadingMsg).textContent = '☁️ Cloud save loaded!';
       await new Promise(r => setTimeout(r, 500));
+      if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change: a cancelled load must not hide a newer load's loading screen
       _clearLoadCancelTimer();
       hide('loading-screen');
-      if (myGen !== _loadGeneration) return;
       show('battle-screen');
       _showChangeUserBtn();
       snapshotSessionStart();
@@ -13997,9 +14170,9 @@ async function startLoading() {
   if (!seedFromScores && loadState(username)) {
     byId(IDS.loadingMsg).textContent = 'Restoring your saved session…';
     await new Promise(r => setTimeout(r, 600));
+    if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change (was after hide('loading-screen'))
     _clearLoadCancelTimer();
     hide('loading-screen');
-    if (myGen !== _loadGeneration) return;
     show('battle-screen');
     _showChangeUserBtn();
     snapshotSessionStart();
@@ -14018,16 +14191,19 @@ async function startLoading() {
     // own origin — the jitter only added up to 2 s of first-load latency for
     // every user. Subsequent paginated requests still rate-limit themselves.
     const _fetchResult = await fetchAllAnime(username, seedFromScores);
-    animeList = _fetchResult.entries;
+    if (myGen !== _loadGeneration) return; // v1.0.263 — cancelled while fetching: change, save and show nothing
+    // v1.0.263 — kept local: it becomes animeList together with its saveKey, after the last check below.
+    // (A Cancel in the 0.8 s / 2.8 s pause used to leave this list in memory under the previous list's key and battles.)
+    const fetchedList = _fetchResult.entries;
     if (_fetchResult.skipped > 0) {
       showToast(`⚠️ ${_fetchResult.skipped} show${_fetchResult.skipped === 1 ? '' : 's'} skipped — AniList returned no data for them (likely delisted).`);
     }
 
-    if (animeList.length === 0) throw new Error('No completed anime found on this account. Make sure you have anime marked as "Completed" on AniList.');
-    if (animeList.length === 1) throw new Error('Only 1 completed anime found — you need at least 2 to start ranking. Add more completed anime on AniList first.');
+    if (fetchedList.length === 0) throw new Error('No completed anime found on this account. Make sure you have anime marked as "Completed" on AniList.');
+    if (fetchedList.length === 1) throw new Error('Only 1 completed anime found — you need at least 2 to start ranking. Add more completed anime on AniList first.');
 
     // Warn if warm start was requested but user has no AniList scores
-    const scoredCount = animeList.filter(a => a.anilistScore > 0).length;
+    const scoredCount = fetchedList.filter(a => a.anilistScore > 0).length;
     if (seedFromScores && scoredCount === 0) {
       byId(IDS.loadingMsg).textContent =
         `⚠️ No AniList scores found — everyone starts at ELO 1200. Score your anime on AniList to use warm start.`;
@@ -14035,10 +14211,12 @@ async function startLoading() {
     } else {
       const seedMsg = seedFromScores ? ` · ELO seeded from ${scoredCount} scores` : '';
       byId(IDS.loadingMsg).textContent =
-        `Loaded ${animeList.length} anime${seedMsg}. Preparing your first battle…`;
+        `Loaded ${fetchedList.length} anime${seedMsg}. Preparing your first battle…`;
       await new Promise(r => setTimeout(r, 800));
     }
+    if (myGen !== _loadGeneration) return; // v1.0.263 — cancelled during the pause: no list swap, no saveKey switch, no save, no cloud upload
 
+    animeList = fetchedList;
     saveKey = existingSaveKey;
     _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only; the last list's streak, history and undo leaked in
     _clearTasteRecords(); // v1.0.260 — fresh load from 0 battles: this list's Taste records start clean
@@ -14048,7 +14226,6 @@ async function startLoading() {
 
     _clearLoadCancelTimer();
     hide('loading-screen');
-    if (myGen !== _loadGeneration) return;
     show('battle-screen');
     _showChangeUserBtn();
     snapshotSessionStart();
@@ -14061,6 +14238,7 @@ async function startLoading() {
     // while logged in must never offer to merge guest battles into their list.
     if (isOAuthUser && authUser && saveKey === KESSEN_KEYS.session.anilist(authUser.name)) maybeOfferGuestMerge(saveKey);
   } catch (err) {
+    if (myGen !== _loadGeneration) return; // v1.0.263 — a cancelled load's late error must not bring the login screen back over the list the user moved on to
     _clearLoadCancelTimer();
     hide('loading-screen');
     showFlex('username-screen');
@@ -14179,9 +14357,9 @@ async function startGuestMode() {
     if (loadState('guest')) {
       byId(IDS.loadingMsg).textContent = 'Restoring your guest session…';
       await new Promise(r => setTimeout(r, 600));
+      if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change (was after hide('loading-screen'))
       _clearLoadCancelTimer();
       hide('loading-screen');
-      if (myGen !== _loadGeneration) return;
       show('battle-screen');
       _showChangeUserBtn();
       snapshotSessionStart();
@@ -14190,21 +14368,24 @@ async function startGuestMode() {
       else renderBattle();
       return;
     }
-    animeList = await fetchGuestPool();
+    const guestPool = await fetchGuestPool();
+    if (myGen !== _loadGeneration) return; // v1.0.263 — cancelled while fetching: a late pool must not replace (or clear the Taste records of) the list the user moved on to
+    animeList = guestPool;
     _resetPerListState(); // v1.0.256 — was battleCount/excludedIds only (loadState('guest') above has reset too)
     _clearTasteRecords(); // v1.0.260 — fresh guest pool from 0 battles: the guest list's Taste records start clean
     byId(IDS.loadingMsg).textContent =
       `Loaded ${animeList.length} popular anime. Let's go!`;
     await new Promise(r => setTimeout(r, 600));
+    if (myGen !== _loadGeneration) return; // v1.0.263 — checked before the screens change (was after hide('loading-screen'))
     _clearLoadCancelTimer();
     hide('loading-screen');
-    if (myGen !== _loadGeneration) return;
     show('battle-screen');
     _showChangeUserBtn();
     snapshotSessionStart();
     maybeShowKbTip();
     renderBattle();
   } catch (err) {
+    if (myGen !== _loadGeneration) return; // v1.0.263 — a cancelled load's late error must not bring the login screen back
     _clearLoadCancelTimer();
     hide('loading-screen');
     showFlex('username-screen');
@@ -18537,9 +18718,13 @@ async function applyMoodRec(moodKey) {
 
 // v1.0.260 — was _clearTasteSnapshots (the device-wide store). Clears this list's snapshots, Taste Story seen record and
 // Taste badge; called when a list starts from 0 battles (fresh AniList / MAL / guest load) and by Reset.
-function _clearTasteRecords() {
+// v1.0.263 — listKey: the list to clear, default the open one (resetAll passes the key it held before its await).
+function _clearTasteRecords(listKey = saveKey) {
   try {
-    ['snapshots', 'storySeen', 'badge'].forEach(kind => { const key = _tasteKey(kind); if (key) localStorage.removeItem(key); });
+    ['snapshots', 'storySeen', 'badge'].forEach(kind => {
+      const key = listKey && !_saveCollision ? KESSEN_KEYS.data.tasteForList(kind, listKey) : null; // as _tasteKey, for listKey
+      if (key) localStorage.removeItem(key);
+    });
   } catch (_e) {}
   _tasteSnapshotMilestoneOk = -1; // v1.0.247
 }
@@ -19977,7 +20162,8 @@ function _exitTowerState() {
   const skip = byId(IDS.skipBtn);
   if (skip) skip.disabled = false;
   const btn = byId(IDS.modeBtn);
-  if (btn) btn.classList.remove('active-tower');
+  // v1.0.263 — label too, as finishTower does: a cloud apply ends a run without setMode (which relabels it anyway)
+  if (btn) { btn.classList.remove('active-tower'); btn.textContent = '⚙ Mode ▾'; }
   _setFilterBtnTowerLock(false); // v1.0.209
 }
 
@@ -22974,14 +23160,17 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.262 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.263 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
   bullets: [
-    '🔒 Security fixes for the notification bell, Live Challenge and Watch Together.',
+    '🔄 Battles ranked after "Reset everything" or "Delete all my data" now sync to the cloud as normal.',
+    '↩️ Undo is cleared after archiving removed anime or a cloud sync, so it can\'t change the wrong anime.',
+    '🗼 After a cloud sync or Change User, Tower and Trio picks always count for the anime on screen.',
+    '⏹️ Cancel and Logout now fully stop a list that is still loading.',
   ],
 };
 
@@ -23914,6 +24103,7 @@ function archivePendingRemovedAnime() {
 
   // Strip from active state: animeList + matchupStats + excludedIds + towerChamp
   const n = _pendingRemovedAnime.length;
+  const prevList = animeList; // v1.0.263 — positions before the archive (see _onListPositionsChanged)
   animeList = animeList.filter(a => !removedIds.has(a.id));
   removedIds.forEach(id => { if (typeof excludedIds !== 'undefined') excludedIds.delete(id); });
   if (typeof matchupStats === 'object' && matchupStats) {
@@ -23922,10 +24112,12 @@ function archivePendingRemovedAnime() {
       if (removedIds.has(min) || removedIds.has(max)) delete matchupStats[key];
     });
   }
-  // If the removed set includes the currently-compared pair, pick a fresh pair.
-  if (removedIds.has(animeList[currentA]?.id) || removedIds.has(animeList[currentB]?.id)) {
-    pickOpponents();
-  }
+  // v1.0.263 — the list just shrank, so every saved position is out of date (Undo then duplicated or
+  // overwrote an anime). Drop them and always show a fresh pair or trio below: the old check here read
+  // the old positions against the new list, and the pair its pickOpponents() picked was never shown.
+  _onListPositionsChanged(prevList);
+  currentA = null;
+  currentB = null;
 
   _pendingRemovedAnime = [];
   byId(IDS.removedAnimeBanner)?.classList.remove('active');
@@ -23933,7 +24125,7 @@ function archivePendingRemovedAnime() {
   saveState();
   if (typeof renderRankingList === 'function') renderRankingList();
   if (typeof filterRankings === 'function')    filterRankings();
-  if (typeof renderBattle === 'function')      renderBattle();
+  if (trioMode) renderTrio(); else renderBattle(); // v1.0.263 — trio too: renderBattle alone kept the old trio on screen
   showToast(`📦 Archived ${n} anime — battle history preserved.`);
 }
 
