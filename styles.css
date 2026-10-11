@@ -307,6 +307,10 @@
 
     #username-screen h2 { font-size: 1.5rem; color: var(--accent-blue); }
     #username-screen > p { color: var(--text-secondary); }
+    /* v1.0.264 — L9: the landing privacy link was #484f58 (2.28:1) with inline hover handlers; readable now, hover in CSS */
+    .landing-privacy-link { color: var(--text-secondary); text-decoration: none; }
+    .landing-privacy-link:hover,
+    .landing-privacy-link:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
     .onboarding-tagline {
       font-size: 0.97rem;
@@ -725,16 +729,17 @@
       position: relative;
     }
 
-    /* v1.0.207 — Winner Stays On streak badge. Sits at the top centre of the
-       champion's card (always card-a in WSO mode). Dark pill with a subtle
+    /* v1.0.207 — Winner Stays On streak badge on the champion's card
+       (always card-a in WSO mode). Dark pill with a subtle
        orange outline + peach text — matches the banner palette without the
        attention-grabbing gradient fill of the first cut. Pulse fires on
        increment. */
+    /* v1.0.266 — pinned inside the top-left corner (like Trio's medal) instead of
+       straddling the top edge, so the champion's card is no taller than any other card */
     .wso-streak-badge {
       position: absolute;
-      top: -12px;
-      left: 50%;
-      transform: translateX(-50%);
+      top: 8px;
+      left: 8px;
       background: rgba(20, 12, 8, 0.95);
       color: #ffb38a;
       font-size: 0.82rem;
@@ -752,10 +757,11 @@
     .wso-streak-badge.pulse {
       animation: wso-pulse 0.6s ease-out;
     }
+    /* v1.0.266 — scale only: the badge is no longer centred with translateX(-50%) */
     @keyframes wso-pulse {
-      0%   { transform: translateX(-50%) scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
-      40%  { transform: translateX(-50%) scale(1.18); box-shadow: 0 2px 12px rgba(255, 138, 0, 0.45); }
-      100% { transform: translateX(-50%) scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+      0%   { transform: scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
+      40%  { transform: scale(1.18); box-shadow: 0 2px 12px rgba(255, 138, 0, 0.45); }
+      100% { transform: scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
     }
     @media (prefers-reduced-motion: reduce) {
       .wso-streak-badge.pulse { animation: none; }
@@ -1000,6 +1006,13 @@
     .manage-btn-danger:hover { border-color: var(--accent-red); background: var(--hover-red-bg); }
     }
     .manage-danger-box { background: #1a0d0d; border: 1px solid #6e3232; border-radius: 10px; padding: 16px; }
+    /* v1.0.264 — L9: "Privacy policy" / "How deletion works" under Delete all my data (Manage) and in Help.
+       Blue underlined like Help's "What's new" link; the two links wrap onto two lines on a narrow phone. */
+    .privacy-links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 0.85rem; }
+    .help-section .privacy-links { margin-top: 8px; font-size: 0.8rem; }
+    .privacy-links a { color: var(--accent-blue); text-decoration: underline; text-underline-offset: 2px; padding: 2px 0; }
+    .privacy-links a:hover { color: var(--accent-blue-dark); }
+    .privacy-links a:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: 4px; }
     /* v1.0.260 — Session recap picker: a <select> wearing .manage-btn; text stays left of its arrow on phones too */
     select.manage-btn { text-align: left; }
 
@@ -5697,7 +5710,7 @@
          right) so the desktop centered badge sits between the two and looks
          visually disconnected from the champion. Separate mobile keyframes
          because the desktop ones bake `translateX(-50%)` into the transform. */
-      .wso-streak-badge { left: 12px; transform: none; }
+      .wso-streak-badge { top: 6px; left: 6px; } /* v1.0.266 — inside the corner like .trio-badge (was on the top edge at left: 12px) */
       .wso-streak-badge.pulse { animation-name: wso-pulse-mobile; }
       @keyframes wso-pulse-mobile {
         0%   { transform: scale(1);    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
@@ -5790,7 +5803,12 @@
        slim-cache fallback notice, sync-error explanations) overflow a 360px
        Android viewport horizontally. Wrap and cap width instead. */
     white-space: normal;
-    max-width: calc(100vw - 32px);
+    /* v1.0.266 — max-content: as a fixed box at left: 50% it shrank to half the viewport, so on a phone
+       'Session recap: every 30 battles' took 2 lines and the Off message 4; it now wraps only at the max-width.
+       640px keeps a long toast to readable lines on desktop (1.0.266 wrapped at 640px on a 1280 screen;
+       max-content alone drew a 150-character warning as one 1008px line) */
+    width: max-content;
+    max-width: min(calc(100vw - 32px), 640px);
     text-align: center;
     line-height: 1.4;
   }
@@ -6015,7 +6033,7 @@
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 12px;
-      align-items: start;
+      align-items: stretch; /* v1.0.266 — was start: the three cards share one height, like .battle-arena (v1.0.244) */
     }
 
     /* Cards reuse .anime-card — these are positional/size overrides only */
@@ -6023,7 +6041,12 @@
       position: relative; /* so the badge can sit in the corner */
       width: 100%;
       box-sizing: border-box;
-      padding: 14px 12px;
+      padding: 20px 12px; /* v1.0.266 — top/bottom 20px like .anime-card (was 14px, 12px shorter); sides stay 12px so three covers fit */
+    }
+    /* v1.0.266 — tablets (601-999px) keep 1.0.265's 14px: three narrow columns already make Trio taller than the
+       two standard cards there, and 20px added 12px more. Phones (<=600px) and desktop (>=1000px) are unchanged. */
+    @media (min-width: 601px) and (max-width: 999px) {
+      .trio-grid .anime-card { padding: 14px 12px; }
     }
 
     /* v1.0.209 — match the cover size to the standard battle arena (160x225)
@@ -6087,7 +6110,8 @@
         align-items: flex-start;
         text-align: left;
         padding: 14px 12px;
-        gap: 10px;
+        gap: 8px; /* v1.0.266 — was 10px; matches .anime-card on phones */
+        order: 0; /* v1.0.266 — DOM order: the arena's .anime-card:first-child / :last-child order rules put the middle card first */
       }
       .trio-grid .anime-card img {
         width: 80px;
@@ -6099,9 +6123,14 @@
         flex-direction: column;
         flex: 1;
         min-width: 0;
-        gap: 5px;
+        gap: 6px; /* v1.0.266 — was 5px; matches .anime-card-body on phones */
       }
       .trio-grid .anime-card .elo-badge { align-self: flex-start; }
       .ep-meta-trio { justify-content: flex-start; }
       .trio-badge { font-size: 1.25rem; top: 6px; left: 6px; }
+    }
+    /* v1.0.266 — narrow phones: same 68×96 cover as the standard card (the generic
+       <=400px rule loses to .trio-grid .anime-card img above, so Trio kept 80×112) */
+    @media (max-width: 400px) {
+      .trio-grid .anime-card img { width: 68px; height: 96px; }
     }

@@ -193,6 +193,9 @@ const IDS = Object.freeze({
   shareUrl:               'share-url',
   skipBtn:                'skip-btn',
   socialPlatformRow:      'social-platform-row',
+  // v1.0.266 — Compare & Challenge sub-line: AniList-only wording, or the wording for the MAL switch
+  socialSubAnilist:       'social-sub-anilist',
+  socialSubMal:           'social-sub-mal',
   spAnilist:              'sp-anilist',
   spMal:                  'sp-mal',
   statBestWinrate:        'stat-best-winrate',
@@ -1018,10 +1021,16 @@ function _dropDeviceWideTasteKeys() {
 }
 _dropDeviceWideTasteKeys();
 
-function saveAuth() {
+// v1.0.266 — keepSavedAt: a later update of authUser (its score format, _refreshOwnScoreFormat) keeps the sign-in
+// time `saved` that loadAuthFromStorage's one-year expiry check reads; only a sign-in starts that year again
+function saveAuth({ keepSavedAt = false } = {}) {
+  let saved = Date.now();
+  if (keepSavedAt) {
+    try { saved = JSON.parse(localStorage.getItem(KESSEN_KEYS.auth.anilist) || '{}')?.saved || saved; } catch { /* unreadable: now */ }
+  }
   localStorage.setItem(KESSEN_KEYS.auth.anilist, JSON.stringify({
     token: authToken, user: authUser,
-    saved: Date.now()
+    saved
   }));
 }
 
@@ -2104,6 +2113,42 @@ function scoreToElo(score, format = 'POINT_10') {
   return Math.max(800, Math.min(1600, 1200 + (score10 - 7) * 100));
 }
 
+// v1.0.266 — the format a list's scores are in. AniList returns a list's `score` in its OWNER's format (a smiley
+// user's 😊 is 3, a 5-star user's ★★★★ is 4), so every read of a list asks for user { mediaListOptions { scoreFormat } }
+// with it. Missing or unknown: `fallback` (your sign-in format, for your own list), else the guess Friend picks used
+// before 1.0.266 (a score above 10 means /100).
+function _listScoreFormat(collection, scores, fallback) {
+  const known = ['POINT_100', 'POINT_10_DECIMAL', 'POINT_10', 'POINT_5', 'POINT_3'];
+  const fmt = [collection?.user?.mediaListOptions?.scoreFormat, fallback].find(f => known.includes(f));
+  return fmt || ((scores || []).some(s => s > 10) ? 'POINT_100' : 'POINT_10_DECIMAL');
+}
+
+// v1.0.266 — your own list's answer carries your CURRENT AniList score format. authUser.scoreFormat was read only at
+// sign-in, so after you changed it on AniList, Sync to AniList and a new anime's starting ELO kept the old one. Called
+// with every list read (fetchAllAnime, reseedFromAniList); acts only when `username` is the signed-in AniList user.
+function _refreshOwnScoreFormat(collection, username) {
+  const fmt = collection?.user?.mediaListOptions?.scoreFormat;
+  if (!authToken || !authUser?.name || String(username).toLowerCase() !== authUser.name.toLowerCase()) return;
+  if (!fmt || fmt === authUser.scoreFormat || _listScoreFormat(collection, []) !== fmt) return; // none, same, or unknown
+  authUser.scoreFormat = fmt;
+  try { saveAuth({ keepSavedAt: true }); } catch { /* storage blocked: right for this visit */ }
+}
+
+// v1.0.266 — a score as its owner sees it on AniList: 😊 😐 ☹️, ★★★★☆, 75/100, 7.5/10, 7/10 (MAL: 'POINT_10').
+// null when unscored. Display only: maths uses _normalizeScoreTo10.
+function _fmtListScore(score, format) {
+  const s = Number(score);
+  if (!(s > 0)) return null;
+  const n = (max) => Math.min(max, Math.max(1, Math.round(s)));
+  switch (format) {
+    case 'POINT_3':   return ['☹️', '😐', '😊'][n(3) - 1];
+    case 'POINT_5':   return '★'.repeat(n(5)) + '☆'.repeat(5 - n(5));
+    case 'POINT_100': return `${Math.round(s)}/100`;
+    case 'POINT_10':  return `${Math.round(s)}/10`;
+    default:          return `${s.toFixed(1)}/10`; // POINT_10_DECIMAL
+  }
+}
+
 // v1.0.265 — H3: no adult (isAdult) titles in anything Kessen lists that isn't already on your own list. The only
 // switch is the hidden KESSEN_KEYS.settings.allowAdult = '1' opt-in the imports honour (no UI; keeps the Play IARC
 // rating at Teen). Watch Together and Live Challenge show titles to another player, so they always send isAdult: false.
@@ -2121,9 +2166,11 @@ async function fetchAllAnime(username, seedFromScores = false) {
   // adult content as a rating escalator, so filtering keeps the app in the
   // Teen bucket. Users who want NSFW stays in can flip the exclude toggle
   // in Manage (see ALLOW_ADULT below).
+  // v1.0.266 — and the list owner's score format (their scores come back in it)
   const query = `
     query ($username: String) {
       MediaListCollection(userName: $username, type: ANIME) {
+        user { mediaListOptions { scoreFormat } }
         lists {
           name
           entries {
@@ -2197,7 +2244,12 @@ async function fetchAllAnime(username, seedFromScores = false) {
 
   // Use the user's actual AniList scoring format when seeding ELO — POINT_100
   // users score 75/100 etc., which scoreToElo() must normalise before mapping.
-  const scoreFmt = authUser?.scoreFormat || 'POINT_10';
+  // v1.0.266 — the LIST OWNER's format, fetched with the list: a typed username (signed out, or someone else's list
+  // while signed in) was read as /10 or in the signed-in account's format, so a smiley user's 😊 (3) seeded at ELO 800.
+  // Your own list falls back to your sign-in format, as before, if AniList leaves it out.
+  const ownList  = !!authUser?.name && authUser.name.toLowerCase() === String(username).toLowerCase();
+  const scoreFmt = _listScoreFormat(collection, entries.map(e => e.score || 0), ownList ? authUser.scoreFormat : null);
+  _refreshOwnScoreFormat(collection, username); // v1.0.266 — your own list: keep your sign-in format current
 
   const mapped = entries.map(e => {
     const startElo = seedFromScores ? scoreToElo(e.score, scoreFmt) : 1200;
@@ -9758,9 +9810,11 @@ async function _fetchFriendList(username) {
   }
 
   // v1.0.265 — H3: isAdult too, so runFriendRecs can leave a friend's adult titles out of its picks
+  // v1.0.266 — and the friend's score format: their scores come back in it (3 smileys, 5 stars, /100…)
   const query = `
     query ($username: String) {
       MediaListCollection(userName: $username, type: ANIME) {
+        user { mediaListOptions { scoreFormat } }
         lists {
           entries {
             score status
@@ -9809,6 +9863,23 @@ async function _fetchFriendList(username) {
 }
 
 // ─── COMPATIBILITY ────────────────────────────────────────────────────────────
+// v1.0.266 — Compare ranks with ties shared. Titles with the same value (two 😊, two equal ELOs) each get the average
+// of the places the tie spans, the rank Spearman's ρ uses for ties: one-by-one places followed the order of your
+// stored list, so the % for a smiley or 5-star friend changed with that order (99% vs 87% on the same data).
+// `label` is the shared place to show: '#4', or '#4–6' for a three-way tie. Highest value first; Map(id → {rank, label}).
+function _tiedRanks(items, valueOf) {
+  const sorted = [...items].sort((a, b) => valueOf(b) - valueOf(a));
+  const ranks = new Map();
+  for (let i = 0; i < sorted.length;) {
+    let j = i;
+    while (j + 1 < sorted.length && valueOf(sorted[j + 1]) === valueOf(sorted[i])) j++;
+    const label = j > i ? `#${i + 1}–${j + 1}` : `#${i + 1}`;
+    for (let k = i; k <= j; k++) ranks.set(sorted[k].id, { rank: (i + j) / 2 + 1, label });
+    i = j + 1;
+  }
+  return ranks;
+}
+
 async function runCompatibility() {
   _metric('social.compat');  // v1.0.239 — usage metrics
   const username2 = byId(IDS.compatUsernameInput).value.trim();
@@ -9843,49 +9914,59 @@ async function runCompatibility() {
     // User 2: lookup by id (full-list rank vs. the other user is computed on
     // the overlap subset below — a global rank map isn't exposed in the UI).
     const otherById = new Map(otherEntries.map(e => [e.media.id, e]));
+    // v1.0.266 — their scores are in THEIR format (a smiley 😊 is 3): shown as they gave them, put on /10 for maths
+    const theirFmt  = _listScoreFormat(data.data.MediaListCollection, otherEntries.map(e => e.score || 0));
+    const theirNorm = (id) => _normalizeScoreTo10(otherById.get(id)?.score ?? 0, theirFmt);
 
     // Overlap = any anime both users have watched (no score requirement).
     // Deduplicate by ID in case animeList has accumulated duplicate entries
     // (e.g. from successive syncs) — duplicates would make the same title
     // appear twice in the disagreements / agreements lists.
+    // v1.0.266 — in id order, so ties in the columns below don't follow your stored list's order either
     const overlap = [...new Map(
       animeList.filter(a => otherById.has(a.id)).map(a => [a.id, a])
-    ).values()];
+    ).values()].sort((a, b) => a.id - b.id);
 
     if (overlap.length < 5) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
         Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
       return true; // user exists — recs pass still worth running
     }
+    // v1.0.266 — every shared title has the same score from them (often all unscored): their ranks then say
+    // nothing, and the formula always gave 75%. Say so instead of showing a meaningless match.
+    if (new Set(overlap.map(a => theirNorm(a.id))).size < 2) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
+        ${esc(username2)} hasn't scored enough of the ${overlap.length} anime you've both seen to compare tastes.</p>`;
+      return true;
+    }
 
     // Spearman's rank correlation on the overlapping set
     // Re-rank within overlap only for fairness
-    const myOverlapRanked   = [...overlap].sort((a, b) => b.elo - a.elo);
-    const myOverlapRankMap  = new Map(myOverlapRanked.map((a, i) => [a.id, i + 1]));
-    const othOverlapRanked  = [...overlap].sort((a, b) => {
-      const sa = otherById.get(a.id)?.score ?? 0;
-      const sb = otherById.get(b.id)?.score ?? 0;
-      return sb - sa;
-    });
-    const othOverlapRankMap = new Map(othOverlapRanked.map((a, i) => [a.id, i + 1]));
+    // v1.0.266 — tied ELOs and tied scores share one (average) rank: see _tiedRanks
+    const myOverlapRankMap  = _tiedRanks(overlap, a => a.elo);
+    // v1.0.266 — on the common /10 scale (the same order as their raw scores, in any format)
+    const othOverlapRankMap = _tiedRanks(overlap, a => theirNorm(a.id));
 
     const n  = overlap.length;
     const dSqSum = overlap.reduce((sum, a) => {
-      const d = myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id);
+      const d = myOverlapRankMap.get(a.id).rank - othOverlapRankMap.get(a.id).rank;
       return sum + d * d;
     }, 0);
     const rho = 1 - (6 * dSqSum) / (n * (n * n - 1));
     const pct = Math.round(((rho + 1) / 2) * 100); // scale -1..1 → 0..100
 
     // Agreement/disagreement lists
+    // v1.0.266 — maths on the average ranks; myLabel/othLabel are the shared places shown ('#4–6' for a tie)
     const diffs = overlap.map(a => ({
       anime: a,
       cover: otherById.get(a.id)?.media?.coverImage?.medium || a.cover,
       title: a.title,
-      myRank:  myOverlapRankMap.get(a.id),
-      othRank: othOverlapRankMap.get(a.id),
-      diff: Math.abs(myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id)),
-      agreement: (myOverlapRankMap.get(a.id) + othOverlapRankMap.get(a.id)) / 2,
+      myRank:  myOverlapRankMap.get(a.id).rank,
+      othRank: othOverlapRankMap.get(a.id).rank,
+      myLabel:  myOverlapRankMap.get(a.id).label,
+      othLabel: othOverlapRankMap.get(a.id).label,
+      diff: Math.abs(myOverlapRankMap.get(a.id).rank - othOverlapRankMap.get(a.id).rank),
+      agreement: (myOverlapRankMap.get(a.id).rank + othOverlapRankMap.get(a.id).rank) / 2,
     }));
 
     const topAgreements = [...diffs].sort((a, b) => a.agreement - b.agreement).slice(0, 5);
@@ -9905,30 +9986,34 @@ async function runCompatibility() {
 
     // Store detail data for click-through panels
     _compatDetailMap = new Map(overlap.map(a => {
-      const rawScore = otherById.get(a.id)?.score ?? 0;
-      // Normalise AniList score to /10 regardless of user's scoring format
-      const theirScore = rawScore > 10 ? (rawScore / 10).toFixed(1) : rawScore > 0 ? rawScore.toFixed(1) : null;
+      // v1.0.266 — their score as they gave it (😊, ★★★★☆, 75/100, 7.5/10); a 😊 read "3.0 / 10"
+      const theirScore = _fmtListScore(otherById.get(a.id)?.score ?? 0, theirFmt);
       return [a.id, {
         myOverallRank:  myRankMap.get(a.id),
-        myOverlapRank:  myOverlapRankMap.get(a.id),
-        othOverlapRank: othOverlapRankMap.get(a.id),
+        myOverlapRank:  myOverlapRankMap.get(a.id).rank,  // v1.0.266 — average rank (ties shared) for the "places" line
+        othOverlapRank: othOverlapRankMap.get(a.id).rank,
+        myOverlapLabel:  myOverlapRankMap.get(a.id).label, // v1.0.266 — '#4' or '#4–6', as the rows show it
+        othOverlapLabel: othOverlapRankMap.get(a.id).label,
         theirScore,
+        platform: 'anilist', // v1.0.266 — the detail says where they scored it
         totalAnime: animeList.length,
         overlapSize: n,
       }];
     }));
 
-    const animeRowHtml = (item, desc) => {
+    // v1.0.266 — `col` makes each detail panel's id unique: a title in two columns opened the earlier column's panel
+    const animeRowHtml = (item, desc, col) => {
       const aid = Number(item.anime.id) || 0;
       return `
-      <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid})">
+      <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid}, '${col}')">
         <img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
         <span class="compat-anime-title">${esc(item.title)}</span>
         <span class="compat-ranks">${esc(desc)} ›</span>
       </div>
-      <div class="compat-detail-row" id="compat-detail-${aid}"></div>`;
+      <div class="compat-detail-row" id="compat-detail-${col}-${aid}"></div>`;
     };
 
+    // v1.0.266 — shared places for ties ('Them #1–4'); "(you love it)" follows the average ranks the maths uses
     resultsEl.innerHTML = `
       <div class="compat-score-box">
         <div class="compat-pct" style="color:${pct >= 65 ? '#3fb950' : pct >= 40 ? '#e3a000' : '#f85149'}">${emojiFor(pct)} ${pct}%</div>
@@ -9939,17 +10024,17 @@ async function runCompatibility() {
       <div class="compat-cols">
         <div class="compat-col">
           <h4>✅ You both rate highly</h4>
-          ${topAgreements.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+          ${topAgreements.map(i => animeRowHtml(i, `You ${i.myLabel} · Them ${i.othLabel}`, 'high')).join('')}
         </div>
         <div class="compat-col">
           <h4>📉 You both rate lowly</h4>
-          ${topBothLow.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+          ${topBothLow.map(i => animeRowHtml(i, `You ${i.myLabel} · Them ${i.othLabel}`, 'low')).join('')}
         </div>
         <div class="compat-col compat-col-full">
           <h4>⚡ Biggest disagreements</h4>
           ${topDisagree.map(i => {
             const youHigher = i.myRank < i.othRank;
-            return animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank} ${youHigher ? '(you love it)' : '(they love it)'}`);
+            return animeRowHtml(i, `You ${i.myLabel} · Them ${i.othLabel} ${youHigher ? '(you love it)' : '(they love it)'}`, 'split');
           }).join('')}
         </div>
       </div>`;
@@ -9959,7 +10044,8 @@ async function runCompatibility() {
     const savedComps  = JSON.parse(localStorage.getItem(KESSEN_KEYS.data.savedComparisons) || '[]');
     const existingIdx = savedComps.findIndex(c => c.username.toLowerCase() === username2.toLowerCase());
     const prevEntry   = existingIdx >= 0 ? savedComps[existingIdx] : null;
-    const prevScore   = prevEntry?.score ?? null;
+    // v1.0.266 — tied scores now share a rank, so a % saved before (no m marker) isn't comparable: no trend line once
+    const prevScore   = prevEntry?.m >= 266 ? (prevEntry?.score ?? null) : null;
     const prevHistory = prevEntry?.history ?? [];
     const today       = new Date().toISOString().split('T')[0];
     const delta       = prevScore !== null ? pct - prevScore : null;
@@ -9970,6 +10056,7 @@ async function runCompatibility() {
       emoji: emojiFor(pct),
       date: today,
       history: [{ score: pct, date: today }, ...prevHistory].slice(0, 12),
+      m: 266, // v1.0.266 — how the % was worked out (tied scores share a rank)
     };
     if (existingIdx >= 0) savedComps[existingIdx] = entry;
     else savedComps.unshift(entry);
@@ -10011,13 +10098,20 @@ async function _runCompatibilityMal(username2) {
 
     // Overlap: user's ranked anime that the friend also has on MAL.
     // Deduplicate by AniList ID for the same reason as the AniList path above.
+    // v1.0.266 — in id order, as in runCompatibility
     const overlap = [...new Map(
       animeList.filter(a => a.idMal && otherByMalId.has(a.idMal)).map(a => [a.id, a])
-    ).values()];
+    ).values()].sort((a, b) => a.id - b.id);
     if (overlap.length < 5) {
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
         Not enough overlap (${overlap.length} shared anime). Need at least 5 in common.</p>`;
       return true; // user exists — recs pass still worth running
+    }
+    // v1.0.266 — all shared titles scored the same (often all unscored): no meaningful % (see runCompatibility)
+    if (new Set(overlap.map(a => otherByMalId.get(a.idMal)?.score ?? 0)).size < 2) {
+      resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
+        ${esc(username2)} hasn't scored enough of the ${overlap.length} anime you've both seen to compare tastes.</p>`;
+      return true;
     }
 
     // My rank map (full list, for display)
@@ -10025,31 +10119,29 @@ async function _runCompatibilityMal(username2) {
     const myRankMap   = new Map(myRanked.map((a, i) => [a.id, i + 1]));
 
     // Re-rank within overlap for Spearman fairness
-    const myOverlapRanked  = [...overlap].sort((a, b) => b.elo - a.elo);
-    const myOverlapRankMap = new Map(myOverlapRanked.map((a, i) => [a.id, i + 1]));
-    const othOverlapRanked = [...overlap].sort((a, b) => {
-      const sa = otherByMalId.get(a.idMal)?.score ?? 0;
-      const sb = otherByMalId.get(b.idMal)?.score ?? 0;
-      return sb - sa;
-    });
-    const othOverlapRankMap = new Map(othOverlapRanked.map((a, i) => [a.id, i + 1]));
+    // v1.0.266 — ties share one (average) rank, as in runCompatibility: MAL's 1-10 scores tie often
+    const myOverlapRankMap  = _tiedRanks(overlap, a => a.elo);
+    const othOverlapRankMap = _tiedRanks(overlap, a => otherByMalId.get(a.idMal)?.score ?? 0);
 
     const n = overlap.length;
     const dSqSum = overlap.reduce((sum, a) => {
-      const d = myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id);
+      const d = myOverlapRankMap.get(a.id).rank - othOverlapRankMap.get(a.id).rank;
       return sum + d * d;
     }, 0);
     const rho = 1 - (6 * dSqSum) / (n * (n * n - 1));
     const pct = Math.round(((rho + 1) / 2) * 100);
 
+    // v1.0.266 — maths on the average ranks; the labels are the shared places shown
     const diffs = overlap.map(a => ({
       anime: a,
       cover: a.cover,
       title: a.title,
-      myRank:    myOverlapRankMap.get(a.id),
-      othRank:   othOverlapRankMap.get(a.id),
-      diff:      Math.abs(myOverlapRankMap.get(a.id) - othOverlapRankMap.get(a.id)),
-      agreement: (myOverlapRankMap.get(a.id) + othOverlapRankMap.get(a.id)) / 2,
+      myRank:    myOverlapRankMap.get(a.id).rank,
+      othRank:   othOverlapRankMap.get(a.id).rank,
+      myLabel:   myOverlapRankMap.get(a.id).label,
+      othLabel:  othOverlapRankMap.get(a.id).label,
+      diff:      Math.abs(myOverlapRankMap.get(a.id).rank - othOverlapRankMap.get(a.id).rank),
+      agreement: (myOverlapRankMap.get(a.id).rank + othOverlapRankMap.get(a.id).rank) / 2,
     }));
 
     const topAgreements = [...diffs].sort((a, b) => a.agreement - b.agreement).slice(0, 5);
@@ -10069,25 +10161,30 @@ async function _runCompatibilityMal(username2) {
       const rawScore = otherByMalId.get(a.idMal)?.score ?? 0;
       return [a.id, {
         myOverallRank:  myRankMap.get(a.id),
-        myOverlapRank:  myOverlapRankMap.get(a.id),
-        othOverlapRank: othOverlapRankMap.get(a.id),
-        theirScore:     rawScore > 0 ? rawScore.toFixed(1) : null,
+        myOverlapRank:  myOverlapRankMap.get(a.id).rank,   // v1.0.266 — average ranks and shown labels, as in runCompatibility
+        othOverlapRank: othOverlapRankMap.get(a.id).rank,
+        myOverlapLabel:  myOverlapRankMap.get(a.id).label,
+        othOverlapLabel: othOverlapRankMap.get(a.id).label,
+        theirScore:     _fmtListScore(rawScore, 'POINT_10'), // v1.0.266 — MAL is always 1-10; the label carries "/10" now
+        platform:       'mal', // v1.0.266 — the detail says "on MyAnimeList" (it said AniList)
         totalAnime:     animeList.length,
         overlapSize:    n,
       }];
     }));
 
-    const animeRowHtml = (item, desc) => {
+    // v1.0.266 — `col` makes each detail panel's id unique, as in runCompatibility
+    const animeRowHtml = (item, desc, col) => {
       const aid = Number(item.anime.id) || 0;
       return `
-      <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid})">
+      <div class="compat-anime-row" onclick="_toggleCompatDetail(${aid}, '${col}')">
         <img${coverCors(item.cover)} src="${safeUrl(item.cover)}" alt="" aria-hidden="true" loading="lazy" />
         <span class="compat-anime-title">${esc(item.title)}</span>
         <span class="compat-ranks">${esc(desc)} ›</span>
       </div>
-      <div class="compat-detail-row" id="compat-detail-${aid}"></div>`;
+      <div class="compat-detail-row" id="compat-detail-${col}-${aid}"></div>`;
     };
 
+    // v1.0.266 — shared places for ties, as in runCompatibility
     resultsEl.innerHTML = `
       <div class="compat-score-box">
         <div class="compat-pct" style="color:${pct >= 65 ? '#3fb950' : pct >= 40 ? '#e3a000' : '#f85149'}">${emojiFor(pct)} ${pct}%</div>
@@ -10098,17 +10195,17 @@ async function _runCompatibilityMal(username2) {
       <div class="compat-cols">
         <div class="compat-col">
           <h4>✅ You both rate highly</h4>
-          ${topAgreements.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+          ${topAgreements.map(i => animeRowHtml(i, `You ${i.myLabel} · Them ${i.othLabel}`, 'high')).join('')}
         </div>
         <div class="compat-col">
           <h4>📉 You both rate lowly</h4>
-          ${topBothLow.map(i => animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank}`)).join('')}
+          ${topBothLow.map(i => animeRowHtml(i, `You ${i.myLabel} · Them ${i.othLabel}`, 'low')).join('')}
         </div>
         <div class="compat-col compat-col-full">
           <h4>⚡ Biggest disagreements</h4>
           ${topDisagree.map(i => {
             const youHigher = i.myRank < i.othRank;
-            return animeRowHtml(i, `You #${i.myRank} · Them #${i.othRank} ${youHigher ? '(you love it)' : '(they love it)'}`);
+            return animeRowHtml(i, `You ${i.myLabel} · Them ${i.othLabel} ${youHigher ? '(you love it)' : '(they love it)'}`, 'split');
           }).join('')}
         </div>
       </div>`;
@@ -10118,12 +10215,13 @@ async function _runCompatibilityMal(username2) {
     const storageKey  = `${username2} [MAL]`;
     const existingIdx = savedComps.findIndex(c => c.username.toLowerCase() === storageKey.toLowerCase());
     const prevEntry   = existingIdx >= 0 ? savedComps[existingIdx] : null;
-    const prevScore   = prevEntry?.score ?? null;
+    // v1.0.266 — tied scores now share a rank, so a % saved before (no m marker) isn't comparable: no trend line once
+    const prevScore   = prevEntry?.m >= 266 ? (prevEntry?.score ?? null) : null;
     const prevHistory = prevEntry?.history ?? [];
     const today       = new Date().toISOString().split('T')[0];
     const delta       = prevScore !== null ? pct - prevScore : null;
     const entry = { username: storageKey, platform: 'mal', score: pct, label: labelFor(pct), emoji: emojiFor(pct), date: today,
-      history: [{ score: pct, date: today }, ...prevHistory].slice(0, 12) };
+      history: [{ score: pct, date: today }, ...prevHistory].slice(0, 12), m: 266 }; // v1.0.266 — m: see runCompatibility
     if (existingIdx >= 0) savedComps[existingIdx] = entry;
     else savedComps.unshift(entry);
     localStorage.setItem(KESSEN_KEYS.data.savedComparisons, JSON.stringify(savedComps.slice(0, 10)));
@@ -13907,8 +14005,18 @@ function openLiveChallengeJoinFromInput() {
 }
 
 async function _rerunComparison(username, platform) {
-  setSocialPlatform(platform);
   const cleanName = username.replace(/ \[MAL\]$/i, '');
+  // v1.0.266 — a saved MAL comparison needs a MyAnimeList sign-in to re-run. Without one, say so for this chip and keep
+  // the (hidden) switch on AniList: it was set to 'mal', so every later AniList compare failed with the MAL-login error.
+  if (platform === 'mal' && !malAuthToken) {
+    setSocialPlatform('anilist');
+    const recsEl = byId(IDS.friendRecsResults);
+    if (recsEl) recsEl.innerHTML = '';
+    byId(IDS.compatResults).innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
+      ${esc(cleanName)} is a MyAnimeList user. Sign in with MyAnimeList to compare MAL users.</p>`;
+    return;
+  }
+  setSocialPlatform(platform === 'mal' ? 'mal' : 'anilist'); // v1.0.266 — only the two platforms the switch knows
   // Keep all inputs in sync
   const unifiedInput = byId(IDS.socialCompareInput);
   if (unifiedInput) unifiedInput.value = cleanName;
@@ -13925,8 +14033,10 @@ function toggleCompatibility() { switchResultsTab('social'); }
 // ─── HEAD-TO-HEAD DETAIL ──────────────────────────────────────────────────────
 let _compatDetailMap = new Map(); // populated by runCompatibility()
 
-function _toggleCompatDetail(id) {
-  const el = document.getElementById('compat-detail-' + id);
+// v1.0.266 — `col` is the column the row is in ('high', 'low', 'split'): a title can be in two columns, and with one
+// id per title its second row opened the panel in the first column
+function _toggleCompatDetail(id, col) {
+  const el = document.getElementById(`compat-detail-${col}-${id}`);
   if (!el) return;
   const isOpen = el.classList.toggle('open');
   if (!isOpen) return; // closing — nothing more to do
@@ -13934,24 +14044,30 @@ function _toggleCompatDetail(id) {
   const d = _compatDetailMap.get(id);
   if (!d) { el.innerHTML = '<span>No detail available.</span>'; return; }
 
+  // v1.0.266 — average ranks (ties share one), so a gap can be half a place: shown to the nearest whole place
   const rankDiff = d.myOverlapRank - d.othOverlapRank; // negative = you rate it higher
-  const diffArrow = rankDiff < 0
-    ? `<span style="color:#3fb950">▲ You rate it ${Math.abs(rankDiff)} places higher</span>`
-    : rankDiff > 0
-    ? `<span style="color:#f85149">▼ They rate it ${rankDiff} places higher</span>`
-    : `<span style="color:#8b949e">= You both rank it the same</span>`;
+  const places   = Math.round(Math.abs(rankDiff));
+  const placesTx = `${places} place${places === 1 ? '' : 's'}`;
+  const diffArrow = places === 0
+    ? `<span style="color:#8b949e">= You both rank it the same</span>`
+    : rankDiff < 0
+    ? `<span style="color:#3fb950">▲ You rate it ${placesTx} higher</span>`
+    : `<span style="color:#f85149">▼ They rate it ${placesTx} higher</span>`;
+  const site = d.platform === 'mal' ? 'MyAnimeList' : 'AniList'; // v1.0.266 — a MAL compare said "on AniList"
 
+  // v1.0.266 — theirScore carries its own scale (😊, ★★★★☆, 75/100, 7/10): no "/ 10" added here
+  // v1.0.266 — the shared places the rows show ('#1–4' for a tie)
   el.innerHTML = `
     <div class="compat-detail-stat">
       <span class="val">#${d.myOverallRank} <span style="font-size:0.7rem;color:#6e7681">of ${d.totalAnime}</span></span>
       <span class="lbl">Where you rank it across all your anime</span>
     </div>
     <div class="compat-detail-stat">
-      <span class="val">${d.theirScore !== null ? d.theirScore + ' / 10' : 'Unscored'}</span>
-      <span class="lbl">The score they gave it on AniList</span>
+      <span class="val">${d.theirScore !== null ? esc(d.theirScore) : 'Unscored'}</span>
+      <span class="lbl">The score they gave it on ${site}</span>
     </div>
     <div class="compat-detail-stat">
-      <span class="val">#${d.myOverlapRank} vs #${d.othOverlapRank}</span>
+      <span class="val">${esc(d.myOverlapLabel)} vs ${esc(d.othOverlapLabel)}</span>
       <span class="lbl">Your rank vs theirs among the ${d.overlapSize} anime you've both seen</span>
     </div>
     <div class="compat-detail-stat" style="justify-content:center">
@@ -14012,7 +14128,8 @@ async function _fetchMalUserList(username, setProgress) {
 
   // No MAL token — can't fetch MAL user lists without authentication.
   // The public Jikan endpoint for user lists has been removed by MAL.
-  throw new Error('Looking up MAL users requires a MAL login. Log out and sign in with MAL to use this feature.');
+  // v1.0.266 — the same words as the Compare & Challenge card ("Sign in with MyAnimeList to compare MAL users too")
+  throw new Error('Sign in with MyAnimeList to compare MAL users.');
 }
 
 // Batch-resolve AniList metadata (genres, title, cover, format) for a list of MAL IDs
@@ -14063,23 +14180,25 @@ async function runFriendRecs() {
     const ownIds = new Set(animeList.map(a => a.id));
     const WATCHED = new Set(['COMPLETED', 'CURRENT', 'REPEATING']);
 
-    // Detect friend's scoring scale from their highest score
-    // (AniList supports 10-point, 100-point, 5-star etc.)
+    // v1.0.266 — the friend's own score format, fetched with their list (it was guessed from their highest score, so a
+    // 3-smiley or 5-star friend never reached "6" and got no picks). Scores go on one /10 scale before any maths.
     const allEntries = data.data.MediaListCollection.lists.flatMap(l => l.entries);
-    const maxScore = Math.max(...allEntries.map(e => e.score).filter(s => s > 0), 0);
-    const scoreThreshold = maxScore > 10 ? 60 : 6;
+    const fmt  = _listScoreFormat(data.data.MediaListCollection, allEntries.map(e => e.score || 0));
+    const norm = (e) => _normalizeScoreTo10(e.score || 0, fmt);
+    const ratedLabel = { POINT_100: '60+', POINT_5: '★★★ or more', POINT_3: '😐 or 😊' }[fmt] || '6+';
 
     // Candidate pool: friend watched + rated above threshold, user hasn't seen.
     // Dedup by media.id — rewatched anime appear in both COMPLETED and REPEATING lists.
     const seenMediaIds = new Set();
     const candidates = allEntries
-      .filter(e => WATCHED.has(e.status) && e.score >= scoreThreshold && !ownIds.has(e.media.id))
+      .filter(e => WATCHED.has(e.status) && norm(e) >= 6 && !ownIds.has(e.media.id)) // v1.0.266 — 6+ of 10, any format
       .filter(e => !_hideAdult(e.media)) // v1.0.265 — H3: none of the friend's adult titles (the hidden opt-in aside)
       .filter(e => { if (seenMediaIds.has(e.media.id)) return false; seenMediaIds.add(e.media.id); return true; });
 
     if (!candidates.length) {
+      // v1.0.266 — "6+" in the friend's own format
       resultsEl.innerHTML = `<p style="color:#8b949e;text-align:center;padding:20px 0">
-        No unwatched anime found that ${esc(username)} has rated 6+.</p>`;
+        No unwatched anime found that ${esc(username)} has rated ${esc(ratedLabel)}.</p>`;
       return;
     }
 
@@ -14111,9 +14230,9 @@ async function runFriendRecs() {
           ? affinities.reduce((s, v) => s + v, 0) / affinities.length
           : globalAvgElo;
         const genreBonus = (avgGenreElo - globalAvgElo) / 400;
-        const friendNorm = maxScore > 10 ? e.score / 100 : e.score / 10;
+        const friendNorm = norm(e) / 10; // v1.0.266 — 0-1 from the friend's own format
         const totalScore = friendNorm * 0.6 + genreBonus * 0.4;
-        const displayScore = (maxScore > 10 ? e.score / 10 : e.score).toFixed(1);
+        const displayScore = _fmtListScore(e.score, fmt); // v1.0.266 — as they gave it: 😊, ★★★★☆, 75/100, 7.5/10
         return { media: e.media, friendScore: displayScore, totalScore, avgGenreElo, hasGenreData: affinities.length > 0 };
       })
       // Exclude if we have genre data and the user clearly dislikes those genres
@@ -14125,7 +14244,7 @@ async function runFriendRecs() {
     // over eight cards — a ragged 6 + 2 — that read as "471 titles" while
     // showing eight.
     const top = scored.slice(0, 12);
-    resultsEl.innerHTML = _friendRecsSectionHtml(username, top.length, candidates.length, '6+',
+    resultsEl.innerHTML = _friendRecsSectionHtml(username, top.length, candidates.length, ratedLabel, // v1.0.266 — was '6+'
       top.map(({ media, friendScore }) => recCardHtml(media, { friendBadge: `${username.slice(0, 8)}: ${friendScore}` })).join(''));
 
   } catch (err) {
@@ -14201,7 +14320,8 @@ async function _runFriendRecsMal(username) {
       const media = meta
         ? { ...meta, idMal: e.malId }
         : { id: 0, idMal: e.malId, title: { english: e.title, romaji: e.title }, coverImage: { large: e.cover }, format: '', averageScore: null, genres: [] };
-      return { media, friendScore: e.score.toFixed(1), totalScore: (e.score / 10) * 0.6 + genreBonus * 0.4 };
+      // v1.0.266 — badged like an AniList /10 friend ('9/10'; was '9.0'): MAL scores are whole numbers 1-10
+      return { media, friendScore: _fmtListScore(e.score, 'POINT_10'), totalScore: (e.score / 10) * 0.6 + genreBonus * 0.4 };
     });
     scored.sort((a, b) => b.totalScore - a.totalScore);
     const topRecs = scored.slice(0, 12);
@@ -16697,6 +16817,11 @@ function renderSocialTab() {
   // Single-service users don't need it — there's only one valid choice.
   const row = byId(IDS.socialPlatformRow);
   if (row) row.style.display = malAuthToken ? 'flex' : 'none';
+  // v1.0.266 — the sub-line follows the same rule as the switch: MAL usernames need a MAL sign-in
+  const subAnilist = byId(IDS.socialSubAnilist);
+  const subMal     = byId(IDS.socialSubMal);
+  if (subAnilist) subAnilist.hidden = !!malAuthToken;
+  if (subMal)     subMal.hidden     = !malAuthToken;
   setSocialPlatform(_isMalCloudSession() ? 'mal' : 'anilist');
   _renderSavedComparisons();
 }
@@ -16941,12 +17066,19 @@ function _sessionRecapEvery() {
 // v1.0.260 — onchange for both pickers (Manage tab and the recap itself): applies at once, keeps them in step.
 function setSessionRecapEvery(value) {
   const v = SESSION_RECAP_CHOICES.includes(String(value)) ? String(value) : String(SESSION_SUMMARY_INTERVAL);
+  const before = _sessionRecapEvery(); // v1.0.266 — so only a real change is confirmed
   try {
     localStorage.setItem(KESSEN_KEYS.settings.sessionRecapEvery, v);
     _sessionRecapEveryUnsaved = null;
   } catch { _sessionRecapEveryUnsaved = v; } // storage full — still applies for this visit
   _syncSessionRecapControls();
-  if (v === 'off') showToast('Session recap is off. Change it any time in ⚙️ Manage → Session recap.'); // v1.0.260 — reads right from either picker
+  // v1.0.266 — a short toast for every change from either picker (was: Off only), none when the value is unchanged.
+  // It reads the value now in effect, so the toast always matches what both pickers show.
+  const now = _sessionRecapEvery();
+  if (now === before) return;
+  showToast(now === 'off'
+    ? 'Session recap: off — change it any time in ⚙️ Manage → Session recap'
+    : `Session recap: every ${now} battles`);
 }
 
 // v1.0.260 — show the stored choice in both pickers (run when Manage opens and before the recap shows).
@@ -22739,13 +22871,16 @@ async function reseedFromAniList() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Fetching scores…'; }
 
   try {
+    // v1.0.266 — with your score format: the scores come back in it (3 smileys, 5 stars, /100…)
     const query = `
       query ($username: String) {
         MediaListCollection(userName: $username, type: ANIME) {
+          user { mediaListOptions { scoreFormat } }
           lists { entries { score status media { id } } }
         }
       }`;
-    const res = await _anilistFetch({ query, variables: { username: authUser.name } });
+    const asked = authUser.name; // v1.0.266 — whose list this is, for _refreshOwnScoreFormat after the await
+    const res = await _anilistFetch({ query, variables: { username: asked } });
     const data = await res.json();
     if (data.errors) throw new Error(data.errors[0].message);
 
@@ -22753,12 +22888,14 @@ async function reseedFromAniList() {
     data.data.MediaListCollection.lists
       .flatMap(l => l.entries)
       .forEach(e => { if (e.score) scoreMap[e.media.id] = e.score; });
+    const fmt = _listScoreFormat(data.data.MediaListCollection, Object.values(scoreMap), authUser.scoreFormat); // v1.0.266
+    _refreshOwnScoreFormat(data.data.MediaListCollection, asked); // v1.0.266 — keep your sign-in format current
 
     let updated = 0;
     animeList.forEach(a => {
       const score = scoreMap[a.id];
       if (score) {
-        a.elo = scoreToElo(score);
+        a.elo = scoreToElo(score, fmt); // v1.0.266 — was always read as /10
         a.anilistScore = score;
         updated++;
       }
@@ -23409,21 +23546,22 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.265 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.266 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.265 — four calm bullets under ~110 characters, each matching the code as shipped
+  // v1.0.266 — four calm bullets under ~110 characters, each matching the code as shipped
   bullets: [
-    '✅ A first visit no longer reloads by surprise and sends you back to the start screen.',
-    // v1.0.265 — the Tower summary too; a prompt that must be answered (Newer cloud save found) stays open
-    '↩️ Android Back now closes Rankings, menus and pop-ups one at a time instead of closing the app; Escape too.',
-    // v1.0.265 — "Predict" covers its search box; Discover includes the mood picks and This Season
-    '🛡️ Discover, Predict, Missing, friend picks, Watch Together and Live Challenge now hide adult titles.',
-    // v1.0.265 — S and U still work in Trio; only the arrows (left/right pick) are off there
-    '⌨️ Shortcut keys no longer act behind open menus or in Trio, and logout or reset returns to Standard mode.',
+    // v1.0.266 — the list owner's scoreFormat is fetched with the list; "seed" covers a typed username and Reseed
+    '⭐ Smiley and 5-star AniList scores now show as given in Compare and Friend picks, and seed lists correctly.',
+    // v1.0.266 — both pickers (Manage and the recap itself); no toast when the value is unchanged
+    '💬 Changing how often the session recap appears now shows a short confirmation every time, from either picker.',
+    // v1.0.266 — the Winner Stays streak badge sits inside the card corner; Trio cards share one height
+    '🃏 Winner Stays and Trio battle cards now match the height of the other modes on phones and desktop.',
+    // v1.0.266 — the AniList / MAL switch only shows when signed in with MAL, so the wording now says so
+    '🤝 Compare & Challenge now says MAL usernames need a MyAnimeList sign-in, matching what actually works.',
   ],
 };
 
@@ -24540,7 +24678,9 @@ function _calcSmartElo(newAnime) {
   // Signal 1 — user's own score (most direct intent signal)
   const userScore = (newAnime.anilistScore || 0) || (newAnime.malScore || 0);
   if (userScore > 0) {
-    signals.push({ value: scoreToElo(userScore), weight: 4, reason: `your ${userScore}/10 score` });
+    // v1.0.266 — an AniList score is in your AniList format (3 smileys, 5 stars, /100…); MAL's is always 1-10
+    const fmt = newAnime.anilistScore > 0 ? (authUser?.scoreFormat || 'POINT_10') : 'POINT_10';
+    signals.push({ value: scoreToElo(userScore, fmt), weight: 4, reason: `your ${_fmtListScore(userScore, fmt)} score` });
   }
 
   // Signal 2 — franchise / title prefix match

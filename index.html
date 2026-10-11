@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.265" />
+  <meta name="version" content="1.0.266" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1534,7 +1534,9 @@
            Compare results render full-width between the two. -->
       <div class="social-card" id="social-friend-card">
         <div class="manage-section-title">Compare &amp; Challenge</div>
-        <p class="social-card-sub">Any AniList or MAL username works — they don't need a Kessen account. Compare tastes, or guess how they ranked their anime.</p>
+        <!-- v1.0.266 — MAL lists can only be read with a MyAnimeList sign-in, so the line matches the
+             AniList / MAL switch below: renderSocialTab shows one span or the other. -->
+        <p class="social-card-sub"><span id="social-sub-anilist">Any AniList username works — they don't need a Kessen account. Compare tastes, or guess how they ranked their anime. Sign in with MyAnimeList to compare MAL users too.</span><span id="social-sub-mal" hidden>Any AniList or MAL username works (pick which below) — they don't need a Kessen account. Compare tastes, or guess how they ranked their anime.</span></p>
 
         <!-- Platform selector — hidden for AniList-only users (no MAL token) -->
         <div class="social-platform-row" id="social-platform-row" style="display:none">
@@ -1845,9 +1847,10 @@
         <div class="help-section">
           <h4>👥 Social</h4>
           <p><strong>🤝 Watch Together</strong> — co-op picker for what to watch tonight. Nominate shows (or pull from this season), then vote head-to-head until one wins.<br>
-          <strong>🎮 Challenge Mode</strong> — <b>solo</b> guessing game. Type any AniList or MAL username and guess which of two of their anime they ranked higher. No signup or invite needed for your friend.<br>
+          <!-- v1.0.266 — MAL usernames only work when signed in with MyAnimeList (here and in Taste Compare below) -->
+          <strong>🎮 Challenge Mode</strong> — <b>solo</b> guessing game. Type any AniList username (or a MAL one, if you're signed in with MyAnimeList) and guess which of two of their anime they ranked higher. No signup or invite needed for your friend.<br>
           <strong>🌐 Live Challenge</strong> — <b>together</b>, real-time. Each round you both pick a winner and predict each other's pick — bonus points for reading them right.<br>
-          <strong>Taste Compare</strong> — enter any AniList or MAL username to see how your rankings overlap, where you disagree, and get cross-taste recommendations. Recent comparisons sit under the box as chips — tap one to re-run it.</p>
+          <strong>Taste Compare</strong> — enter any AniList username (or a MAL one, if you're signed in with MyAnimeList) to see how your rankings overlap, where you disagree, and get cross-taste recommendations. Recent comparisons sit under the box as chips — tap one to re-run it.</p>
         </div>
 
         <div class="help-section">
@@ -1894,7 +1897,8 @@
           <p><strong>On first load</strong> — your MAL scores seed starting ELO values (10→1500 · 7→1200 · 4→900), giving your rankings a head start based on what you already know.</p>
           <p style="margin-top:6px"><strong>Re-seed from MAL</strong> (Manage tab) — re-pull your current MAL scores and replace ELO values with fresh starting points, without erasing battle history.</p>
           <p style="margin-top:6px"><strong>Discover &amp; Stats</strong> — fully supported. Recommendations are powered by AniList's public database, which is also where cover art and metadata come from.</p>
-          <p style="margin-top:6px"><strong>Social features</strong> (taste comparison &amp; friend recs) use AniList usernames — enter any friend's AniList handle to compare.</p>
+          <!-- v1.0.266 — signed in with MAL, the Social tab takes MAL usernames too (said AniList only) -->
+          <p style="margin-top:6px"><strong>Social features</strong> (taste comparison, friend recs &amp; Challenge) take AniList or MAL usernames — pick which with the AniList / MAL switch on the Social tab.</p>
         </div>
 
       </div>
