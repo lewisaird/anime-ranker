@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.264';
+const APP_VERSION  = '1.0.265';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -50,12 +50,17 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// ── Activate: delete old caches, then reload all open pages ─────────────────
+// ── Activate: delete old caches, then take control of open pages ────────────
 // After a version bump the old cached responses (including their CSP headers)
-// are deleted and the new shell is fetched fresh. But any page that was already
-// open loaded with the OLD cached headers and won't pick up the new ones until
-// it reloads. client.navigate() does that reload automatically, so users always
-// see the new version without needing to manually refresh twice.
+// are deleted and the new shell is fetched fresh. clients.claim() fires
+// 'controllerchange' in every open page, and app.js reloads the page on it
+// (SERVICE WORKER UPDATE HANDLER), so pages that were already open still pick
+// up the new version.
+// v1.0.265 — no client.navigate() of every open page here any more. Awaited
+// inside waitUntil it deadlocked on a first install (the reload's own request
+// waits for this activation to finish), which stalled the first page, OAuth
+// popups and new tabs until something released it, then threw a new guest back
+// to the start screen. navigate() is unreliable in TWAs/standalone anyway.
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
@@ -67,10 +72,6 @@ self.addEventListener('activate', event => {
         )
       )
       .then(() => self.clients.claim())
-      .then(() => self.clients.matchAll({ type: 'window' }))
-      .then(clients =>
-        Promise.all(clients.map(c => c.navigate(c.url).catch(() => {})))
-      )
   );
 });
 

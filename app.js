@@ -1068,6 +1068,18 @@ function _clearRankingState() {
   // otherwise a fast logout-after-battle loses that battle's ELO update.
   // flushSaveState() is a no-op if no timer is pending.
   flushSaveState();
+  // v1.0.265 — put the battle screen back to Standard too: the mode flags below were cleared, but the Mode label, the
+  // mode banners, the trio arena and Tower's banner and locked Skip / Filter stayed, so the next list opened under the
+  // old list's trio cards. Screen only, after the flush: setMode('normal') would draw and save a pair for this list.
+  // force: also when the flags are already off but a banner was left on (Winner Stays → Change User → a new list).
+  _exitTowerState();
+  _exitNonTowerModes(true);
+  const modeBtn = byId(IDS.modeBtn);
+  if (modeBtn) modeBtn.textContent = '⚙ Mode ▾';
+  const promptH2 = byId(IDS.battlePromptH2);
+  const promptP  = byId(IDS.battlePromptP);
+  if (promptH2) promptH2.textContent = 'Which did you enjoy more?';
+  if (promptP)  promptP.textContent  = "Click your favourite — or skip if you can't decide.";
 
   animeList         = [];
   // v1.0.256 — battles, history, filters, undo, achievements, matchups, streak, weekly recap and Winner
@@ -1090,12 +1102,17 @@ function _clearRankingState() {
   trioMode             = false;
   currentTrio          = [];
   trioOrder            = [];
+  nextTrioOverride     = null; // v1.0.265 — a trio Undo queued holds this list's positions (Change User drops it too)
   towerMode            = false;
   towerChampIdx        = null;
   towerRound           = 0;
   towerOpponents       = [];
   towerResults         = [];
   battleWithinFranchise = null;
+  // v1.0.265 — and its banner ("⚔ Battle within: <franchise>") and Filter lock, which stayed over the next list. Not
+  // stopBattleWithinFranchise(): it nulls _preloadedImgs, which _bootPrefetchCovers' timers still push into.
+  byId(IDS.withinFranchiseBanner)?.classList.remove('active');
+  byId(IDS.filterBtn)?.classList.remove('has-franchise-lock');
   // View-state flags that should also reset (otherwise the new session
   // silently inherits the previous user's franchise/sort/view prefs).
   franchiseMode        = false;
@@ -1142,7 +1159,7 @@ function _clearRankingState() {
   byId(IDS.towerModal)?.classList.remove('open'); // shown by a class, not an inline display
   // Only dialogs shown via an inline display are touched, so class-toggled ones keep working.
   document.querySelectorAll('[role="dialog"]').forEach(d => { if (d.style.display && d.style.display !== 'none') d.style.display = 'none'; });
-  try { _modalBackStack.length = 0; } catch { /* declared later in the file; nothing open during boot */ }
+  try { _modalBackDropAll(); } catch { /* declared later in the file; nothing open during boot */ } // v1.0.265 — and walk back past their steps (Rankings' too)
 
   // Clear discover cache so a different user gets fresh recommendations
   Object.keys(_recsCache).forEach(k => delete _recsCache[k]);
@@ -1162,6 +1179,7 @@ function _clearRankingState() {
   // Return to the home screen
   hide('battle-screen');
   hide('results-screen');
+  hide('tower-summary-screen'); // v1.0.265 — a finished Tower run's summary (this list's anime) stayed over the next screens
   const chgBtn = byId(IDS.changeUserBtn);
   if (chgBtn) chgBtn.style.display = 'none';
   const progress = byId(IDS.progressInfo);
@@ -2085,6 +2103,17 @@ function scoreToElo(score, format = 'POINT_10') {
   if (!score10) return 1200;
   return Math.max(800, Math.min(1600, 1200 + (score10 - 7) * 100));
 }
+
+// v1.0.265 — H3: no adult (isAdult) titles in anything Kessen lists that isn't already on your own list. The only
+// switch is the hidden KESSEN_KEYS.settings.allowAdult = '1' opt-in the imports honour (no UI; keeps the Play IARC
+// rating at Teen). Watch Together and Live Challenge show titles to another player, so they always send isAdult: false.
+function _allowAdult() {
+  try { return localStorage.getItem(KESSEN_KEYS.settings.allowAdult) === '1'; } catch { return false; }
+}
+// v1.0.265 — appended to a search or list query's arguments; '' once opted in leaves the query exactly as in 1.0.264
+function _adultArg() { return _allowAdult() ? '' : ', isAdult: false'; }
+// v1.0.265 — for answers that take no isAdult argument (recommendations, relations, a friend's list): select isAdult, drop here
+function _hideAdult(media) { return !!media?.isAdult && !_allowAdult(); }
 
 async function fetchAllAnime(username, seedFromScores = false) {
   // isAdult lets us filter out hentai / adult titles before they hit the
@@ -4137,6 +4166,7 @@ function _bootPrefetchCovers() {
 function pickWinner(side) {
   if (_inResultBeat()) return; // v1.0.242 — ignore input while the last result is on screen
   if (towerMode) { pickWinnerTower(side); return; }
+  if (trioMode) return; // v1.0.265 — Trio ranks three cards through applyTrioResult; a left/right pick here recorded the hidden standard pair (M12)
   const winnerIdx = side === 0 ? currentA : currentB;
   const loserIdx  = side === 0 ? currentB : currentA;
   if (!animeList[winnerIdx] || !animeList[loserIdx]) return; // v1.0.263 — no pair on screen: ignore the tap instead of throwing a TypeError
@@ -6320,6 +6350,7 @@ function showResults() {
   hide('battle-screen');
   hide('username-screen');
   hide('tower-summary-screen');
+  popModalBack('towerSummary'); // v1.0.265 — Rankings over a Tower summary (Full profile on its Taste Story) takes its step
   // v1.0.243 — both first-use tips are position:fixed and used to float over
   // the Rankings page after leaving the battle screen. resumeBattle brings
   // them back if they're still unseen.
@@ -6367,6 +6398,9 @@ function showResults() {
   syncEpRangeButtons();
   renderRankingList();
   show('results-screen');
+  // v1.0.265 — Back (and Escape) on Rankings returns to the battle instead of closing the app (critical pass H6). One
+  // step per visit: Profile (_openProfileTab) and the Discover mood chips call this again while Rankings is open.
+  if (!_modalBackStack.some(e => e.name === 'results')) pushModalBack('results', resumeBattle);
   switchResultsTab('rankings');
   // Check achievements on load so existing saves are retroactively credited
   setTimeout(_checkAchievements, 500);
@@ -6580,6 +6614,7 @@ function filterHistory(q) {
 function resumeBattle() {
   hide('results-screen');
   show('battle-screen');
+  popModalBack('results'); // v1.0.265 — leaving Rankings drops its Back step (Keep Ranking, Escape, a Tower from the bell)
   maybeShowKbTip();
   maybeShowLongPressTip(); // v1.0.243 — re-show if still unseen (showResults hides it)
 }
@@ -6979,15 +7014,22 @@ function _showConfirm(title, body, okLabel, onOk, onCancel, opts = {}) {
   _confirmDismissable = opts.dismissable !== false;
   okBtn.onclick = () => { _confirmCancelCb = null; _confirmCancel(); onOk(); };
   _confirmCancelCb = onCancel || null;
+  // v1.0.265 — Back and Escape act as a tap outside (critical pass M11): Cancel, or nothing on a prompt that must be
+  // answered (dismissable: false). No second step when a prompt replaces one still open.
+  if (!byId(IDS.confirmModal).classList.contains('open')) pushModalBack('confirm', _confirmBackdropClick);
   byId(IDS.confirmModal).classList.add('open');
 }
 function _confirmCancel() {
   byId(IDS.confirmModal).classList.remove('open');
+  popModalBack('confirm'); // v1.0.265 — Cancel, OK and a tap outside drop its Back step (before a callback opens the next one)
   _confirmDismissable = true;
   if (_confirmCancelCb) { const cb = _confirmCancelCb; _confirmCancelCb = null; cb(); }
 }
 function _confirmBackdropClick() {
   if (_confirmDismissable) _confirmCancel();
+  // v1.0.265 — Back took the step of a prompt that must be answered (Escape and a tap outside leave it): put it back,
+  // or the next Back closed the app, or Rankings under the unanswered prompt
+  else if (!_modalBackStack.some(e => e.name === 'confirm')) _modalBackKeep('confirm', _confirmBackdropClick);
 }
 // Promise-based wrapper — lets async functions await the user's choice
 function _confirmAsync(title, body, okLabel, opts) {
@@ -7377,6 +7419,9 @@ function _doChangeUser() {
   clearTimeout(_cloudSaveTimer); _cloudSaveTimer = null;
   hide('battle-screen');
   hide('results-screen');
+  hide('tower-summary-screen'); // v1.0.265 — as logout: a finished Tower run's summary stayed over the next list
+  popModalBack('results'); // v1.0.265 — Change User from Rankings: its Back step goes too (Back would bring the battle back)
+  popModalBack('towerSummary'); // v1.0.265 — from a Tower summary too (Back would bring the summary back over the login)
   byId(IDS.changeUserBtn).style.display = 'none';
   byId(IDS.progressInfo).textContent = '';
   byId(IDS.dailyStreakBadge).style.display = 'none'; // v1.0.256 — the old list's "🔥 Nd" stayed in the header
@@ -7795,6 +7840,7 @@ function _loadFranchiseGapsCache() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.fetchedAt || !Array.isArray(parsed?.groups)) return null;
+    if (parsed.adultChecked !== true) return null; // v1.0.265 — H3: a scan saved before 1.0.265 can hold adult relations; scan again
     return parsed;
   } catch { return null; }
 }
@@ -7911,6 +7957,7 @@ async function _fetchFranchiseRelations(sourceList, onProgress, onWait) {
   if (onProgress && ids.length) onProgress(0, ids.length); // v1.0.251 — progress label from the start
   for (let i = 0; i < ids.length; i += BATCH) {
     const chunk = ids.slice(i, i + BATCH);
+    // v1.0.265 — H3: relation nodes also select isAdult; _buildFranchiseGapGroups drops adult ones
     const query = `
       query ($ids: [Int]) {
         Page(perPage: 50) {
@@ -7922,7 +7969,7 @@ async function _fetchFranchiseRelations(sourceList, onProgress, onWait) {
               edges {
                 relationType(version: 2)
                 node {
-                  id idMal type
+                  id idMal type isAdult
                   title { romaji english native }
                   coverImage { large medium }
                   format status episodes seasonYear
@@ -7952,6 +7999,7 @@ function _buildFranchiseGapGroups(mediaList, excludeIds) {
   for (const m of mediaList) {
     const gaps = (m.relations?.edges ?? [])
       .filter(e => e.node?.type === 'ANIME')
+      .filter(e => !_hideAdult(e.node)) // v1.0.265 — H3: no adult relation becomes a Missing card (opt-in aside)
       .filter(e => FRANCHISE_GAP_REL_TYPES.has(e.relationType))
       // v1.0.238 — MUSIC-format entries (music videos, OP/ED shorts) are
       // stripped at import time everywhere else in Kessen (see the MUSIC
@@ -8087,7 +8135,7 @@ async function fetchFranchiseGaps({ force = false, includePlanning = false } = {
       if (progressEl) progressEl.textContent = `Checking ${done} / ${total} for recaps…`;
     }, onWait);
     // v1.0.251 — only reached when every batch of both passes succeeded
-    const data = { fetchedAt: Date.now(), groups };
+    const data = { fetchedAt: Date.now(), groups, adultChecked: true }; // v1.0.265 — H3: marks a scan with adult relations dropped
     stopIfSwitched(); // v1.0.255 — never save the old account's scan under the new saveKey
     _saveFranchiseGapsCache(data);
     _franchiseGaps = data;
@@ -8147,6 +8195,7 @@ function toggleGapsSortMenu(event) {
     };
     const escCloser = (e) => {
       if (e.key !== 'Escape') return;
+      if (!pop.hasAttribute('hidden')) e.preventDefault(); // v1.0.265 — handled here: Rankings under it stays
       _closeGapsSortMenu();
       document.removeEventListener('click', closer, true);
       document.removeEventListener('keydown', escCloser);
@@ -8703,13 +8752,14 @@ async function fetchRecommendationsForYou() {
   // v1.0.247 — two pages (50 candidates) per seed in one request, via field
   // aliases. With 25, a seed whose recommendations you've mostly already
   // watched ended up with a short group (4 cards next to a full row of 6).
+  // v1.0.265 — H3: recommendations take no isAdult argument, so each one selects isAdult and the loop drops adult ones
   const query = `
     fragment recNodes on RecommendationConnection {
       nodes {
         rating
         mediaRecommendation {
           id idMal title { romaji english } coverImage { large medium }
-          averageScore format status genres
+          averageScore format status genres isAdult
         }
       }
     }
@@ -8745,6 +8795,7 @@ async function fetchRecommendationsForYou() {
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        if (_hideAdult(rec)) continue; // v1.0.265 — H3: no adult recommendation; the next pick takes the seat
         // v1.0.258 — no unowned entry of the seed's own franchise (Lewis); the next pick, or the root's, takes the seat
         if (inSeedFranchise(rec)) continue;
         // v1.0.251 — skip a franchise already shown (e.g. a series next to its own sequel).
@@ -9122,11 +9173,12 @@ async function addToPlanningFromModal() {
 // Avoids id_not_in (hits AniList complexity limits for large lists) — fetches a pool
 // and filters client-side instead.
 async function _fetchHighlyRatedUnseen(ownIds) {
+  // v1.0.265 — H3: _adultArg() keeps adult titles out (the hidden opt-in aside)
   const query = `
     {
       Page(perPage: 50) {
         media(type: ANIME, sort: SCORE_DESC,
-              status: FINISHED, averageScore_greater: 78, popularity_greater: 30000) {
+              status: FINISHED, averageScore_greater: 78, popularity_greater: 30000${_adultArg()}) {
           id idMal title { romaji english } coverImage { large medium } averageScore format genres
         }
       }
@@ -9187,11 +9239,12 @@ async function fetchGenreDeepDive(shownIds = new Set()) {
   const topGenre = pool[dayOfYear % pool.length].name;
   const ownIds = new Set(animeList.map(a => a.id));
   // v1.0.256 — 50 titles (was 20), still one request, so 6 remain after owned, For You and same-franchise skips.
+  // v1.0.265 — H3: _adultArg() keeps adult titles out (the hidden opt-in aside)
   const query = `
     query ($genre: String) {
       Page(perPage: 50) {
         media(type: ANIME, genre_in: [$genre], sort: SCORE_DESC,
-              averageScore_greater: 72, status_not_in: [NOT_YET_RELEASED, CANCELLED]) {
+              averageScore_greater: 72, status_not_in: [NOT_YET_RELEASED, CANCELLED]${_adultArg()}) {
           id idMal title { romaji english } coverImage { large medium } averageScore format genres
         }
       }
@@ -9336,11 +9389,12 @@ async function fetchSeasonalRecommendations() {
   const buckets = {};   // label → scored items array
 
   for (const { s, y, label } of seasons) {
+    // v1.0.265 — H3: _adultArg() keeps adult titles out of This Season (the hidden opt-in aside)
     const query = `
       query ($season: MediaSeason, $year: Int) {
         Page(perPage: 50) {
           media(season: $season, seasonYear: $year, type: ANIME,
-                sort: POPULARITY_DESC, status_not: CANCELLED) {
+                sort: POPULARITY_DESC, status_not: CANCELLED${_adultArg()}) {
             id idMal title { romaji english } coverImage { large medium }
             averageScore format status genres
           }
@@ -9703,6 +9757,7 @@ async function _fetchFriendList(username) {
     return _friendListCache.data; // reuse — saves an AniList round-trip
   }
 
+  // v1.0.265 — H3: isAdult too, so runFriendRecs can leave a friend's adult titles out of its picks
   const query = `
     query ($username: String) {
       MediaListCollection(userName: $username, type: ANIME) {
@@ -9713,7 +9768,7 @@ async function _fetchFriendList(username) {
               id idMal
               title { romaji english }
               coverImage { large medium }
-              averageScore genres format
+              averageScore genres format isAdult
             }
           }
         }
@@ -10488,10 +10543,11 @@ async function _lcFetchUserWatchedIds(username, platform) {
 
 // Fetch title + cover for a set of AniList IDs (used to build pair display data)
 async function _lcFetchAnimeMetadata(ids) {
+  // v1.0.265 — H3: both players see these covers, so adult titles are always left out (whatever the opt-in)
   const q = `
     query ($ids: [Int]) {
       Page(perPage: 50) {
-        media(id_in: $ids, type: ANIME) {
+        media(id_in: $ids, type: ANIME, isAdult: false) {
           id
           title { romaji english }
           coverImage { large medium }
@@ -12797,12 +12853,13 @@ async function _collabFetchSeasonSingle() {
     const excludeSequels = byId('collab-filter-sequels')?.checked ?? true;
 
     const { season, year } = getCurrentSeason();
+    // v1.0.265 — H3: shown to both players, so adult titles are always left out (whatever the opt-in)
     const query = `
       query ($season: MediaSeason, $year: Int) {
         Page(perPage: 50) {
           media(season: $season, seasonYear: $year, type: ANIME,
                 sort: POPULARITY_DESC, status_not: CANCELLED,
-                format_in: [TV, TV_SHORT, ONA]) {
+                format_in: [TV, TV_SHORT, ONA], isAdult: false) {
             id
             title { romaji english }
             coverImage { large medium }
@@ -12865,12 +12922,13 @@ async function collabHostStartThisSeason() {
     const excludeSequels = byId('collab-filter-sequels')?.checked ?? true;
 
     const { season, year } = getCurrentSeason();
+    // v1.0.265 — H3: the pool goes to every player, so adult titles are always left out (whatever the opt-in)
     const query = `
       query ($season: MediaSeason, $year: Int) {
         Page(perPage: 50) {
           media(season: $season, seasonYear: $year, type: ANIME,
                 sort: POPULARITY_DESC, status_not: CANCELLED,
-                format_in: [TV, TV_SHORT, ONA]) {
+                format_in: [TV, TV_SHORT, ONA], isAdult: false) {
             id
             title { romaji english }
             coverImage { large medium }
@@ -13172,10 +13230,11 @@ function collabSearch() {
   // ── 2. AniList lookup after debounce ─────────────────────────────────────
   const seq = ++_collabSearchSeq;
   _collabSearchDebounce = setTimeout(async () => {
+    // v1.0.265 — H3: a nomination is shown to the other players, so adult titles are always left out (whatever the opt-in)
     const gqlQuery = `
       query($search: String) {
         Page(perPage: 8) {
-          media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+          media(search: $search, type: ANIME, sort: SEARCH_MATCH, isAdult: false) {
             id title { romaji english } coverImage { medium } format episodes
           }
         }
@@ -13963,6 +14022,7 @@ async function _fetchAniListMetaForMalIds(malIds) {
   const PAGE_SIZE = 50;
   for (let i = 0; i < malIds.length; i += PAGE_SIZE) {
     const chunk = malIds.slice(i, i + PAGE_SIZE);
+    // v1.0.265 — H3: isAdult too; _runFriendRecsMal drops the titles AniList flags (MAL's own nsfw filter already applies)
     const query = `
       query ($ids: [Int]) {
         Page(perPage: 50) {
@@ -13970,7 +14030,7 @@ async function _fetchAniListMetaForMalIds(malIds) {
             id idMal
             title { romaji english }
             coverImage { large medium }
-            genres format averageScore
+            genres format averageScore isAdult
           }
         }
       }`;
@@ -14014,6 +14074,7 @@ async function runFriendRecs() {
     const seenMediaIds = new Set();
     const candidates = allEntries
       .filter(e => WATCHED.has(e.status) && e.score >= scoreThreshold && !ownIds.has(e.media.id))
+      .filter(e => !_hideAdult(e.media)) // v1.0.265 — H3: none of the friend's adult titles (the hidden opt-in aside)
       .filter(e => { if (seenMediaIds.has(e.media.id)) return false; seenMediaIds.add(e.media.id); return true; });
 
     if (!candidates.length) {
@@ -14128,7 +14189,8 @@ async function _runFriendRecsMal(username) {
     for (const [g, v] of Object.entries(genreMap)) { if (v.count >= 2) genreAvg[g] = v.sum / v.count; }
     const globalAvgElo = animeList.reduce((s, a) => s + a.elo, 0) / animeList.length || 1200;
 
-    const scored = top20.map(e => {
+    // v1.0.265 — H3: no title AniList flags adult (the hidden opt-in aside); MAL's list call leaves nsfw ones out already
+    const scored = top20.filter(e => !_hideAdult(metaMap.get(e.malId))).map(e => {
       const meta    = metaMap.get(e.malId);
       const genres  = meta?.genres || [];
       const affs    = genres.filter(g => genreAvg[g]).map(g => genreAvg[g]);
@@ -14361,12 +14423,13 @@ async function fetchGuestPool() {
   for (let p = 1; p <= PAGES; p++) {
     byId(IDS.loadingMsg).textContent =
       `Fetching popular anime… (${p}/${PAGES})`;
+    // v1.0.265 — H3: never an adult title in the guest list (a guest has no import opt-in)
     const query = `
       query ($page: Int) {
         Page(page: $page, perPage: 50) {
           media(type: ANIME, sort: POPULARITY_DESC,
                 status_in: [FINISHED, RELEASING],
-                format_in: [TV, MOVIE]) {
+                format_in: [TV, MOVIE], isAdult: false) {
             id
             title { romaji english }
             coverImage { large medium }
@@ -15331,6 +15394,8 @@ function showTasteStory(battleMilestone) {
   _tasteStoryCards = _computeTasteInsights(battleMilestone);
   _tasteStoryIndex = 0;
   _renderTasteStoryCard();
+  // v1.0.265 — Back and Escape close it (critical pass M11); no second step if it is shown again while open
+  if (byId('taste-story-modal').style.display !== 'flex') pushModalBack('tasteStory', closeTasteStory);
   byId('taste-story-modal').style.display = 'flex';
 }
 
@@ -15394,10 +15459,15 @@ function tasteStoryNav(dir) {
 
 function closeTasteStory() {
   byId('taste-story-modal').style.display = 'none';
+  popModalBack('tasteStory'); // v1.0.265 — the ✕, Done, a tap outside and Full profile each drop its Back step
 }
 
+// v1.0.265 — Rankings is on screen. Until its first visit #results-screen has no inline display (the stylesheet hides
+// it), so the old !== 'none' test read it as showing: "Full profile" on the first Taste Story only closed the story.
+function _resultsShowing() { return byId(IDS.resultsScreen)?.style.display === 'block'; }
+
 function _openProfileTab() {
-  const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
+  const resultsVisible = _resultsShowing(); // v1.0.265 — see _resultsShowing
   if (!resultsVisible) showResults();
   switchResultsTab('profile');
 }
@@ -15740,7 +15810,7 @@ function _updateShareModalCapabilities() {
   document.addEventListener('keydown', _shareEscHandler);
 }
 
-function _shareEscHandler(e) { if (e.key === 'Escape') closeShare(); }
+function _shareEscHandler(e) { if (e.key === 'Escape') { e.preventDefault(); closeShare(); } } // v1.0.265 — handled: Rankings under it stays
 function closeShare() {
   byId(IDS.shareModal).style.display = 'none';
   document.removeEventListener('keydown', _shareEscHandler);
@@ -15768,14 +15838,29 @@ function closeShareOnOverlay(e) { if (e.target === byId(IDS.shareModal)) closeSh
 // pushModalBack(name, closeFn) — call AFTER showing a modal
 // popModalBack(name)            — call AFTER hiding a modal via X/Cancel/etc.
 const _modalBackStack = [];
-let _modalBackIgnoreNext = false;
+// v1.0.265 — popstates from our own walk-back still to come. A count (was a flag): two closes in one tap (a Confirm and
+// the pop-up under it) made two history.back() calls, and the second popstate closed the next overlay (or Rankings).
+let _modalBackIgnore     = 0;
+// v1.0.265 — Back steps of overlays closed in this task, walked back together just after it (_modalBackFlush). An
+// overlay opened in the same tap reuses one: Chrome drops a pushState made while a back() is in flight, so "Full
+// profile", "See Rankings" and What's new from Help got no step and Back closed the app (critical pass M11).
+let _modalBackPending    = 0;
+// v1.0.265 — steps for overlays opened while that walk-back is still in flight; pushed when it lands.
+let _modalBackHeld       = 0;
 let _modalBackInstalled  = false;
 
 function _installModalBack() {
   if (_modalBackInstalled) return;
   _modalBackInstalled = true;
   window.addEventListener('popstate', () => {
-    if (_modalBackIgnoreNext) { _modalBackIgnoreNext = false; return; }
+    // v1.0.265 — our own walk-back: ignore it, then push the steps held while it was in flight
+    if (_modalBackIgnore > 0) {
+      _modalBackIgnore--;
+      if (_modalBackIgnore === 0) {
+        for (; _modalBackHeld > 0; _modalBackHeld--) { try { history.pushState({ kessenModal: 'held' }, ''); } catch (_e) { /* no step, as before */ } }
+      }
+      return;
+    }
     const top = _modalBackStack.pop();
     if (top) top.close();
   });
@@ -15789,6 +15874,7 @@ function _installModalBack() {
   // surrounding modal.
   window.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
+    if (e.defaultPrevented) return; // v1.0.265 — a popover's own Escape closed it (sort menu, chip picker, share): don't also leave Rankings
     if (_modalBackStack.length === 0) return;
     const t = e.target;
     const isTextInput = t && (
@@ -15813,6 +15899,8 @@ function pushModalBack(name, closeFn) {
   const existing = _modalBackStack.findIndex(e => e.name === name);
   if (existing >= 0) _modalBackStack.splice(existing, 1);
   _modalBackStack.push({ name, close: closeFn });
+  if (_modalBackPending > 0) { _modalBackPending--; return; } // v1.0.265 — reuse a step closed earlier in this tap (see _modalBackPending)
+  if (_modalBackIgnore > 0) { _modalBackHeld++; return; }     // v1.0.265 — pushed when our walk-back lands (see _modalBackHeld)
   try { history.pushState({ kessenModal: name }, ''); } catch (_e) {}
 }
 
@@ -15820,8 +15908,41 @@ function popModalBack(name) {
   const idx = _modalBackStack.findIndex(e => e.name === name);
   if (idx < 0) return; // already popped (e.g. via popstate / back-button)
   _modalBackStack.splice(idx, 1);
-  _modalBackIgnoreNext = true;
-  try { history.back(); } catch (_e) { _modalBackIgnoreNext = false; }
+  if (_modalBackHeld > 0) { _modalBackHeld--; return; } // v1.0.265 — its step was never pushed (see _modalBackHeld)
+  // v1.0.265 — walked back just after this task, every close in one step (see _modalBackPending)
+  if (_modalBackPending++ === 0) setTimeout(_modalBackFlush, 0);
+}
+
+// v1.0.265 — one history.go() for every Back step closed in the last task: one popstate, ignored.
+function _modalBackFlush() {
+  const n = _modalBackPending;
+  _modalBackPending = 0;
+  if (n <= 0) return;
+  _modalBackIgnore++;
+  try { history.go(-n); } catch (_e) { _modalBackIgnore--; }
+}
+
+// v1.0.265 — Back on an overlay that stays open (a prompt that must be answered): give it its step again. Where the
+// Navigation API shows the entry Back just left, step forward onto it (one popstate, ignored) rather than push from
+// popstate with no tap, which Chrome's back-button-hijack intervention answers by skipping the entry under it, so a
+// later Back could close the app. Elsewhere, or with a walk-back of ours pending, push as usual.
+function _modalBackKeep(name, closeFn) {
+  if (_modalBackStack.some(e => e.name === name)) return;
+  if (_modalBackPending > 0 || _modalBackIgnore > 0 || !window.navigation?.canGoForward) { pushModalBack(name, closeFn); return; }
+  _installModalBack();
+  _modalBackStack.push({ name, close: closeFn });
+  _modalBackIgnore++;
+  try { history.go(1); } catch (_e) { _modalBackIgnore--; try { history.pushState({ kessenModal: name }, ''); } catch (_e2) { /* no step, as before */ } }
+}
+
+// v1.0.265 — logout / Delete all: forget every overlay and walk back past their steps (Rankings' too), so the first
+// Back on the login screen isn't dead (1.0.257 emptied the stack and left the steps). Held steps were never pushed.
+function _modalBackDropAll() {
+  const steps = Math.max(0, _modalBackStack.length - _modalBackHeld);
+  _modalBackStack.length = 0;
+  _modalBackHeld = 0;
+  if (steps > 0 && _modalBackPending === 0) setTimeout(_modalBackFlush, 0);
+  _modalBackPending += steps;
 }
 
 // ─── HELP MODAL ───────────────────────────────────────────────────────────────
@@ -17389,6 +17510,7 @@ async function openSearchPicker(category, btn) {
     };
     const escCloser = (e) => {
       if (e.key !== 'Escape') return;
+      if (!pop.hasAttribute('hidden')) e.preventDefault(); // v1.0.265 — handled here: Rankings under it stays
       _closeSearchPicker();
       document.removeEventListener('click', closer, true);
       document.removeEventListener('keydown', escCloser);
@@ -17632,6 +17754,7 @@ function toggleSearchHelp() {
     };
     const escCloser = (e) => {
       if (e.key !== 'Escape') return;
+      if (!pop.hasAttribute('hidden')) e.preventDefault(); // v1.0.265 — handled here: Rankings under it stays
       pop.setAttribute('hidden', '');
       btn.setAttribute('aria-expanded', 'false');
       document.removeEventListener('click', closer, true);
@@ -18707,13 +18830,14 @@ async function applyMoodRec(moodKey) {
   const groups  = [];
   // v1.0.247 — same two-page (50 candidate) query and six-per-row cap as
   // fetchRecommendationsForYou; the mood path had kept the old 25 / 4.
+  // v1.0.265 — H3: isAdult selected and adult picks dropped below, as in fetchRecommendationsForYou
   const query = `
     fragment recNodes on RecommendationConnection {
       nodes {
         rating
         mediaRecommendation {
           id idMal title { romaji english } coverImage { large medium }
-          averageScore format status genres
+          averageScore format status genres isAdult
         }
       }
     }
@@ -18747,6 +18871,7 @@ async function applyMoodRec(moodKey) {
       for (const n of nodes) {
         const rec = n.mediaRecommendation;
         if (!rec || ownIds.has(rec.id) || usedIds.has(rec.id) || rec.status === 'NOT_YET_RELEASED') continue;
+        if (_hideAdult(rec)) continue; // v1.0.265 — H3: no adult recommendation, as in fetchRecommendationsForYou
         if (inSeedFranchise(rec)) continue; // v1.0.258 — the seed's own franchise, as in fetchRecommendationsForYou
         // v1.0.251 — same franchise dedupe as fetchRecommendationsForYou (no series next to its sequel).
         const fKeys = _recFranchiseKeys(rec);
@@ -19358,6 +19483,7 @@ function toggleSortMenu(event) {
     };
     const escCloser = (e) => {
       if (e.key !== 'Escape') return;
+      if (!pop.hasAttribute('hidden')) e.preventDefault(); // v1.0.265 — handled here: Rankings under it stays
       _closeSortMenu();
       document.removeEventListener('click', closer, true);
       document.removeEventListener('keydown', escCloser);
@@ -19699,10 +19825,11 @@ async function _predictorSearch(q) {
   dd.innerHTML = '<div style="padding:10px 12px;color:#8b949e;font-size:0.8rem">⏳ Searching…</div>';
   dd.style.display = 'block';
   // v1.0.256 — also idMal, episodes and the large cover: a pick becomes the result card's Discover pop-up
+  // v1.0.265 — H3: _adultArg() keeps adult titles and covers out of the dropdown (the hidden opt-in aside)
   const query = `
     query($search: String) {
       Page(perPage: 6) {
-        media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+        media(search: $search, type: ANIME, sort: SEARCH_MATCH${_adultArg()}) {
           id idMal title { romaji english } coverImage { large medium }
           format seasonYear episodes averageScore genres
         }
@@ -19859,9 +19986,10 @@ async function runPredictor(prefetched = null) {
   let media = lookupId ? null : prefetched;
   if (!media) {
     // v1.0.256 — both queries also fetch idMal and episodes for the result card's Discover pop-up (same request)
+    // v1.0.265 — H3: both pass _adultArg(), so an adult title is never the predicted card (the hidden opt-in aside)
     const searchQuery = `
       query($search: String, $id: Int) {
-        Media(search: $search, id: $id, type: ANIME) {
+        Media(search: $search, id: $id, type: ANIME${_adultArg()}) {
           id idMal title { romaji english }
           coverImage { large medium }
           genres averageScore seasonYear format episodes
@@ -19871,7 +19999,7 @@ async function runPredictor(prefetched = null) {
     const listQuery = `
       query($search: String) {
         Page(perPage: 8) {
-          media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+          media(search: $search, type: ANIME, sort: SEARCH_MATCH${_adultArg()}) {
             id idMal title { romaji english userPreferred } popularity
             coverImage { large medium }
             genres averageScore seasonYear format episodes
@@ -20262,8 +20390,9 @@ function _exitTowerState() {
 // renderBattle's `if (trioMode)` check fires before tower's, so the trio
 // arena would render over the tower opponent — exactly what users hit when
 // switching from trio to tower.
-function _exitNonTowerModes() {
-  if (!settleMode && !blindMode && !trioMode && !wsoMode) return;
+function _exitNonTowerModes(force) {
+  // v1.0.265 — force (logout): take the screen down even when every flag is already off, so a banner left on can't stay
+  if (!force && !settleMode && !blindMode && !trioMode && !wsoMode) return;
   settleMode = false;
   blindMode  = false;
   trioMode   = false;
@@ -20531,6 +20660,7 @@ function startBattleWithinFranchise(name) {
   // Mirrors resumeBattle()'s screen swap.
   hide('results-screen');
   show('battle-screen');
+  popModalBack('results'); // v1.0.265 — as resumeBattle: Rankings' Back step goes with it
   renderBattle();
 }
 
@@ -20599,6 +20729,7 @@ function battleNextFromModal() {
   _preloadedImgs = null;
   hide('results-screen');
   show('battle-screen');
+  popModalBack('results'); // v1.0.265 — as resumeBattle: Rankings' Back step goes with it
   renderBattle();
   showToast(`⚔ Queued "${displayTitle(animeList[idx])}" for next battle.`, 2500);
 }
@@ -20786,8 +20917,10 @@ function toggleModeMenu(event) {
     }
     setTimeout(() => document.addEventListener('click', _closeModeMenu, { once: true }), 0);
     document.addEventListener('keydown', _modeMenuEscHandler);
+    pushModalBack('modeMenu', _closeModeMenu); // v1.0.265 — Back closes the sheet instead of the app (critical pass M11)
   } else {
     if (backdrop) backdrop.classList.remove('open');
+    popModalBack('modeMenu'); // v1.0.265 — closed by tapping Mode again
   }
 }
 function _closeModeMenu() {
@@ -20798,6 +20931,7 @@ function _closeModeMenu() {
   if (btn) btn.setAttribute('aria-expanded', 'false');
   if (backdrop) backdrop.classList.remove('open');  // v1.0.238 — hide mobile bottom-sheet backdrop
   document.removeEventListener('keydown', _modeMenuEscHandler);
+  popModalBack('modeMenu'); // v1.0.265 — every close path drops its Back step (a no-op when it wasn't open)
 }
 function _modeMenuEscHandler(e) {
   if (e.key === 'Escape') _closeModeMenu();
@@ -20836,8 +20970,10 @@ function toggleFilterMenu(event) {
     _flipPopoverIfNoRoom(pop, btn); // v1.0.244 — after syncFormatButtons so the height is final
     setTimeout(() => document.addEventListener('click', _filterOutsideClick), 0);
     document.addEventListener('keydown', _filterMenuEscHandler);
+    pushModalBack('filterMenu', _closeFilterMenu); // v1.0.265 — Back closes the sheet instead of the app (critical pass M11)
   } else {
     if (backdrop) backdrop.classList.remove('open');
+    popModalBack('filterMenu'); // v1.0.265 — closed by tapping Filter again
   }
 }
 function _filterOutsideClick(e) {
@@ -20857,6 +20993,7 @@ function _closeFilterMenu() {
   if (backdrop) backdrop.classList.remove('open');  // v1.0.238 — hide mobile bottom-sheet backdrop
   document.removeEventListener('click', _filterOutsideClick);
   document.removeEventListener('keydown', _filterMenuEscHandler);
+  popModalBack('filterMenu'); // v1.0.265 — every close path drops its Back step (a no-op when it wasn't open)
 }
 function _filterMenuEscHandler(e) {
   if (e.key === 'Escape') _closeFilterMenu();
@@ -21539,7 +21676,9 @@ function startTower(championIdx) {
   // Update UI for tower mode
   show('battle-screen');
   hide('results-screen');
+  popModalBack('results'); // v1.0.265 — a run started from Rankings (bell, finish prompt, deep link) drops its Back step
   hide('tower-summary-screen');
+  popModalBack('towerSummary'); // v1.0.265 — Run Again: the summary's step stays under the picker (Back returns to it) until here
   _setTowerChrome(true); // v1.0.244 — banner + Exit item + single progress bar
   byId(IDS.undoBtn).disabled  = true;
   byId(IDS.skipBtn).disabled  = true;
@@ -21707,10 +21846,12 @@ function finishTower() {
 
   hide('battle-screen');
   show('tower-summary-screen');
+  pushModalBack('towerSummary', endTower); // v1.0.265 — Back (and Escape) on the summary = Back to Ranking; it closed the app
 }
 
 function endTower() {
   hide('tower-summary-screen');
+  popModalBack('towerSummary'); // v1.0.265 — Back to Ranking, or Back itself, drops the summary's step
   show('battle-screen');
   renderBattle();
 }
@@ -22015,15 +22156,27 @@ function toggleFranchiseTableGroup(gid) {
 // shortcuts on every touch-capable laptop. We now trust that if the user is
 // physically pressing a keyboard key, they meant to. The INPUT/TEXTAREA guard
 // below is what actually prevents interference with typing.
+// v1.0.265 — true while a dialog, sheet or menu covers the battle screen, so the battle keys leave
+// the hidden pair alone (K1). Reads what is on screen, not _modalBackStack: a close path that skips
+// popModalBack (as the recap ✕ did in 1.0.264) leaves a stale entry that would lock the keys, and the
+// notification centre and the Mode / Filter menus are not role="dialog".
+function _anyOverlayOpen() {
+  const shown = el => !!el && el.getClientRects().length > 0;
+  return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some(shown)
+    || shown(byId(IDS.notifCentreModal)) || shown(byId(IDS.modePopover)) || shown(byId(IDS.filterPopover));
+}
+
 document.addEventListener('keydown', e => {
   // Only fire when the battle screen is visible
   if (byId(IDS.battleScreen).style.display === 'none') return;
   // Don't hijack text inputs
   // v1.0.260 — nor a focused <select>: the recap picker sits over the battle screen and arrows change it
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (_anyOverlayOpen()) return; // v1.0.265 — keys behind Welcome, the recap, Help, a menu etc. picked, skipped or undid a pair the user couldn't see (K1)
   switch (e.key) {
-    case 'ArrowLeft':  e.preventDefault(); pickWinner(0); break;
-    case 'ArrowRight': e.preventDefault(); pickWinner(1); break;
+    // v1.0.265 — not in Trio: three cards have no left/right, and the arrows recorded the hidden standard pair (M12)
+    case 'ArrowLeft':  if (!trioMode) { e.preventDefault(); pickWinner(0); } break;
+    case 'ArrowRight': if (!trioMode) { e.preventDefault(); pickWinner(1); } break;
     // Mirror the visible UI: if the on-screen Skip / Undo buttons are
     // disabled (e.g. during a tower run), the keyboard shortcut must be too,
     // otherwise users can bypass the constraint and corrupt run integrity.
@@ -22686,8 +22839,15 @@ async function reseedFromMAL() {
 // still running under the old CSP headers. Reloading gets the fresh headers
 // from the new SW's cache. More reliable than client.navigate() in the SW
 // itself, which can fail silently in PWA/standalone mode on iOS.
+// v1.0.265 — a tab that started with no controller (first visit / fresh install)
+// gets one 'controllerchange' when the first worker claims it. That is not a new
+// version (the page already came from the network), so skip that ONE change;
+// reloading there threw a new guest back to the start screen. A flag that is
+// used up, not a start-up constant: the same tab still reloads on the next deploy.
 if ('serviceWorker' in navigator) {
+  let _swSkipFirstClaim = !navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (_swSkipFirstClaim) { _swSkipFirstClaim = false; return; }
     window.location.reload();
   });
 }
@@ -23006,7 +23166,7 @@ function startFinishTower() {
   if (idx === -1) return; // show was excluded or removed — silently skip
 
   // If on the results screen, head to battle first
-  const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
+  const resultsVisible = _resultsShowing(); // v1.0.265 — see _resultsShowing
   if (resultsVisible) resumeBattle();
 
   // Bypass the Tower selection modal and launch directly
@@ -23249,17 +23409,21 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.264 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.265 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
+  // v1.0.265 — four calm bullets under ~110 characters, each matching the code as shipped
   bullets: [
-    '🗑️ "Delete all my data" now also removes your notification sign-up, invite history and sync data.',
-    // v1.0.264 — says it starts off only for new sign-ups: an existing Tower retry setting is kept
-    '🔔 Tower retry starts off for new sign-ups and asks first; existing settings stay. Logging out turns push off here.',
-    '🔒 Manage and Help now link to the privacy policy and a clearer note on what "Delete all my data" removes.',
+    '✅ A first visit no longer reloads by surprise and sends you back to the start screen.',
+    // v1.0.265 — the Tower summary too; a prompt that must be answered (Newer cloud save found) stays open
+    '↩️ Android Back now closes Rankings, menus and pop-ups one at a time instead of closing the app; Escape too.',
+    // v1.0.265 — "Predict" covers its search box; Discover includes the mood picks and This Season
+    '🛡️ Discover, Predict, Missing, friend picks, Watch Together and Live Challenge now hide adult titles.',
+    // v1.0.265 — S and U still work in Trio; only the arrows (left/right pick) are off there
+    '⌨️ Shortcut keys no longer act behind open menus or in Trio, and logout or reset returns to Standard mode.',
   ],
 };
 
@@ -23346,6 +23510,7 @@ function ncActionShowWhatsNew(id) {
 function closeWhatsNewModal() {
   const modal = byId(IDS.whatsNewModal);
   if (modal) modal.style.display = 'none';
+  popModalBack('whatsNew'); // v1.0.265 — "Got it" and a tap outside left its Back step behind (a dead Back press)
   // v1.0.231 — restore the Help modal if that was our launch context, so the
   // user isn't abruptly dumped from Help onto whatever's behind it.
   if (_whatsNewReopenHelp) {
@@ -23554,7 +23719,10 @@ function openNotifCentre() {
   _ncSave();
   _ncUpdateBell();
   _ncRenderList();
-  byId(IDS.notifCentreModal)?.classList.add('open');
+  const ncModal = byId(IDS.notifCentreModal);
+  // v1.0.265 — Back and Escape close it (critical pass M11); no second step if it is already open
+  if (ncModal && !ncModal.classList.contains('open')) pushModalBack('notifCentre', closeNotifCentre);
+  ncModal?.classList.add('open');
   // v1.0.168 — refresh the phone-push settings UI so the toggle reflects
   // the current Notification.permission state every time the modal opens
   // (the user may have changed it in browser settings since last open).
@@ -23575,6 +23743,7 @@ function openNotifCentre() {
 
 function closeNotifCentre() {
   byId(IDS.notifCentreModal)?.classList.remove('open');
+  popModalBack('notifCentre'); // v1.0.265 — ✕, a tap outside, an action that closes it, logout: each drops its Back step
   clearInterval(_ncTimeRefreshTimer);
   _ncTimeRefreshTimer = null;
 }
@@ -24008,7 +24177,7 @@ function ncActionFinishTower(id) {
   // finish-prompt banner queue is a separate store and would otherwise still
   // show this anime. Clear the queue entry (and any sibling nc dupes) too.
   _dismissFinishPromptForAnime(notif.data?.animeId);
-  const resultsVisible = byId(IDS.resultsScreen)?.style.display !== 'none';
+  const resultsVisible = _resultsShowing(); // v1.0.265 — see _resultsShowing
   if (resultsVisible) resumeBattle();
   startTower(idx);
 }

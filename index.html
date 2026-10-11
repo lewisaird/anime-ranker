@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.264" />
+  <meta name="version" content="1.0.265" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1734,13 +1734,14 @@
   <!-- SESSION SUMMARY MODAL -->
   <div id="session-summary-modal" role="dialog" aria-modal="true" aria-labelledby="session-summary-title" onclick="closeSessionSummary(event)">
     <div class="session-summary-box">
-      <button class="modal-close" onclick="document.getElementById('session-summary-modal').style.display='none'" aria-label="Close">✕</button>
+      <!-- v1.0.265 — ✕, Keep Ranking and See Rankings close through closeSessionSummary(), which drops the recap's Back step (critical pass M11) -->
+      <button class="modal-close" onclick="closeSessionSummary()" aria-label="Close">✕</button>
       <h3 id="session-summary-title">⚡ Session Recap</h3>
       <p id="session-summary-subtitle" style="color:#8b949e;font-size:0.85rem;margin:4px 0 16px"></p>
       <div id="session-summary-list"></div>
       <div style="text-align:center;margin-top:16px;display:flex;gap:8px;justify-content:center">
-        <button class="btn-primary" onclick="resumeBattle();document.getElementById('session-summary-modal').style.display='none'">▶ Keep Ranking</button>
-        <button class="btn-secondary" onclick="showResults();document.getElementById('session-summary-modal').style.display='none'">📋 See Rankings</button>
+        <button class="btn-primary" onclick="closeSessionSummary();resumeBattle()">▶ Keep Ranking</button>
+        <button class="btn-secondary" onclick="closeSessionSummary();showResults()">📋 See Rankings</button>
       </div>
       <!-- v1.0.260 — recap frequency picker; same setting as Manage → Session recap -->
       <div class="recap-freq-row">
