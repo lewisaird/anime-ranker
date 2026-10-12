@@ -23115,10 +23115,11 @@ async function checkForNewAnime() {
     const WATCHING = new Set(['CURRENT', 'REPEATING']);
     // v1.0.178 — Collect IDs of anime whose status just flipped to COMPLETED
     // so we can tell the server "we already showed an in-app prompt for
-    // these". Prevents the hourly Tower-retry server poll from also firing
+    // these". Prevents the Tower-retry server poll (about every 3 hours) from also firing
     // a phone push for the same anime — the bell prompt + the push would
     // otherwise both fire for any user who opens Kessen between the AniList
-    // status change and the next cron tick.
+    // status change and its next check.
+    // v1.0.267 — was "the hourly Tower-retry server poll" / "the next cron tick"
     const newlyCompletedIds = [];
     animeList.forEach(a => {
       const freshStatus = freshStatusMap.get(a.id);
@@ -23546,22 +23547,15 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.266 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.267 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.266 — four calm bullets under ~110 characters, each matching the code as shipped
+  // v1.0.267 — the one change people can notice: tower-retry-poll checks each Tower retry user about every 3 hours
   bullets: [
-    // v1.0.266 — the list owner's scoreFormat is fetched with the list; "seed" covers a typed username and Reseed
-    '⭐ Smiley and 5-star AniList scores now show as given in Compare and Friend picks, and seed lists correctly.',
-    // v1.0.266 — both pickers (Manage and the recap itself); no toast when the value is unchanged
-    '💬 Changing how often the session recap appears now shows a short confirmation every time, from either picker.',
-    // v1.0.266 — the Winner Stays streak badge sits inside the card corner; Trio cards share one height
-    '🃏 Winner Stays and Trio battle cards now match the height of the other modes on phones and desktop.',
-    // v1.0.266 — the AniList / MAL switch only shows when signed in with MAL, so the wording now says so
-    '🤝 Compare & Challenge now says MAL usernames need a MyAnimeList sign-in, matching what actually works.',
+    '🔔 If you turned on Tower retry prompts, Kessen now checks your AniList list about every 3 hours, not every 15 minutes.',
   ],
 };
 
@@ -23967,11 +23961,12 @@ function _pushAuthTokens() {
 }
 
 // v1.0.178 — Tell the server "we already showed an in-app prompt for these
-// anime IDs", so the hourly Tower-retry cron poll skips them. Best-effort:
+// anime IDs", so the Tower-retry server poll (about every 3 hours) skips them. Best-effort:
 // silently swallows network errors (the server-side poll will still fire
 // in that case but it's a low-impact failure — user sees the same message
 // twice rather than missing one). Only sends if the user has push enabled +
 // Tower-retry on, to avoid pointless API calls for non-opted-in users.
+// v1.0.267 — was "the hourly Tower-retry cron poll"
 async function _pushMarkSeen(animeIds) {
   if (!Array.isArray(animeIds) || animeIds.length === 0) return;
   const local = (typeof _pushLoadLocal === 'function') ? _pushLoadLocal() : null;
@@ -24159,7 +24154,8 @@ function _pushConfirmTowerRetry() {
   const box = byId(IDS.ncPushCatTower);
   const answer = _confirmAsync(
     'Turn on Tower retry prompts?',
-    'Kessen will keep your AniList sign-in on its server and check your completed list every 15 minutes while this is on. Untick to delete it.',
+    // v1.0.267 — the server now checks each Tower retry user about every 3 hours; privacy.html says the same (tests/privacy-links)
+    'Kessen will keep your AniList sign-in on its server and check your completed list about every 3 hours while this is on. Untick to delete it.',
     'Confirm',
     { okStyle: 'primary' }
   );

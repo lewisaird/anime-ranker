@@ -1,6 +1,9 @@
 // netlify/functions/tower-retry-poll.js
 //
-// Scheduled function — runs every hour (see netlify.toml).
+// Scheduled function — runs every 15 minutes (config at the bottom of this file). v1.0.267 — each run reads every push
+// record (10 at a time) and checks only the Tower retry users whose last check is about 3 hours old
+// (CHECK_EVERY_HOURS), oldest first: at most MAX_CHECKS_PER_RUN, none started after TIME_BUDGET_MS (Netlify stops a
+// scheduled function at 30 seconds). Push users without Tower retry cost one read and no wait.
 // For each opted-in AniList user:
 //   1. Fetch their CURRENT completed list (most-recent first, just first page).
 //   2. Diff against the stored `notifiedCompletions` set.
@@ -17,15 +20,20 @@
 //   - v1.0.264 — the record is written back only if it is unchanged since it
 //     was read (writePushRecordChange): a Delete all during the AniList call
 //     is never undone.
-//   - AniList 429 (rate limit) — back off. The next scheduled run picks them up.
+//   - AniList 429 (rate limit) — v1.0.267 — nothing is written and the run
+//     stops; that user and the rest go first next run. (A late first
+//     snapshot was already stamped before its read, so that user waits.)
+//   - v1.0.267 — any other error (AniList or the push send) still counts as a
+//     check (lastPolledAt moves on), so the user is tried again about 3 hours
+//     later.
 //   - Push delivery 410 Gone — the device subscription is dead; the
 //     sendPushToUser helper already prunes it from the record.
-//   - We yield to the event loop between users (300ms) to keep AniList
-//     happy across users.
 
 // v1.0.264 — conditional write-backs (writePushRecordChange) replace savePushRecord
+// v1.0.267 — + loadPushRecordVersioned: each due user is read again just before its check
 import {
   iteratePushRecords,
+  loadPushRecordVersioned,
   writePushRecordChange,
   turnOffTowerRetry,
   dropSubscriptions,
@@ -34,16 +42,26 @@ import {
   sendPushToUser,
 } from './_push-shared.js';
 
-// Per-user polite delay between AniList requests. AniList's published
-// rate limit is 90 req/min PER authenticated user — we send 1 req/user/hr
-// so individual users are nowhere near their cap. But ALL requests egress
-// from Netlify's shared IP pool, so the aggregate rate could trigger
-// anti-abuse heuristics if multiple polls run concurrently on the same IP.
-// 800ms = 75 req/min aggregate ceiling, well under AniList's per-user cap
-// with comfortable headroom. Scales to ~700 users per 10-min cron execution.
-// Past that we'd want to shard the work across multiple scheduled functions
-// or hash-distribute users across the hour rather than burst at :00.
-const PER_USER_DELAY_MS = 800;
+const MINUTE_MS = 60 * 1000;
+// v1.0.267 — each Tower retry user is checked about every 3 hours (Lewis, 12 Oct 2026; was every run, every 15 minutes).
+// privacy.html and the app's Tower retry notice (app.js _pushConfirmTowerRetry) say the same; tests/privacy-links checks it.
+const CHECK_EVERY_HOURS = 3;
+// Due 10 minutes early: a check is stamped a few seconds into a run, so the run 3 hours later finds it due, not the one after.
+const DUE_AFTER_MS = CHECK_EVERY_HOURS * 60 * MINUTE_MS - 10 * MINUTE_MS;
+// At most 8 AniList requests a run, so at most 8 in any minute (AniList allows 30 a minute at the moment, lowered from 90,
+// counted for Netlify's shared addresses). 8 a run x 12 runs = about 96 users every 3 hours.
+const MAX_CHECKS_PER_RUN = 8;
+// Netlify stops a scheduled function after 30 seconds. No check starts later than 15 s into the run: its AniList request
+// can take 8 s (callAniList's timeout), the push 3 s (sendPushToUser) and the reads and save about 1 s, so the run ends
+// by about 27 s. A late first snapshot (records from before 1.0.218 only) can take longer; it is stamped before its
+// read (pollOne), so if Netlify stops the run, that user waits about 3 hours like anyone checked. Users not reached go
+// first next run (oldest first).
+const TIME_BUDGET_MS = 15000;
+// v1.0.267 — who the poll checks (pollOne's first lines skip anyone else): Tower retry on, the AniList token and id it
+// reads with, and a device to tell. Everyone else costs one record read and no wait.
+const canCheck = (r) => !!r.categories?.towerRetry && !!r.subscriptions?.length && !!r.aniListToken && !!r.aniListUserId;
+// v1.0.267 — due when the last check (or the opt-in, which push-register stamps) is at least DUE_AFTER_MS old
+const isDue = (r, at) => (Number(r.lastPolledAt) || 0) <= at - DUE_AFTER_MS;
 // Soft cap on how many "new completions" we'll list in one push session,
 // per user. Prevents an enormous import event firing a giant push payload.
 const MAX_BATCH = 100;
@@ -104,6 +122,12 @@ async function pollOne(userId, record, context, etag) {
   // go with the token (as push-register does on an untick), so no completed list is kept without a token.
   const revoke = async () =>
     (await save(turnOffTowerRetry, (r) => r.aniListToken === token)) ? { revoked: true } : { stale: true };
+  // v1.0.267 — a failed check (other than 401/403/429) still counts as a check: lastPolledAt moves on, so the user is
+  // tried again in about 3 hours. Oldest first would otherwise put them at the front of every run.
+  const failed = async (message) => {
+    const at = Date.now();
+    return (await save((r) => { r.lastPolledAt = at; })) ? { error: message } : { error: message, stale: true };
+  };
 
   // If we didn't manage the initial snapshot at register time (network blip,
   // etc.) take it now and skip any push this round — the user's existing
@@ -117,6 +141,12 @@ async function pollOne(userId, record, context, etag) {
   // absent (very old records from before register-time stamping), we fall
   // back to the original behaviour — there's nothing better we can do.
   if (!record.initialSnapshotDone) {
+    // v1.0.267 — stamped before the read: it can take up to 20 AniList pages, longer than Netlify's 30 s, and a run
+    // stopped mid-read wrote nothing, so this user stayed the oldest and stopped every run after it. Now, like anyone
+    // checked, they are not due again for about 3 hours (after a 429 here too).
+    const stillSnapshotting = (r) => sameOptIn(r) && !r.initialSnapshotDone;
+    const stampedAt = Date.now();
+    if (!(await save((r) => { r.lastPolledAt = stampedAt; }, stillSnapshotting))) return { stale: true };
     try {
       const cutoffSec = Number.isFinite(record.optedInAt) && record.optedInAt > 0
         ? Math.floor(record.optedInAt / 1000)
@@ -135,17 +165,18 @@ async function pollOne(userId, record, context, etag) {
         r.initialSnapshotDone = true;
         r.lastPolledAt        = now;
         if (!r.optedInAt) r.optedInAt = now;
-      }, (r) => sameOptIn(r) && !r.initialSnapshotDone);
+      }, stillSnapshotting);
       return written ? { snapshot: completed.length } : { stale: true };
     } catch (e) {
       if (e.status === 401 || e.status === 403) return revoke(); // v1.0.264 — was: only the token dropped
-      return { error: e.message };
+      if (e.status === 429) return { rateLimited: true }; // v1.0.267 — the run stops (this user was stamped above)
+      return failed(e.message); // v1.0.267 — was: { error } with nothing written, so the user was first in every run
     }
   }
 
-  // Normal poll path — only need the first page (most-recent first). If the
-  // user has completed more than 50 since last poll the rest will be picked
-  // up on the next cycle, which is acceptable.
+  // Normal check: only the first page, the 50 most recently changed completed entries. If more than 50 completed
+  // entries change between two checks (about 3 hours), for example finished or re-scored (Kessen's score sync re-scores
+  // many at once), older new completions on later pages are missed. (v1.0.267 — was: "picked up on the next cycle")
   let completed;
   try {
     completed = await fetchCompletedAnime(record.aniListToken, record.aniListUserId, 1);
@@ -153,10 +184,10 @@ async function pollOne(userId, record, context, etag) {
     // v1.0.264 — was: token, user id and snapshot flag dropped, but the completed list and Tower retry kept
     if (e.status === 401 || e.status === 403) return revoke();
     if (e.status === 429) {
-      // Rate-limited — skip this user for this cycle, try again next hour.
+      // v1.0.267 — nothing written; the run stops and this user goes first next run
       return { rateLimited: true };
     }
-    return { error: e.message };
+    return failed(e.message); // v1.0.267 — lastPolledAt moves on (see failed)
   }
 
   const knownIds = asIdSet(record.notifiedCompletions);
@@ -178,7 +209,7 @@ async function pollOne(userId, record, context, etag) {
   try {
     pushResult = await sendPushToUser(record, buildPushPayload(newOnes));
   } catch (e) {
-    return { error: 'push: ' + e.message };
+    return failed('push: ' + e.message); // v1.0.267 — lastPolledAt moves on (see failed); nothing else is saved
   }
 
   // Always mark as notified — even if push failed transiently — so we don't
@@ -200,107 +231,100 @@ async function pollOne(userId, record, context, etag) {
   return { pushed: newOnes.length, ...pushCounts, ...(written ? {} : { stale: true }) };
 }
 
-// Soft capacity ceiling — based on Netlify scheduled function 10-minute soft
-// limit (600s) divided by PER_USER_DELAY_MS. Past this we'd want to start
-// sharding or hash-distributing. Used to flag headroom in the summary.
-const SOFT_USER_LIMIT = Math.floor((10 * 60 * 1000) / PER_USER_DELAY_MS);
-
+// v1.0.267 — was: one record at a time, a 0.8 s wait after every record (Tower retry or not), every Tower retry user
+// checked every run, and a 10-minute limit assumed (Netlify allows 30 seconds).
 export default async (_request, context) => {
-  const startTs = Date.now();
+  const startedAt = Date.now();
   const summary = {
-    started:               new Date().toISOString(),
-    users:                 0,    // total push records seen
-    optedInTowerRetry:     0,    // users with categories.towerRetry on AND a valid token
-    polled:                0,    // users we actually made an AniList request for
-    pushed:                0,    // users who got a push this run
-    devices:               0,    // total push deliveries (a user with phone+tablet = 2)
-    newCompletions:        0,    // total media IDs newly notified about
-    skipped:               0,    // had no subscription / not opted in
-    revoked:               0,    // AniList returned 401/403; we cleared the token
-    rateLimited:           0,    // AniList returned 429; will retry next cron
-    snapshots:             0,    // late initial-snapshot runs (carryover from register-time blip)
-    stale:                 0,    // v1.0.264 — record deleted or changed during the AniList call; nothing written back
-    errors:                0,
+    users: 0,          // push records read
+    towerUsers: 0,     // Tower retry on and checkable (canCheck)
+    due: 0,            // last checked about 3 hours ago or more
+    polled: 0,         // AniList checks made this run
+    backlog: 0,        // due but not reached this run; they go first next run
+    stoppedBy: 'done', // or 'cap', 'time', 'rate-limited'
+    oldestDueMin: 0,   // minutes since the longest-waiting due user was last checked
+    pushed: 0, devices: 0, newCompletions: 0,
+    rateLimited: 0, revoked: 0, snapshots: 0, stale: 0, errors: 0,
+    scanMs: 0, durationMs: 0,
   };
-
+  // 1. Read every push record and note the Tower retry users who are due. Nothing is written here.
+  const due = [];
   try {
-    for await (const { userId, record, etag } of iteratePushRecords(context)) { // v1.0.264 — etag: see pollOne
+    for await (const { userId, record } of iteratePushRecords(context)) {
       summary.users++;
-      const wasOptedIn = !!record.categories?.towerRetry && !!record.aniListToken;
-      if (wasOptedIn) summary.optedInTowerRetry++;
-      try {
-        const r = await pollOne(userId, record, context, etag);
-        if (r.skipped)        summary.skipped++;
-        if (r.revoked)        summary.revoked++;
-        if (r.rateLimited)    summary.rateLimited++;
-        if (r.snapshot)       summary.snapshots++;
-        if (r.error)          summary.errors++;
-        if (r.stale)          summary.stale++; // v1.0.264
-        // pollOne actually called AniList iff we got a real outcome (not skipped/no-token)
-        if (r.pushed != null || r.noNew || r.snapshot != null || r.stale) summary.polled++;
-        if (r.pushed) {
-          summary.pushed++;
-          summary.newCompletions += r.pushed;
-          summary.devices        += r.sent || 0;
-        }
-        // v1.0.224 — per-user log for any non-boring outcome (push sent,
-        // error, revoked token, initial snapshot). "noNew" and "skipped"
-        // are the healthy quiet paths and don't need per-user log spam.
-        if (r.pushed || r.error || r.revoked || r.snapshot || r.stale) { // v1.0.264 — + stale
-          console.log('[tower-retry-poll] user', userId, '->', JSON.stringify(r));
-        }
-      } catch (e) {
-        summary.errors++;
-        console.error('[tower-retry-poll] user', userId, 'failed:', e?.message);
-      }
-      // Only delay between AniList requests, not between blob reads. If we
-      // skipped the user (no token, opted out), no point in waiting.
-      await new Promise(r => setTimeout(r, PER_USER_DELAY_MS));
+      if (!canCheck(record)) continue;
+      summary.towerUsers++;
+      if (isDue(record, startedAt)) due.push({ userId, lastPolledAt: Number(record.lastPolledAt) || 0 });
     }
   } catch (e) {
-    console.error('[tower-retry-poll] fatal:', e?.message);
+    // the users found so far are still checked: each is read again just before its check
     summary.errors++;
+    console.error('[tower-retry-poll] reading push records stopped after', summary.users, ':', e?.message);
   }
-
-  summary.finished  = new Date().toISOString();
-  summary.durationMs = Date.now() - startTs;
-  // v1.0.224 — surface the summary in Netlify's function log so operators can
-  // see the outcome of each cron run without having to inspect the HTTP
-  // response. Previously the summary was only returned as the Response body,
-  // which Netlify doesn't show in the log viewer. `console.log` output IS
-  // shown, so this makes each invocation self-documenting.
+  summary.scanMs = Date.now() - startedAt;
+  due.sort((a, b) => a.lastPolledAt - b.lastPolledAt); // oldest first (never checked = 0 = first)
+  summary.due = due.length;
+  // v1.0.267 — the longest wait among users checked before (a never-checked user, 0, has none to measure and must not
+  // hide the others' wait)
+  const oldestStamped = due.find((d) => d.lastPolledAt);
+  if (oldestStamped) summary.oldestDueMin = Math.round((startedAt - oldestStamped.lastPolledAt) / MINUTE_MS);
+  // 2. Check them, oldest first, until the cap or the time limit.
+  let next = 0;
+  for (; next < due.length; next++) {
+    if (summary.polled >= MAX_CHECKS_PER_RUN) { summary.stoppedBy = 'cap'; break; }
+    if (Date.now() - startedAt > TIME_BUDGET_MS) { summary.stoppedBy = 'time'; break; }
+    const { userId } = due[next];
+    try {
+      // read again just before the check: the token stored now, and its etag for the write-back (v1.0.264)
+      const read = await loadPushRecordVersioned(userId, context);
+      if (!read.exists || !canCheck(read.record) || !isDue(read.record, startedAt)) { summary.stale++; continue; }
+      summary.polled++;
+      const r = await pollOne(userId, read.record, context, read.etag);
+      if (r.rateLimited) {
+        summary.rateLimited++;
+        summary.stoppedBy = 'rate-limited';
+        console.warn('[tower-retry-poll] AniList answered 429 for user', userId, '- run stopped; they go first next run');
+        break; // skips next++, so this user counts as backlog
+      }
+      // counts and the per-user log line as today (pushed / error / revoked / snapshot / stale)
+      if (r.revoked)        summary.revoked++;
+      if (r.snapshot)       summary.snapshots++;
+      if (r.error)          summary.errors++;
+      if (r.stale)          summary.stale++; // v1.0.264
+      if (r.pushed) {
+        summary.pushed++;
+        summary.newCompletions += r.pushed;
+        summary.devices        += r.sent || 0;
+      }
+      // v1.0.224 — per-user log for any non-boring outcome (push sent,
+      // error, revoked token, initial snapshot). "noNew" is the healthy
+      // quiet path and doesn't need per-user log spam.
+      if (r.pushed || r.error || r.revoked || r.snapshot || r.stale) { // v1.0.264 — + stale
+        console.log('[tower-retry-poll] user', userId, '->', JSON.stringify(r));
+      }
+    } catch (e) {
+      summary.errors++;
+      console.error('[tower-retry-poll] user', userId, 'failed:', e?.message);
+    }
+  }
+  summary.backlog = due.length - next;
+  summary.durationMs = Date.now() - startedAt;
+  // v1.0.224 — the summary goes to Netlify's function log (console output is
+  // shown there; the Response body is not), so each run documents itself.
   console.log('[tower-retry-poll] summary:', JSON.stringify(summary));
-  // Capacity headroom — tells us when we're approaching Netlify's scheduled-
-  // function runtime limit. Past 80% utilisation: start planning to shard the
-  // work or hash-distribute users across the hour.
-  summary.capacity = {
-    optedIn:     summary.optedInTowerRetry,
-    softLimit:   SOFT_USER_LIMIT,
-    percentUsed: Math.round((summary.optedInTowerRetry / SOFT_USER_LIMIT) * 100),
-    nearLimit:   summary.optedInTowerRetry >= Math.floor(SOFT_USER_LIMIT * 0.8),
-  };
-  // Log capacity at WARN level once we're past 80% so Netlify's function logs
-  // surface it without requiring a dashboard.
-  if (summary.capacity.nearLimit) {
-    console.warn(
-      `[tower-retry-poll] capacity ${summary.capacity.percentUsed}% — ` +
-      `${summary.optedInTowerRetry}/${SOFT_USER_LIMIT} users opted in. ` +
-      `Consider sharding the poll function.`
-    );
-  }
+  // v1.0.267 — these replace the capacity block (a share of a 10-minute limit Netlify doesn't give scheduled functions)
+  if (summary.oldestDueMin > 210) console.warn(`[tower-retry-poll] the longest-waiting Tower retry user was last checked ${summary.oldestDueMin} min ago (over 3 h 30 min). The app and privacy.html say about every 3 hours: more than about 96 Tower retry users, or AniList refusing requests.`);
+  if (summary.users > 200) console.warn(`[tower-retry-poll] ${summary.users} push records are read every run (over 200): reading them all every 15 minutes is getting costly. Next step: run every 30 minutes, or read a twelfth of the records per run.`);
   return Response.json(summary);
 };
 
-// Netlify scheduled-function syntax. The cron string says "every 15 minutes
-// (at :00, :15, :30, :45)". Bumped from hourly in v1.0.218 so Tower-retry
-// pushes feel near-real-time — worst-case lag between marking an anime
-// COMPLETED on AniList and getting the push drops from ~60 min to ~15 min.
-// Per-user AniList load is unchanged (each user is still queried once per
-// cycle); aggregate function invocation count is 4× hourly. At current
-// scale that's negligible against Netlify's free-tier function quota and
-// well under the 10-minute per-execution soft limit (see SOFT_USER_LIMIT
-// above for the cap; with the 15-min schedule, soft limit applies per
-// 15-min window rather than per hour, but still calculated the same way).
+// Every 15 minutes (UTC; scheduled functions run only on the published
+// production deploy). v1.0.267 — a run with nobody due only reads the push
+// records (about half a second). Each Tower retry user is checked about every
+// CHECK_EVERY_HOURS hours, at most MAX_CHECKS_PER_RUN a run (about 96 users
+// every 3 hours). Netlify allows a scheduled function 30 seconds
+// (TIME_BUDGET_MS). The summary's oldestDueMin and backlog show when that is
+// not enough.
 export const config = {
   schedule: '*/15 * * * *',
 };

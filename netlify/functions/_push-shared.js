@@ -306,12 +306,17 @@ export async function callAniList(token, query, variables = {}) {
       body: JSON.stringify({ query, variables }),
       signal: controller.signal,
     });
-    const data = await res.json();
-    if (!res.ok || data.errors) {
+    // v1.0.267 — a reply that isn't JSON (an error page from a proxy on a 429 or 502, say) still throws with its HTTP
+    // status, so tower-retry-poll can tell a rate limit from other errors (res.json() used to throw first, without it).
+    // A timeout while the reply is read is still thrown as the timeout.
+    const data = await res.json().catch((e) => { if (e?.name === 'AbortError') throw e; return null; });
+    if (!res.ok || !data || data.errors) {
       const code = res.status;
-      const err = data.errors?.[0]?.message || `HTTP ${code}`;
+      const err = data?.errors?.[0]?.message || `HTTP ${code}`;
       const e = new Error(err);
-      e.status = code;
+      // v1.0.267 — but a 401/403 that isn't AniList's own JSON answer (a Cloudflare block or challenge page, say) is not
+      // a rejected token: tower-retry-poll turns Tower retry off on 401/403, so only a JSON reply may carry them
+      e.status = !data && (code === 401 || code === 403) ? 0 : code;
       throw e;
     }
     return data.data;
@@ -378,12 +383,18 @@ export async function fetchCompletedAnime(token, userId, maxPages = 20, opts = {
       const lastUpd = Number.isFinite(last.updatedAt) ? last.updatedAt : 0;
       if (lastUpd > 0 && (beforeSeconds - lastUpd) > 30 * 24 * 60 * 60) break pages;
     }
-    if (!data?.Page?.pageInfo?.hasNextPage) break;
-    // Polite delay between pages to stay well clear of AniList's 90 req/min cap.
+    // v1.0.267 — + the last page wanted: no pause after it (was 0.7 s after every check's only page, tower-retry-poll's
+    // maxPages 1, for anyone with more than 50 completed anime)
+    if (!data?.Page?.pageInfo?.hasNextPage || page >= maxPages) break;
+    // Polite pause between pages. v1.0.267 — AniList allows 30 requests a minute at the moment (lowered from 90), so a
+    // long list read at this pace (push-register's opt-in snapshot, up to 20 pages) can pass it.
     await new Promise(r => setTimeout(r, 700));
   }
   return all;
 }
+
+// v1.0.267 — how many push records iteratePushRecords reads at once
+const READ_BATCH = 10;
 
 // Iterate every push record in the kessen-push blob store. Yields one record
 // per user with their userId attached. The scheduled tower-retry function
@@ -394,12 +405,17 @@ export async function* iteratePushRecords(context) {
   let cursor;
   do {
     const page = await store.list({ prefix: 'subs_', cursor });
-    for (const blob of page.blobs || []) {
-      const userId = blob.key.replace(/^subs_/, '');
-      // v1.0.264 — with its etag, so the poll's write-back can't put back a record deleted meanwhile (writePushRecordChange)
-      const { record, etag, exists } = await readPushRecordVersioned(store, blob.key);
-      if (exists) {
-        yield { userId, record, etag };
+    // v1.0.267 — read 10 at a time (was one by one, about 0.1 s each: 100 push users took about 10 s of the poll's 30 s).
+    // Same records, same order, each with its etag; a read that fails still ends the iteration, after the records
+    // before it (allSettled: Promise.all lost the ones before it in its batch of 10).
+    const keys = (page.blobs || []).map((blob) => blob.key);
+    for (let i = 0; i < keys.length; i += READ_BATCH) {
+      const batch = keys.slice(i, i + READ_BATCH);
+      const reads = await Promise.allSettled(batch.map((key) => readPushRecordVersioned(store, key)));
+      for (const [j, read] of reads.entries()) {
+        if (read.status === 'rejected') throw read.reason;
+        const { record, etag, exists } = read.value;
+        if (exists) yield { userId: batch[j].replace(/^subs_/, ''), record, etag }; // v1.0.264 — with its etag
       }
     }
     cursor = page.cursor;
@@ -410,6 +426,15 @@ export async function* iteratePushRecords(context) {
 // in the user's record. Returns { sent, failed, removed }: `removed` is
 // the number of expired/invalid subscriptions cleaned out of the record.
 // Caller is responsible for re-saving the record if removed > 0.
+// v1.0.267 — a push service that hasn't answered in 3 s counts as a failed delivery (the device is kept, as for any
+// failure but 410/404), so one device that never answers can't hold tower-retry-poll until Netlify stops it at 30 s
+// and stay first in every later run. push-send-invite gets the same limit ('no-subscription' if every device fails).
+const PUSH_TIMEOUT_MS = 3000;
+function withTimeout(promise, ms) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
 export async function sendPushToUser(record, payload) {
   if (!record || !record.subscriptions?.length) {
     return { sent: 0, failed: 0, removed: 0, gone: [] }; // v1.0.264 — gone: see below
@@ -426,7 +451,8 @@ export async function sendPushToUser(record, payload) {
   const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
   const results = await Promise.allSettled(
     record.subscriptions.map(s =>
-      webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, body)
+      // v1.0.267 — at most PUSH_TIMEOUT_MS per device (see above)
+      withTimeout(webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, body), PUSH_TIMEOUT_MS)
     )
   );
 
