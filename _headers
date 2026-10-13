@@ -14,7 +14,7 @@
 #   • img.anili.st            — AniList alt CDN
 #   • *.myanimelist.net       — MAL cover images + API
 #   • *.cdn-dena.com          — MAL legacy CDN
-#   • api.jikan.moe           — Jikan (public MAL mirror) for Live Challenge MAL user lookup
+#   (v1.0.268 — the public MAL mirror entry is gone from connect-src: nothing calls it any more)
 #
 # connect-src includes all CDN domains so the canvas image export
 # (which uses fetch() with mode:cors on cover URLs) isn't blocked.
@@ -36,7 +36,7 @@
 #   • www.gstatic.com in connect-src silences source-map fetch errors that
 #     otherwise spam the violation handler
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com https://api.jikan.moe https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.firebase.com https://*.googleapis.com https://www.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-src https://*.firebasedatabase.app https://*.firebaseio.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com; font-src 'self' data:; connect-src 'self' https://*.anilist.co https://img.anili.st https://*.myanimelist.net https://*.cdn-dena.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.firebase.com https://*.googleapis.com https://www.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-src https://*.firebasedatabase.app https://*.firebaseio.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
@@ -59,4 +59,9 @@
 /.well-known/assetlinks.json
   Content-Type: application/json
   Cache-Control: public, max-age=3600, must-revalidate
+  X-Robots-Tag: noindex
+
+# v1.0.268 — shared Top 10 pages ask search engines not to list them (decision 5). The app also adds a robots meta
+# on these pages, in case this header rule is skipped on the /s/* rewrite to index.html.
+/s/*
   X-Robots-Tag: noindex
