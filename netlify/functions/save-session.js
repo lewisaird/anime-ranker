@@ -54,6 +54,19 @@ function verifyMALToken(token) {
   });
 }
 
+// v1.0.268 — Kessen no longer counts which features are used (decision 11), but a copy of the app from before 1.0.268
+// still open in a tab or the Android app sends its usage counters (`metrics`) with every save. This drops them, so
+// they are never stored. Takes the session as an object or a JSON string (as the app sends it) and returns the JSON
+// string to store; a save without `metrics` (a wipe marker, or a 1.0.268 save) is returned as it came. Throws on a
+// string that is not JSON, like the JSON.parse it replaces.
+export function withoutUsageCounts(session) {
+  const parsed = typeof session === 'string' ? JSON.parse(session) : session;
+  const has = parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'metrics');
+  if (!has) return typeof session === 'string' ? session : JSON.stringify(session);
+  const { metrics: _usageCounts, ...rest } = parsed;
+  return JSON.stringify(rest);
+}
+
 export default async (request, context) => {
   if (request.method !== 'POST') {
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
@@ -87,7 +100,7 @@ export default async (request, context) => {
 
   try {
     const store = getStore({ name: 'anime-elo-sessions', context });
-    const value = typeof session === 'string' ? session : JSON.stringify(session);
+    const value = withoutUsageCounts(session); // v1.0.268 — was stored as sent, usage counters included
     await store.set(`session_${userId}`, value);
     const parsed = JSON.parse(value);
     return Response.json({ ok: true, savedAt: parsed.savedAt ?? null });

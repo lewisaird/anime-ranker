@@ -28,6 +28,15 @@
 //     later.
 //   - Push delivery 410 Gone — the device subscription is dead; the
 //     sendPushToUser helper already prunes it from the record.
+//     v1.0.268 — if that leaves no device, Tower retry is turned off too
+//     (turnOffTowerRetry: token, completed list and poll time go with it), so
+//     no AniList token is kept for a record nobody can be told about.
+//
+// v1.0.268 — each run also tidies up to TIDY_PER_RUN records the scan finds (after the checks, within the time
+// budget): it removes the browser identifier string (ua) older registrations stored on each device, and turns Tower
+// retry off where no device is left but a token is kept or Tower retry is on. Each write is conditional on the
+// record's etag (writePushRecordChange), so a deleted record stays deleted and a device added meanwhile is kept.
+// The Tower retry push lives one day (TOWER_PUSH_TTL_S): a phone offline longer doesn't get a stale prompt.
 
 // v1.0.264 — conditional write-backs (writePushRecordChange) replace savePushRecord
 // v1.0.267 — + loadPushRecordVersioned: each due user is read again just before its check
@@ -43,6 +52,10 @@ import {
 } from './_push-shared.js';
 
 const MINUTE_MS = 60 * 1000;
+// v1.0.268 — how long a push service keeps a Tower retry push for a device that is offline (decision 25), in seconds
+const TOWER_PUSH_TTL_S = 24 * 60 * 60;
+// v1.0.268 — at most this many records tidied a run (see the header)
+const TIDY_PER_RUN = 10;
 // v1.0.267 — each Tower retry user is checked about every 3 hours (Lewis, 12 Oct 2026; was every run, every 15 minutes).
 // privacy.html and the app's Tower retry notice (app.js _pushConfirmTowerRetry) say the same; tests/privacy-links checks it.
 const CHECK_EVERY_HOURS = 3;
@@ -62,6 +75,15 @@ const TIME_BUDGET_MS = 15000;
 const canCheck = (r) => !!r.categories?.towerRetry && !!r.subscriptions?.length && !!r.aniListToken && !!r.aniListUserId;
 // v1.0.267 — due when the last check (or the opt-in, which push-register stamps) is at least DUE_AFTER_MS old
 const isDue = (r, at) => (Number(r.lastPolledAt) || 0) <= at - DUE_AFTER_MS;
+// v1.0.268 — a record to tidy: a device still carries the old browser identifier string, or no device is left but
+// an AniList token is kept or Tower retry is on
+const needsTidy = (r) => (r.subscriptions || []).some(s => s && typeof s === 'object' && 'ua' in s)
+  || (!r.subscriptions?.length && (!!r.aniListToken || !!r.categories?.towerRetry));
+// v1.0.268 — the tidy-up itself, applied by writePushRecordChange to the newest copy of the record
+const tidyRecord = (r) => {
+  (r.subscriptions || []).forEach(s => { if (s && typeof s === 'object') delete s.ua; });
+  if (!r.subscriptions?.length) turnOffTowerRetry(r);
+};
 // Soft cap on how many "new completions" we'll list in one push session,
 // per user. Prevents an enormous import event firing a giant push payload.
 const MAX_BATCH = 100;
@@ -207,7 +229,7 @@ async function pollOne(userId, record, context, etag) {
   // actually being notified.
   let pushResult = { sent: 0, failed: 0, removed: 0 };
   try {
-    pushResult = await sendPushToUser(record, buildPushPayload(newOnes));
+    pushResult = await sendPushToUser(record, buildPushPayload(newOnes), { TTL: TOWER_PUSH_TTL_S }); // v1.0.268 — + TTL
   } catch (e) {
     return failed('push: ' + e.message); // v1.0.267 — lastPolledAt moves on (see failed); nothing else is saved
   }
@@ -220,15 +242,21 @@ async function pollOne(userId, record, context, etag) {
   // `gone` (dead endpoints) stays out of the result, which is logged
   const { gone, ...pushCounts } = pushResult;
   const now = Date.now();
+  let towerRetryOff = false; // v1.0.268 — set by the copy that is written
   const written = await save((r) => {
     dropSubscriptions(r, gone);
     const known = asIdSet(r.notifiedCompletions);
     for (const item of newOnes) known.add(item.id);
     r.notifiedCompletions = [...known];
     r.lastPolledAt        = now;
+    // v1.0.268 — no device left (every one answered 410/404): Tower retry off, last, so the completed list and poll
+    // time go with the token (decision 15). A device registered meanwhile is in the newer copy, so it stays on.
+    towerRetryOff = !r.subscriptions?.length;
+    if (towerRetryOff) turnOffTowerRetry(r);
   });
 
-  return { pushed: newOnes.length, ...pushCounts, ...(written ? {} : { stale: true }) };
+  // v1.0.268 — + towerRetryOff, for the per-user log line
+  return { pushed: newOnes.length, ...pushCounts, ...(written ? (towerRetryOff ? { towerRetryOff: true } : {}) : { stale: true }) };
 }
 
 // v1.0.267 — was: one record at a time, a 0.8 s wait after every record (Tower retry or not), every Tower retry user
@@ -245,13 +273,16 @@ export default async (_request, context) => {
     oldestDueMin: 0,   // minutes since the longest-waiting due user was last checked
     pushed: 0, devices: 0, newCompletions: 0,
     rateLimited: 0, revoked: 0, snapshots: 0, stale: 0, errors: 0,
+    tidied: 0,         // v1.0.268 — records tidied (old ua removed, or Tower retry off with no device left)
     scanMs: 0, durationMs: 0,
   };
   // 1. Read every push record and note the Tower retry users who are due. Nothing is written here.
   const due = [];
+  const tidy = []; // v1.0.268 — up to TIDY_PER_RUN records to tidy after the checks, each with the etag it was read with
   try {
-    for await (const { userId, record } of iteratePushRecords(context)) {
+    for await (const { userId, record, etag } of iteratePushRecords(context)) {
       summary.users++;
+      if (tidy.length < TIDY_PER_RUN && needsTidy(record)) tidy.push({ userId, record, etag }); // v1.0.268
       if (!canCheck(record)) continue;
       summary.towerUsers++;
       if (isDue(record, startedAt)) due.push({ userId, lastPolledAt: Number(record.lastPolledAt) || 0 });
@@ -308,6 +339,17 @@ export default async (_request, context) => {
     }
   }
   summary.backlog = due.length - next;
+  // 3. v1.0.268 — tidy-up, within the same time budget. Applied to the newest copy (a device added since the scan is
+  // kept, and keeps Tower retry on), skipped if the record was deleted or no longer needs it.
+  for (const { userId, record, etag } of tidy) {
+    if (Date.now() - startedAt >= TIME_BUDGET_MS) break;
+    try {
+      if (await writePushRecordChange(userId, context, { record, etag, exists: true }, tidyRecord, needsTidy)) summary.tidied++;
+    } catch (e) {
+      summary.errors++;
+      console.error('[tower-retry-poll] tidying user', userId, 'failed:', e?.message);
+    }
+  }
   summary.durationMs = Date.now() - startedAt;
   // v1.0.224 — the summary goes to Netlify's function log (console output is
   // shown there; the Response body is not), so each run documents itself.

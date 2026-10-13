@@ -48,27 +48,32 @@
     <!-- v1.0.264 — "stored", not "sent": an invite also sends the name (push-send-invite puts it in the notification) -->
     <li><strong>Your display name and avatar URL</strong> — fetched from AniList or MyAnimeList at login and stored locally in your browser to display your profile badge. These are not stored on our servers, except that when you use <strong>Share</strong>, the name shown on your Top 10 is saved with its public link (see <a href="#deleting-your-data">Deleting your data</a>). When you send a Watch Together or Live Challenge invite, your name is included in the notification the other person receives.</li>
     <li><strong>Your notification list</strong> — the alerts shown under the bell icon (for example "you finished X — battle it in the Tower?"), so they stay in sync across your devices.</li>
-    <li><strong>Anonymous usage counts</strong> — a tally of which features you use. Specifically: how many battles, skips and undos you have made; which battle modes and tabs you open; which Discover sub-tabs and mood chips you use; whether you have used the social features (compare, challenge, live challenge, watch together) and the Tower; and whether the install prompt was shown, accepted or dismissed. Plus a session count and first/last-active dates. These are plain counts: no anime titles, no timestamps per action, nothing that identifies what you watched. They are included in your backup file (Manage → Download backup) so you can see exactly what is recorded, and we use them only to decide which features to improve or retire.</li>
+    <!-- v1.0.268 — the "Anonymous usage counts" item is gone: Kessen no longer counts which features you use (decision 11) -->
     <li><strong>Push notification data</strong> — only if you turn notifications on. See the section below.</li>
   </ul>
+  <!-- v1.0.268 — the counts already kept: removed from the device at the next start (app.js _dropUsageCountKeys), from cloud saves by save-session and tools/strip-usage-counts.mjs -->
+  <p>Kessen does not count which features you use. It kept such counts until October 2026; they are deleted from your device the next time you open Kessen, and are being removed from cloud saves.</p>
 
   <h2>Where it's stored</h2>
   <ul>
     <li><strong>In your browser</strong> — your session data (rankings, battle history) is saved to <code>localStorage</code> on your device. Clearing your browser data removes it.</li>
-    <li><strong>In Netlify Blob Storage</strong> — if you are logged in via AniList or MAL OAuth, your session (rankings, battle history, notification list, usage counts) is also backed up to Netlify's hosted blob storage, keyed by your account ID. This enables your rankings to sync across devices. If you turn on push notifications, the data described in the <em>Push notifications</em> section below is stored here too. Netlify's privacy policy applies to this storage: <a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">netlify.com/privacy</a>.</li>
+    <!-- v1.0.268 — only the signed-in account's own list is backed up (AniList first with both); "notification list" was already wrong (it syncs through Firebase) and "usage counts" are gone -->
+    <li><strong>In Netlify Blob Storage</strong> — if you are logged in via AniList or MAL OAuth, your own list (its rankings and battle history) is also backed up to Netlify's hosted blob storage, keyed by your account ID. If you are signed in to both, the AniList list is the one backed up. A guest list, or a list you opened by typing a username, stays on your device. This enables your rankings to sync across devices. If you turn on push notifications, the data described in the <em>Push notifications</em> section below is stored here too. Netlify's privacy policy applies to this storage: <a href="https://www.netlify.com/privacy/" target="_blank" rel="noopener">netlify.com/privacy</a>.</li>
     <li><strong>In Google Firebase Realtime Database</strong> — for two things: keeping your notification list in sync between your devices while you are logged in, and coordinating multiplayer sessions (Watch Together or Live Challenge) when you actively start or join one. See the sections below for what is stored and for how long.</li>
   </ul>
 
   <h2>Push notifications</h2>
   <p>Notifications are off by default. If you turn them on (bell icon → push settings), Kessen stores the following in Netlify Blob Storage so that it can deliver them:</p>
   <ul>
-    <li><strong>Your browser's push subscription</strong> — the endpoint address and encryption keys your browser generates for receiving notifications, one per device, along with that device's browser identifier string so we can tell devices apart.</li>
+    <!-- v1.0.268 — the browser identifier string (user agent) is no longer stored, and old ones are removed (decision 12); "before then", not "before October 2026": strings stored in October up to this release are removed too -->
+    <li><strong>Your browser's push subscription</strong> — the endpoint address and encryption keys your browser generates for receiving notifications, one per device, with the time each device was added and last registered. Kessen stopped storing your browser's identifier string in October 2026, and removes any stored before then.</li>
     <li><strong>Which notification types you have enabled.</strong></li>
     <!-- v1.0.264 — Tower retry now starts off and needs a confirmed opt-in (M9); earlier sign-ups had it on by default and are not migrated -->
     <!-- v1.0.267 — the server checks each Tower retry user about every 3 hours (was every run, every quarter hour); the app's notice says the same (tests/privacy-links) -->
     <li><strong>For "Tower retry" notifications only (AniList accounts):</strong> this type now starts off. When you tick it, Kessen first tells you that it will keep your AniList sign-in on our server and asks you to confirm. Until October 2026 it was switched on by default when you turned on notifications with an AniList account; if you did that and have not unticked it since, untick <em>Tower retry prompts</em> to delete the stored sign-in. To notice when you finish an anime while Kessen is closed, our server checks your AniList list about every 3 hours. To do that it needs to act on your behalf, so <strong>we store your AniList access token on our server</strong> for as long as this notification type is switched on. We also keep the list of AniList IDs of anime you have already been notified about, so you are not notified twice. The token is used only to read your anime list; it is never logged or shared.</li>
   </ul>
-  <p>Turning off "Tower retry" deletes the stored token and completion list immediately. Turning off all notifications, or removing the last device, deletes the whole push record. This data is also removed by <strong>Delete all my data</strong>.</p>
+  <!-- v1.0.268 — tower-retry-poll turns Tower retry off (token and completed list deleted) once no device is left (decision 15) -->
+  <p>Turning off "Tower retry" deletes the stored token and completion list immediately. Turning off notifications on your last device deletes the whole push record. If every device stops accepting notifications (for example, the app was uninstalled), Kessen turns Tower retry off and deletes the stored AniList token when it next finds out. This data is also removed by <strong>Delete all my data</strong>.</p>
 
   <h2>Multiplayer (Firebase) data</h2>
   <p>Kessen's multiplayer features (Watch Together and Live Challenge) use Google's Firebase Realtime Database to coordinate state between players. Session data is only written when you actively start or join a multiplayer session. Outside of multiplayer, the only other thing Firebase is used for is syncing your notification list between your devices (see <em>What we store</em>); it is not used for solo battling or profile viewing.</p>
@@ -87,7 +92,8 @@
   <h2>What we don't do</h2>
   <ul>
     <li>We do not sell or share your data with third parties.</li>
-    <li>We do not use third-party analytics, advertising trackers, or cookies. The only usage data we keep is the anonymous feature-count tally described under <em>What we store</em>, which lives in your own cloud save and nowhere else.</li>
+    <!-- v1.0.268 — no feature-count tally any more (decision 11) -->
+    <li>We do not use third-party analytics, advertising trackers, or cookies, and we do not count which features you use.</li>
     <li>We do not store your watch history or scores from AniList or MyAnimeList — only the ELO rankings you build within Kessen. The one exception is the "already notified" list of completed-anime IDs kept for Tower-retry notifications, described above, which exists solely to avoid sending you the same notification twice.</li>
   </ul>
 
@@ -104,7 +110,8 @@
   <h2 id="deleting-your-data">Deleting your data</h2>
   <p>The easiest way to delete your data is directly from within the app. Open your rankings, go to the <strong>Manage</strong> tab, scroll to the Danger Zone, and press <strong>Delete all my data</strong>. If you are signed in with AniList or MyAnimeList, this immediately deletes, for that account:</p>
   <ul>
-    <li><strong>Your cloud save</strong>: the rankings, battle history and usage counts backed up in Netlify Blob Storage.</li>
+    <!-- v1.0.268 — no usage counts in a cloud save any more -->
+    <li><strong>Your cloud save</strong>: everything Kessen backed up for the account in Netlify Blob Storage, including your rankings and battle history.</li>
     <li><strong>Your push notification record</strong>: the push subscriptions we hold for all your devices, your notification choices and, if "Tower retry" was on, the stored AniList access token and the list of completed anime kept for it. This device's push subscription is cancelled as well.</li>
     <!-- v1.0.264 — say how long invite records are kept: push-send-invite never removes them; Delete all (either account) does -->
     <li><strong>Your invite records</strong>: when a Watch Together or Live Challenge invite is sent to or from you as a push notification, our server keeps a small record of it in Netlify Blob Storage (the sender's and receiver's account IDs, the session code and the time it was sent) so the same invite is not sent twice within a minute. A record is needed only for that one-minute cooldown, but it is kept until either account, the sender's or the receiver's, uses <strong>Delete all my data</strong>.</li>

@@ -1,14 +1,30 @@
 // Admin function to manually delete a user's stored session data.
 // Used to fulfil data deletion requests received via email.
 //
-// Usage by numeric ID:
-//   GET /.netlify/functions/admin-delete-user?id=12345&key=YOUR_SECRET
-//   GET /.netlify/functions/admin-delete-user?id=mal_67890&key=YOUR_SECRET
+// v1.0.268 — POST only, with the key in an Authorization header and the account in a JSON body (decision 26). The
+// key used to go in the query string, where it could end up in logs and shell history; a key there is now ignored
+// (401), and anything but POST gets 405 before the key is checked.
 //
-// Usage by username (AniList only — looks up ID automatically):
-//   GET /.netlify/functions/admin-delete-user?username=AniELOTest&key=YOUR_SECRET
+//   POST /.netlify/functions/admin-delete-user
+//   Authorization: Bearer <ADMIN_DELETE_KEY>
+//   Content-Type: application/json
 //
-// The secret key is set via the ADMIN_DELETE_KEY environment variable in Netlify.
+//   {"id":"12345"}                                   AniList account id
+//   {"id":"mal_67890"}                               MyAnimeList account id
+//   {"username":"AniELOTest"}                        AniList username (looked up on AniList)
+//   {"username":"name","platform":"mal"}             refused (400): MAL usernames can't be looked up here; run
+//                                                    tools/find-mal-id.mjs, or ask them to use Delete all
+//
+// Bad JSON gives 400. The secret key is set via the ADMIN_DELETE_KEY environment variable in Netlify.
+// From zsh, so the key never appears in the command line or the shell history:
+//
+//   read -rs KESSEN_ADMIN_KEY        # paste ADMIN_DELETE_KEY, press Enter (nothing shows)
+//   curl -sS -X POST 'https://kessen.co.uk/.netlify/functions/admin-delete-user' \
+//     -H "Authorization: Bearer $KESSEN_ADMIN_KEY" -H 'Content-Type: application/json' \
+//     --data '{"id":"12345"}'
+//   unset KESSEN_ADMIN_KEY
+//
+// A safe check: --data '{"id":"check"}' answers 400 "Invalid id format" (the key passed, nothing was deleted).
 //
 // v1.0.264 — deletes the cloud save AND the push data: the push record (device subscriptions and any AniList
 // token Tower retry polls with) and the invite stamps naming the account. Names the Firebase node to remove
@@ -48,46 +64,61 @@ function _adminKeyMatches(provided, expected) {
   }
 }
 
-async function lookupMALId(username) {
-  const res = await fetch(`https://api.jikan.moe/v4/users/${encodeURIComponent(username)}`);
-  const data = await res.json();
-  return data?.data?.mal_id ?? null;
+// (v1.0.268 — the MAL username lookup through a public MAL mirror is gone: see the header)
+
+// v1.0.268 — the key from "Authorization: Bearer <key>", or null
+function _bearerKey(request) {
+  const m = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') || '');
+  return m ? m[1].trim() : null;
 }
 
 // v1.0.264 — the handler takes its store factory as a parameter so the tests can hand it an in-memory
 // store (as share.js does); Netlify gets the real @netlify/blobs one below.
 export function createHandler(storeFactory = getStore) {
   return async (request, context) => {
-  const url = new URL(request.url);
-  const key      = url.searchParams.get('key');
-  const id       = url.searchParams.get('id');
-  const username = url.searchParams.get('username');
-  const platform = (url.searchParams.get('platform') || 'anilist').toLowerCase();
+  // v1.0.268 — POST only, checked before the key (see the header)
+  if (request.method !== 'POST') {
+    return Response.json({ error: 'Use POST with the key in an Authorization header' }, { status: 405 });
+  }
 
-  // Validate secret key (constant-time compare — see _adminKeyMatches above)
+  // Validate secret key (constant-time compare — see _adminKeyMatches above). v1.0.268 — from the Authorization
+  // header only; a key in the query string is ignored.
   const adminKey = process.env.ADMIN_DELETE_KEY;
-  if (!adminKey || !_adminKeyMatches(key, adminKey)) {
+  if (!adminKey || !_adminKeyMatches(_bearerKey(request), adminKey)) {
     return Response.json({ error: 'Unauthorised' }, { status: 401 });
   }
 
+  // v1.0.268 — the account comes from a JSON body (was query parameters)
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const str = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '');
+  const id       = str(body.id);
+  const username = str(body.username);
+  const platform = (str(body.platform) || 'anilist').toLowerCase();
+
   if (!id && !username) {
-    return Response.json({ error: 'Missing id or username parameter' }, { status: 400 });
+    return Response.json({ error: 'Missing id or username' }, { status: 400 });
   }
 
   let userId = id;
 
   // If username supplied, look up the numeric ID
   if (!userId && username) {
+    // v1.0.268 — MAL usernames are no longer looked up (nothing is fetched): tools/find-mal-id.mjs finds the id
+    if (platform === 'mal') {
+      return Response.json({ error: "MAL usernames can't be looked up here: run tools/find-mal-id.mjs, or ask them to use Delete all." }, { status: 400 });
+    }
     try {
-      if (platform === 'mal') {
-        const malId = await lookupMALId(username);
-        if (!malId) return Response.json({ error: `MAL user not found: ${username}` }, { status: 404 });
-        userId = `mal_${malId}`;
-      } else {
-        const anilistId = await lookupAniListId(username);
-        if (!anilistId) return Response.json({ error: `AniList user not found: ${username}` }, { status: 404 });
-        userId = String(anilistId);
-      }
+      const anilistId = await lookupAniListId(username);
+      if (!anilistId) return Response.json({ error: `AniList user not found: ${username}` }, { status: 404 });
+      userId = String(anilistId);
     } catch (e) {
       return Response.json({ error: 'Username lookup failed: ' + e.message }, { status: 500 });
     }

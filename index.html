@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.267" />
+  <meta name="version" content="1.0.268" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -1871,9 +1871,10 @@
         </div>
 
         <!-- v1.0.264 — L9: privacy policy and deletion links in Help as well as Manage -->
+        <!-- v1.0.268 — only the signed-in account's own list goes to the cloud; a guest or typed-name list stays on the device -->
         <div class="help-section">
           <h4>🔒 Your data</h4>
-          <p>Your rankings are saved on this device and, when you're signed in, backed up to the cloud so they sync between your devices. <strong>Manage → Delete all my data</strong> deletes them from both, along with your push notification sign-up and synced notifications, and logs you out. Log out on your other devices first, or they can upload their copy again. If you're not signed in, it clears this device only.</p>
+          <p>Your rankings are saved on this device and, when you're signed in, your own list is backed up to the cloud so it syncs between your devices. <strong>Manage → Delete all my data</strong> deletes them from both, along with your push notification sign-up and synced notifications, and logs you out. Log out on your other devices first, or they can upload their copy again. If you're not signed in, it clears this device only.</p>
           <div class="privacy-links">
             <a href="/privacy.html" target="_blank" rel="noopener">Privacy policy ↗</a>
             <a href="/privacy.html#deleting-your-data" target="_blank" rel="noopener">How deletion works ↗</a>
@@ -1882,7 +1883,8 @@
 
                 <div class="help-section" id="help-anilist-section" style="display:none">
           <h4>☁️ Cloud Sync</h4>
-          <p>When logged in with AniList or MAL, your rankings automatically save to the cloud after each battle (with a short delay). Opening the app on another device will prompt you to load the cloud save if it's newer than your local one. You can also push or pull manually any time from <strong>Manage → Backup, Sync &amp; Export</strong>.</p>
+          <!-- v1.0.268 — only the signed-in account's own list saves to the cloud (see "Your data" above) -->
+          <p>When logged in with AniList or MAL, your own list (your AniList list if you're signed in to both) automatically saves to the cloud after each battle (with a short delay). A guest list, or a list opened by typing a username, stays on this device. Opening your list on another device will prompt you to load the cloud save if it's newer than your local one. You can also push or pull your own list manually any time from <strong>Manage → Backup, Sync &amp; Export</strong>.</p>
         </div>
 
         <div class="help-section" id="help-anilist-section-2" style="display:none">

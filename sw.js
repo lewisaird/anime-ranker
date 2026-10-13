@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.267';
+const APP_VERSION  = '1.0.268';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -105,10 +105,10 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
 
   // Always go to network for API calls — never cache GraphQL or function responses
+  // v1.0.268 — the public MAL mirror's line is gone: nothing calls it any more, and the CSP no longer allows it
   if (
     url.pathname.startsWith('/.netlify/functions/') ||
-    url.hostname === 'graphql.anilist.co' ||
-    url.hostname.includes('jikan.moe')
+    url.hostname === 'graphql.anilist.co'
   ) {
     event.respondWith(fetch(request));
     return;

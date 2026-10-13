@@ -108,7 +108,9 @@ exports.handler = async (event) => {
           // which can include internal AniList error structures, partial
           // tokens, request IDs, etc. Return a generic message and log
           // the body server-side instead.
-          console.error('[anilist-auth] parse error, raw body:', data);
+          // v1.0.268 — the body is not logged either (it can hold a token): only the status and its length, so
+          // privacy.html's "never logged" is true
+          console.error('[anilist-auth] parse error: status', res.statusCode, 'length', data.length);
           resolve({ statusCode: 502, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'Upstream parse error' }) });
         }
       });

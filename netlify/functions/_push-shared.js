@@ -8,8 +8,10 @@
 //   key:   `subs_${userId}`      (userId is "anilist_<id>" or "mal_<id>")
 //   value: {
 //     subscriptions: [
-//       { endpoint, keys: { p256dh, auth }, ua, createdAt, lastSeen }
+//       { endpoint, keys: { p256dh, auth }, createdAt, lastSeen }
 //     ],
+//     (v1.0.268 — no `ua` (browser identifier string) any more: upsertSubscription never writes one and removes any
+//     stored before; tower-retry-poll's tidy-up strips it from records nobody registers again)
 //     categories: { towerRetry, watchTogether, liveChallenge },
 //     schemaVersion: 1,
 //   }
@@ -226,19 +228,20 @@ export async function deletePushRecord(userId, context) {
 
 // Merge a new device subscription into the array, deduping by endpoint
 // (the endpoint URL is the unique identifier per device per browser).
-export function upsertSubscription(record, subscription, ua) {
+// v1.0.268 — no browser identifier string (decision 12): a third argument (push-register still passes the `ua` an
+// older app copy sends) is ignored, and any register removes the `ua` stored on every device in the record.
+export function upsertSubscription(record, subscription) {
   const now = Date.now();
+  record.subscriptions.forEach(s => delete s.ua);
   const endpoint = subscription.endpoint;
   const existing = record.subscriptions.find(s => s.endpoint === endpoint);
   if (existing) {
     existing.lastSeen = now;
     existing.keys = subscription.keys;
-    existing.ua = ua || existing.ua;
   } else {
     record.subscriptions.push({
       endpoint,
       keys: subscription.keys,
-      ua: ua || null,
       createdAt: now,
       lastSeen: now,
     });
@@ -435,7 +438,9 @@ function withTimeout(promise, ms) {
   const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms); });
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
-export async function sendPushToUser(record, payload) {
+// v1.0.268 — options: { TTL (seconds), urgency } for web-push, passed only when given (decision 25): tower-retry-poll
+// sends TTL one day; push-send-invite passes none and keeps web-push's default. A topic is never set.
+export async function sendPushToUser(record, payload, options = {}) {
   if (!record || !record.subscriptions?.length) {
     return { sent: 0, failed: 0, removed: 0, gone: [] }; // v1.0.264 — gone: see below
   }
@@ -449,10 +454,15 @@ export async function sendPushToUser(record, payload) {
   webpush.setVapidDetails(subject, publicKey, privateKey);
 
   const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  // v1.0.268 — only the options given (see above); with none, sendNotification gets no third argument, as before
+  const sendOptions = {};
+  if (Number.isFinite(options?.TTL)) sendOptions.TTL = options.TTL;
+  if (options?.urgency) sendOptions.urgency = options.urgency;
+  const extra = Object.keys(sendOptions).length ? [sendOptions] : [];
   const results = await Promise.allSettled(
     record.subscriptions.map(s =>
       // v1.0.267 — at most PUSH_TIMEOUT_MS per device (see above)
-      withTimeout(webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, body), PUSH_TIMEOUT_MS)
+      withTimeout(webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, body, ...extra), PUSH_TIMEOUT_MS)
     )
   );
 

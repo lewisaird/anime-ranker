@@ -584,61 +584,11 @@ let _weeklyStats = {
   summaryShownFor:   null,
 };
 
-// v1.0.239 — LIGHTWEIGHT USAGE METRICS
-// Answers "which features actually get used?" so decisions about keeping,
-// cutting or investing in features (Predict / Rivalries / Collab / Live
-// Challenge / Missing / modes) can be data-driven instead of guessed.
-//   counts:     { 'tab.rankings': 12, 'discover.gaps': 3, 'mode.tower': 5, … }
-//   firstSeen:  ms epoch of first recorded event on this account
-//   lastSeen:   ms epoch of most recent event
-//   sessions:   count of app boots (incremented once per page load)
-// Deliberately NOT stored: per-event timestamps, anime IDs, anything that
-// would identify what the user watched. Just feature-usage tallies.
-let _metrics = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };
-let _metricsSaveTimer = null;
-let _metricsSessionCounted = false;  // once per page load
-
-function _metricsLoad() {
-  try {
-    const raw = localStorage.getItem(KESSEN_KEYS.data.metrics(saveKey));
-    const parsed = raw ? JSON.parse(raw) : null;
-    _metrics = (parsed && typeof parsed === 'object')
-      ? { counts: parsed.counts || {}, firstSeen: parsed.firstSeen || null, lastSeen: parsed.lastSeen || null, sessions: parsed.sessions || 0 }
-      : { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };
-  } catch { _metrics = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 }; }
-}
-function _metricsSave() {
-  try { localStorage.setItem(KESSEN_KEYS.data.metrics(saveKey), JSON.stringify(_metrics)); } catch { /* storage full/disabled — accept loss */ }
-}
-// Debounced so a burst of events (e.g. rapid battles) doesn't hammer
-// localStorage. 1.5s trailing edge.
-function _metricsSaveDebounced() {
-  clearTimeout(_metricsSaveTimer);
-  _metricsSaveTimer = setTimeout(_metricsSave, 1500);
-}
-// The one function every instrumented call site uses. Cheap enough to call
-// freely; does nothing destructive if metrics haven't loaded yet.
-function _metric(key) {
-  if (!key) return;
-  const now = Date.now();
-  _metrics.counts[key] = (_metrics.counts[key] || 0) + 1;
-  if (!_metrics.firstSeen) _metrics.firstSeen = now;
-  _metrics.lastSeen = now;
-  _metricsSaveDebounced();
-}
-// Merge policy for cloud sync: take the max of each counter. Counters only
-// go up, so max is the conservative "don't lose progress" merge. firstSeen
-// takes min, lastSeen max, sessions max.
-function _metricsMergeFromCloud(cloudM) {
-  if (!cloudM || typeof cloudM !== 'object') return;
-  const cc = cloudM.counts || {};
-  for (const k of Object.keys(cc)) {
-    _metrics.counts[k] = Math.max(_metrics.counts[k] || 0, cc[k] || 0);
-  }
-  if (cloudM.firstSeen && (!_metrics.firstSeen || cloudM.firstSeen < _metrics.firstSeen)) _metrics.firstSeen = cloudM.firstSeen;
-  if (cloudM.lastSeen  && (!_metrics.lastSeen  || cloudM.lastSeen  > _metrics.lastSeen))  _metrics.lastSeen  = cloudM.lastSeen;
-  _metrics.sessions = Math.max(_metrics.sessions || 0, cloudM.sessions || 0);
-}
+// v1.0.268 — Kessen no longer counts which features are used (decision 11): the v1.0.239 usage counters, their
+// local entries and their copy in the cloud save are gone (_dropUsageCountKeys removes the local ones at start, and
+// save-session drops any an older copy of the app still sends). What is left of them is the install nudge's
+// once-per-list-open flag, which used to share the counters' "session counted" flag.
+let _installNudgeScheduled = false;
 
 // ─── TOWER OF POWER ──────────────────────────────────────────────────────────
 let towerMode       = false;
@@ -934,12 +884,7 @@ const KESSEN_KEYS = {
     // cross-device sync merge to filter out items we just dismissed so
     // stale Firebase snapshots can't resurrect them.
     notifTombstones: (key) => `kessen.data.notifTombstones.${key || 'guest'}`,
-    // v1.0.239 — Lightweight usage metrics. Counters only (no timestamps per
-    // event, no PII) — "which tabs / modes / features get used". Local per
-    // user; also rides along in the cloud save (Netlify session blobs, not
-    // Firebase) so tools/metrics-report.mjs can aggregate usage for keep/cut
-    // decisions on low-use features.
-    metrics: (key) => `kessen.data.metrics.${key || 'guest'}`,
+    // (v1.0.268 — the v1.0.239 usage-count entry, kessen.data.metrics.<list>, is gone: see _dropUsageCountKeys)
     // v1.0.239 — PWA install-prompt dismissal (timestamp). Suppresses the
     // banner for 30 days after the user says "not now".
     installPromptDismissed: 'kessen.ui.installPromptDismissed',
@@ -1021,6 +966,15 @@ function _dropDeviceWideTasteKeys() {
 }
 _dropDeviceWideTasteKeys();
 
+// v1.0.268 — Kessen no longer counts which features are used. Every start removes the counts kept per list
+// (kessen.data.metrics.<list>); a tab of an older version still open can write one again, so this runs every time.
+function _dropUsageCountKeys() {
+  try {
+    Object.keys(localStorage).filter(k => k.startsWith('kessen.data.metrics.')).forEach(k => localStorage.removeItem(k));
+  } catch { /* storage blocked — nothing to drop */ }
+}
+_dropUsageCountKeys();
+
 // v1.0.266 — keepSavedAt: a later update of authUser (its score format, _refreshOwnScoreFormat) keeps the sign-in
 // time `saved` that loadAuthFromStorage's one-year expiry check reads; only a sign-in starts that year again
 function saveAuth({ keepSavedAt = false } = {}) {
@@ -1098,8 +1052,7 @@ function _clearRankingState() {
   saveKey           = '';
   _cloudSyncEnabled = false;
   _resetHereThisVisit = false; // v1.0.263 — list closed: other devices' copies apply as usual again
-  _metrics          = { counts: {}, firstSeen: null, lastSeen: null, sessions: 0 };  // v1.0.239
-  _metricsSessionCounted = false;
+  _installNudgeScheduled = false; // v1.0.268 — the install nudge is scheduled once per list open (was the usage counters' reset)
   // v1.0.211 — Clear mode flags + per-mode session state. Without this, a
   // user mid-WSO / Tower / Trio / Battle-Within who Resets and re-fetches
   // ends up in the new session with a stale champion index, trio array, or
@@ -2510,12 +2463,16 @@ function _updateCloudSyncTimestamp() {
   // v1.0.247 — the avatar dropdowns carry a short version of the same line.
   // The header dot is deliberately a transient flash; this is the standing
   // "am I synced?" answer, one tap away. Empty text hides the span (CSS).
-  const short = !_cloudSyncEnabled ? '' : ts ? `☁️ Synced ${_formatRelTime(ts)}` : '☁️ Not synced yet';
+  // v1.0.268 — with another list open (guest, typed name, or the MAL list with AniList also signed in) nothing syncs:
+  // no header line, and Manage says why. With no list open (the start screen) the account's last sync still shows.
+  const otherList = !!saveKey && !_isOwnAccountList();
+  const short = !_cloudSyncEnabled || otherList ? '' : ts ? `☁️ Synced ${_formatRelTime(ts)}` : '☁️ Not synced yet';
   [IDS.authHdrSync, IDS.malHdrSync].forEach(id => { const s = byId(id); if (s) s.textContent = short; });
   const el = byId(IDS.cloudSyncTimestamp);
   if (!el) return;
   if (!_cloudSyncEnabled) { el.style.display = 'none'; return; }
   el.style.display = 'block';
+  if (otherList) { el.textContent = _notSyncedText('Cloud sync covers only your own list. This list stays on this device.'); return; } // v1.0.268 — own MAL list with both logins: says so
   el.textContent = ts
     ? `Last synced: ${_formatRelTime(ts)}`
     : 'Not synced yet — your next change will save to cloud.';
@@ -2563,6 +2520,8 @@ function _stopFirebaseSync() {
 // Safe to call multiple times — re-attaches only if the path changed.
 function _startFirebaseSync() {
   if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser()) return;
+  // v1.0.268 — another list (guest, typed name, or the MAL list with AniList also signed in) never syncs live
+  if (!_isOwnAccountList()) { _stopFirebaseSync(); return; }
   if (typeof firebase === 'undefined') return; // SDK didn't load
   _initFirebase();
   if (!_firebaseApp) return;
@@ -2575,7 +2534,8 @@ function _startFirebaseSync() {
 function _startFirebaseSyncAttach() {
   // Re-check the guards — auth settling is async and state may have moved
   // (user logged out, sync toggled off, app torn down).
-  if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser() || !_firebaseApp) return;
+  // v1.0.268 — + the own list is still the one open
+  if (!_FIREBASE_READY || !_cloudSyncEnabled || !_activeCloudUser() || !_firebaseApp || !_isOwnAccountList()) return;
 
   const path = _getFirebaseSyncPath();
   if (!path) return;
@@ -2591,6 +2551,7 @@ function _startFirebaseSyncAttach() {
   // we detect a newer ping from another device. This keeps Firebase writes tiny
   // so they never contend with collab-session traffic on the same WebSocket.
   _firebaseSyncListener = _firebaseSyncRef.on('value', async snap => {
+    if (!_isOwnAccountList()) return; // v1.0.268 — another list is open: the account's copy is not applied to it
     const ping = snap.val();
     if (!ping || !ping.savedBy || !ping.savedAt) return;
     if (ping.savedBy === _deviceId) return; // our own write — skip
@@ -2607,7 +2568,9 @@ function _startFirebaseSyncAttach() {
 
     // Fetch the actual session from Netlify Blob (the full data source)
     const data = await _loadCloudSave();
-    if (!data || !data.animeList) return;
+    // v1.0.268 — + the copy must be the own list's, still open after the fetch: a device still on 1.0.267 can upload
+    // a guest list, and it was applied here silently
+    if (!data || !data.animeList || data.saveKey !== _ownCloudSaveKey() || !_isOwnAccountList()) return;
 
     // Re-check after the async fetch — another battle may have happened locally
     if ((data.battleCount || 0) <= battleCount) return;
@@ -2664,6 +2627,9 @@ function applyRealtimeSync() {
   if (!_pendingSyncData) return;
   const data = _pendingSyncData;
   _pendingSyncData = null;
+  // v1.0.268 — only onto the own list it was offered for: the banner can outlive the list (Apply during a guest load
+  // switched saveKey to the own key, and that load then saved the guest list over the own list and its cloud save)
+  if (!_isOwnAccountList() || data.saveKey !== _ownCloudSaveKey()) return;
   _lastFirebaseSyncTs = new Date(data.savedAt).getTime();
   _applyCloudSaveToMemory(data);
   showToast('✨ Picked up where you left off');
@@ -2687,15 +2653,52 @@ function _activeCloudToken() { return authToken || malAuthToken || null; }
 function _activeCloudUser()  { return authUser  || malAuthUser  || null; }
 function _isMalCloudSession() { return !authToken && !!malAuthToken; }
 
+// v1.0.268 — H1: which signed-in account the open list belongs to ('anilist', 'mal' or null), as _shareDisplayName reads it.
+// A guest list or a list opened by typing a name is null, and so never reaches the account's cloud save.
+function _openListAccount() {
+  if (!saveKey) return null;
+  if (authToken && authUser?.name && saveKey === KESSEN_KEYS.session.anilist(authUser.name)) return 'anilist';
+  if (malAuthToken && malAuthUser?.name && saveKey === KESSEN_KEYS.session.mal(malAuthUser.name)) return 'mal';
+  return null;
+}
+// v1.0.268 — the key the cloud save belongs to (AniList first, as _activeCloudToken), or null when signed out.
+function _ownCloudSaveKey() {
+  if (_isMalCloudSession()) return malAuthUser?.name ? KESSEN_KEYS.session.mal(malAuthUser.name) : null;
+  return authToken && authUser?.name ? KESSEN_KEYS.session.anilist(authUser.name) : null;
+}
+// v1.0.268 — true only while the cloud account's own list is open: everything else stays on this device.
+function _isOwnAccountList() {
+  const own = _ownCloudSaveKey();
+  return !!own && saveKey === own;
+}
+// v1.0.268 — whose list a cloud copy holds: 'own'; 'renamed' (same site, another name: a renamed account, or a
+// typed-name list an older copy of the app uploaded); 'other' (a guest list, the other site's list, or no key).
+function _cloudCopyFrom(cloudKey) {
+  const own = _ownCloudSaveKey();
+  if (!own || !cloudKey || typeof cloudKey !== 'string') return 'other';
+  if (cloudKey === own) return 'own';
+  const prefix = _isMalCloudSession() ? 'kessen.session.mal.' : 'kessen.session.anilist.';
+  return cloudKey.startsWith(prefix) && !_guestSaveKeys().includes(cloudKey) ? 'renamed' : 'other';
+}
+// v1.0.268 — what Manage says when the open list stays on this device. With both logins on, that includes the user's own
+// MAL list (the AniList account holds the cloud save), where "only your own list" read as if it weren't theirs.
+function _notSyncedText(otherListText) {
+  return _openListAccount() === 'mal' && authToken
+    ? 'With AniList also signed in, only your AniList list is saved to the cloud. This MyAnimeList list stays on this device.'
+    : otherListText;
+}
+
 function scheduleCloudSave() {
-  if (_suppressCloudSave || !_cloudSyncEnabled || !_activeCloudUser()) return;
+  // v1.0.268 — + only the account's own list: a guest or typed-name list used to upload over the account's cloud save
+  if (_suppressCloudSave || !_cloudSyncEnabled || !_activeCloudUser() || !_isOwnAccountList()) return;
   clearTimeout(_cloudSaveTimer);
   _setSyncIndicator('saving');
   _cloudSaveTimer = setTimeout(_doCloudSave, 5000);
 }
 
 async function _doCloudSave() {
-  if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length) return;
+  // v1.0.268 — + only the account's own list (Manage → Save to cloud, the first upload after a load and the Firebase ping go through here)
+  if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !_isOwnAccountList()) return;
   try {
     const session = {
       saveKey,
@@ -2718,10 +2721,7 @@ async function _doCloudSave() {
       dailyStreak: { ..._dailyStreak },  // v1.0.238 — cross-device streak sync
       weeklyStats: { ..._weeklyStats,     // v1.0.238 — cross-device weekly stats
         lastCompletedWeek: _weeklyStats.lastCompletedWeek ? { ..._weeklyStats.lastCompletedWeek } : null },
-      // v1.0.239 — usage metrics ride along so aggregate feature usage can be
-      // read out of the session blobs (tools/metrics-report.mjs). Counters
-      // only, no PII. See _metrics definition.
-      metrics: { counts: { ..._metrics.counts }, firstSeen: _metrics.firstSeen, lastSeen: _metrics.lastSeen, sessions: _metrics.sessions },
+      // (v1.0.268 — the usage counters no longer ride along; save-session drops any an older copy of the app sends)
       savedAt: new Date().toISOString(),
     };
     const body = _isMalCloudSession()
@@ -2798,7 +2798,9 @@ async function _loadCloudSave() {
 // Returns true if the cloud save was applied (caller should skip normal load).
 // Applies a cloud save object directly into memory and navigates to battle screen.
 // Avoids a full page reload so _cloudSyncEnabled stays true and auto-save keeps working.
-function _applyCloudSaveToMemory(cloud) {
+// v1.0.268 — ownKey: a list load (checkAndApplyCloudSave, Manage → Load from cloud) passes the own list's key, so a
+// renamed copy is kept under the account's current name; live sync passes none (its copy already has the own key).
+function _applyCloudSaveToMemory(cloud, ownKey = null) {
   const prevList = animeList; // v1.0.263 — this device's positions, for _onListPositionsChanged below
   animeList      = cloud.animeList;
   // v1.0.263 — undo snapshots from before the apply would write this device's older copies over the
@@ -2846,13 +2848,7 @@ function _applyCloudSaveToMemory(cloud) {
     }
     _resolveDailyStreakOnLoad();
   }
-  // v1.0.239 — merge cloud usage metrics (max-merge per counter). Load
-  // local first so the merge has both sides; _metricsLoad is idempotent.
-  if (cloud.metrics && typeof cloud.metrics === 'object') {
-    _metricsLoad();
-    _metricsMergeFromCloud(cloud.metrics);
-    _metricsSave();
-  }
+  // (v1.0.268 — usage counters in a cloud copy are ignored: Kessen no longer keeps them)
   // v1.0.238 — merge cloud weekly stats. Same newest-first logic as the
   // daily streak; if cloud is behind we keep local's higher battle count.
   if (cloud.weeklyStats && typeof cloud.weeklyStats === 'object') {
@@ -2888,7 +2884,8 @@ function _applyCloudSaveToMemory(cloud) {
     if (a.battles === undefined)   a.battles     = _cloudAvgBattles;
   });
 
-  if (cloud.saveKey) saveKey = cloud.saveKey;
+  if (ownKey) saveKey = ownKey; // v1.0.268 — see above
+  else if (cloud.saveKey) saveKey = cloud.saveKey;
   // v1.0.209 — merge the save's seen Taste Story milestones and "How you've changed" snapshots into this device.
   // v1.0.260 — after saveKey is set, so they land in this list's own records (it was the last list's on a list load).
   // Cloud saves carry no Taste fields and this path skips loadState, so the list's own local save seeds them first.
@@ -2902,6 +2899,10 @@ function _applyCloudSaveToMemory(cloud) {
 
 async function checkAndApplyCloudSave(localSaveKey) {
   if (!_cloudSyncEnabled || !_activeCloudUser()) return false;
+  // v1.0.268 — only the cloud account's own list has a cloud save: a typed name (startLoading), or the MAL list while
+  // AniList is signed in (_startMALOAuthSession), loads from this device only. Before the wipe-marker branch below,
+  // so another device's wipe no longer deletes a typed-name list here.
+  if (localSaveKey !== _ownCloudSaveKey()) return false;
   const myGen = _loadGeneration; // v1.0.263 — the calling load's generation (both callers bump it just before calling)
   const cloud = await _loadCloudSave();
   // v1.0.263 — that load was cancelled or replaced: no toast, no "Newer cloud save" prompt, nothing applied.
@@ -2931,6 +2932,10 @@ async function checkAndApplyCloudSave(localSaveKey) {
   }
 
   if (!cloud || !cloud.animeList || !cloud.saveKey) return false;
+  // v1.0.268 — a copy of a guest list or the other site's list (uploaded by a copy of the app before 1.0.268) is
+  // never offered; one saved under another name on the same site (a renamed account) is, and says which list it was.
+  const from = _cloudCopyFrom(cloud.saveKey);
+  if (from === 'other') return false;
 
   const cloudDate = cloud.savedAt ? new Date(cloud.savedAt) : null;
 
@@ -2953,12 +2958,14 @@ async function checkAndApplyCloudSave(localSaveKey) {
   // local copy, and the next battle's debounced cloud save overwrote the
   // newer cloud copy with it — the other device's progress was gone.
   const hasLocal = localBattles !== null;
+  // v1.0.268 — a renamed copy names the list it was saved from (the part of its key after the last dot)
+  const renamedLine = from === 'renamed' ? `\nThe cloud copy was saved from the list "${cloud.saveKey.slice(cloud.saveKey.lastIndexOf('.') + 1)}".` : '';
   // v1.0.250 — singular "battle" when a count is 1
   const body = hasLocal
-    ? `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime, saved ${dateStr}.\nThis device: ${_nBattles(localBattles)}.\n\n`
+    ? `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime, saved ${dateStr}.${renamedLine}\nThis device: ${_nBattles(localBattles)}.\n\n` // v1.0.268 — + renamedLine
       + "Load the cloud save? This device's copy will be replaced.\n\n"
       + "If you keep this device's copy instead, it will replace the cloud save the next time you battle."
-    : `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime, saved ${dateStr}.\nThis device has no saved rankings yet.\n\n`
+    : `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime, saved ${dateStr}.${renamedLine}\nThis device has no saved rankings yet.\n\n` // v1.0.268 — + renamedLine
       + 'Load the cloud save?\n\n'
       + 'If you start fresh instead, the cloud save will be replaced the next time you battle.';
   const ok = await _confirmAsync(
@@ -2974,7 +2981,7 @@ async function checkAndApplyCloudSave(localSaveKey) {
     // v1.0.256 — a list load, not live sync: drop the previous list's state so its streak and weekly
     // tally aren't merged in (the apply sets saveKey in this same tick, so nothing saves in between).
     _resetPerListState();
-    _applyCloudSaveToMemory(cloud);
+    _applyCloudSaveToMemory(cloud, localSaveKey); // v1.0.268 — kept under this list's (the own) key, also when renamed
     return true; // caller should navigate to battle screen
   } catch (err) {
     console.error('Failed to apply cloud save:', err);
@@ -2985,6 +2992,8 @@ async function checkAndApplyCloudSave(localSaveKey) {
 // Manual cloud push — accessible from Manage tab
 async function manualCloudPush() {
   if (!_activeCloudUser()) return;
+  // v1.0.268 — a guest or typed-name list (or the MAL list with AniList also signed in, which the toast names) is never uploaded
+  if (!_isOwnAccountList()) { showToast(_notSyncedText('Only your own list is saved to the cloud. This list stays on this device.')); return; }
   if (!animeList.length) { showToast('Nothing to save yet — start ranking first.'); return; }
   _setSyncIndicator('saving');
   clearTimeout(_cloudSaveTimer);
@@ -2994,8 +3003,15 @@ async function manualCloudPush() {
 // Manual cloud pull — accessible from Manage tab
 async function manualCloudPull() {
   if (!_activeCloudUser()) { showToast('Log in to use cloud sync.'); return; }
+  // v1.0.268 — the cloud save belongs to the account's own list: it is never loaded over another list (the own MAL list
+  // with AniList also signed in is told the cloud save is the AniList list's)
+  if (!_isOwnAccountList()) { showToast(_notSyncedText('Open your own list to load its cloud save.')); return; }
   const cloud = await _loadCloudSave();
   if (!cloud || !cloud.animeList) { showToast('No cloud save found yet.'); return; }
+  // v1.0.268 — a guest or other-site copy (uploaded by a copy of the app before 1.0.268) is not loaded; a renamed one says its list
+  const from = _cloudCopyFrom(cloud.saveKey);
+  if (from === 'other') { showToast('The cloud copy is from another list, so it was not loaded.'); return; }
+  const renamedLine = from === 'renamed' ? `\nThe cloud copy was saved from the list "${cloud.saveKey.slice(cloud.saveKey.lastIndexOf('.') + 1)}".` : '';
 
   const cloudDate    = cloud.savedAt ? new Date(cloud.savedAt).toLocaleString() : 'unknown time';
   const cloudBattles = cloud.battleCount || 0;
@@ -3004,13 +3020,13 @@ async function manualCloudPull() {
 
   const ok = await _confirmAsync(
     '☁️ Load cloud save?',
-    `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime (saved ${cloudDate})\nLocal: ${_nBattles(localBattles)}\n\nThis will replace your local rankings.`, // v1.0.250 — singular at 1
+    `Cloud: ${_nBattles(cloudBattles)} across ${cloudCount} anime (saved ${cloudDate})${renamedLine}\nLocal: ${_nBattles(localBattles)}\n\nThis will replace your local rankings.`, // v1.0.250 — singular at 1; v1.0.268 — + renamedLine
     'Load cloud save'
   );
   if (!ok) return;
 
   try {
-    _applyCloudSaveToMemory(cloud);
+    _applyCloudSaveToMemory(cloud, _ownCloudSaveKey()); // v1.0.268 — kept under the own key, also when renamed
     // Navigate to battle screen if not already there
     const onBattle  = byId(IDS.battleScreen).style.display  !== 'none';
     const onResults = byId(IDS.resultsScreen).style.display !== 'none';
@@ -4302,7 +4318,6 @@ function pickWinner(side) {
   _syncTasteNewBadge();
   _updateDailyStreak();  // v1.0.238 — daily streak counter, mid-session no-op after first decision of the day
   _tickWeeklyStats();    // v1.0.238 — weekly rollover + battle tally
-  _metric('battle');     // v1.0.239 — usage metrics
   // v1.0.211 — Battle Within Franchise auto-completion. No-op when the mode
   // isn't active. Reuses _mKey which is already in scope above.
   const withinRun = battleWithinFranchise;
@@ -4418,7 +4433,6 @@ function _undoSideEffects(snap) {
 
 function undoLast() {
   if (_inResultBeat()) return; // v1.0.242 — the snapshot for the pick on screen is already pushed; wait for the paint
-  _metric('undo');  // v1.0.239 — usage metrics
   if (undoStack.length === 0) return;
   const snap = undoStack.pop();
 
@@ -4534,7 +4548,6 @@ function undoLast() {
 
 function skipBattle() {
   if (_inResultBeat()) return; // v1.0.242 — input locked during the result beat
-  _metric('skip');  // v1.0.239 — usage metrics
   if (trioMode) { renderTrio(); return; }
   const snap = {
     winnerIdx:  currentA,  // reuse winnerIdx/loserIdx fields for the two anime
@@ -6477,19 +6490,13 @@ function showResults() {
   // Load notification centre and update bell badge; reveal the bell now that a session is active
   _ncLoad();
   _ncUpdateBell();
-  // v1.0.239 — load usage metrics for this user. Session counter bumps once
-  // per boot (guarded so repeated showResults calls don't re-count).
-  if (!_metricsSessionCounted) {
-    _metricsLoad();
-    _metrics.sessions = (_metrics.sessions || 0) + 1;
-    _metricsSave();
-    _metricsSessionCounted = true;
-    // v1.0.239 — PWA install nudge. Android fires beforeinstallprompt
-    // itself; this delayed call covers iOS (no event) and any case where
-    // the event fired before animeList was populated. 8s so the user has
-    // seen the app work before being asked to install it.
-    setTimeout(_maybeShowInstallBanner, 8000);
-  }
+  // v1.0.239 — PWA install nudge. Android fires beforeinstallprompt
+  // itself; this delayed call covers iOS (no event) and any case where
+  // the event fired before animeList was populated. 8s so the user has
+  // seen the app work before being asked to install it.
+  // v1.0.268 — once per list open, as before (guarded so repeated showResults calls don't schedule it again); the
+  // usage counters it used to share this block with are gone.
+  if (!_installNudgeScheduled) { _installNudgeScheduled = true; setTimeout(_maybeShowInstallBanner, 8000); }
   byId(IDS.notifBell).style.display = 'flex';
   // Initialise NEW tab badges (hides any already-seen ones)
   _initNewBadges();
@@ -6964,10 +6971,7 @@ function downloadBackup() {
     achievements,
     comparedFriends: [...comparedFriends],
     matchupStats,
-    // v1.0.242 — the anonymous feature-usage tallies, included for
-    // transparency now that the Manage-tab panel is gone (the privacy policy
-    // points here). importBackup ignores this field.
-    usageCounts: { ..._metrics.counts, sessions: _metrics.sessions || 0 },
+    // (v1.0.268 — the feature-usage tallies are gone, so the backup no longer carries them; importBackup never read them)
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -7091,9 +7095,15 @@ function _confirmAsync(title, body, okLabel, opts) {
 }
 
 function resetAll() {
+  // v1.0.268 — the list open when Reset was tapped, if it is the cloud account's own list. Only that list's cloud save
+  // is wiped (and only it is reloaded): resetting a guest or typed-name list while signed in wiped the account's cloud
+  // save, and on a device with no local copy the reload then uploaded a fresh 0-battle list over it.
+  const ownKeyAtOpen = _isOwnAccountList() ? saveKey : null;
   _showConfirm(
     '🔄 Reset everything?',
-    'This will permanently delete all your battle history, rankings, and achievements for this account — including the cloud copy. There is no undo.',
+    ownKeyAtOpen
+      ? 'This will permanently delete all your battle history, rankings, and achievements for this account — including the cloud copy. There is no undo.'
+      : 'This will permanently delete all your battle history, rankings, and achievements for this list on this device. There is no undo.', // v1.0.268
     'Yes, reset',
     async () => {
       // v1.0.211 — wipe the cloud save FIRST. Without this, the immediately-
@@ -7114,7 +7124,8 @@ function resetAll() {
       // bell were then kept (the reload brought the old rankings back).
       const resetKey = saveKey;
       let cloudResult = { ok: true, reason: 'not-signed-in' };
-      if (wasAniList || wasMAL) {
+      // v1.0.268 — only the own list's cloud save, and only while that account is still the cloud account
+      if ((wasAniList || wasMAL) && ownKeyAtOpen && resetKey === ownKeyAtOpen && _ownCloudSaveKey() === ownKeyAtOpen) {
         cloudResult = await _wipeCloudSession();
       }
 
@@ -7149,8 +7160,13 @@ function resetAll() {
       _updateMALAuthUI();
       // v1.0.263 — reload only while the account whose list was reset is still signed in. After a Logout during the
       // wipe, the AniList reload opened the same list as a typed name and the MAL one threw on the cleared user.
-      const reloadAniList = wasAniList && !!(authToken && authUser) && authUser.name === rememberedName;
-      const reloadMAL     = !wasAniList && wasMAL && !!(malAuthToken && malAuthUser) && malAuthUser.name === rememberedMAL;
+      // v1.0.268 — + the own list was reset: another list (guest, typed name) ends on the start screen, as for a guest
+      // v1.0.268 — + it is the list reset here and its account still holds the cloud save (as for the wipe above). The
+      // reload skips the cloud check, so reloading a list whose cloud save was not wiped (another list opened before the
+      // confirm, or AniList signed in beside the own MAL list) uploaded this device's copy, or a fresh list, over it.
+      const ownListReset  = !!ownKeyAtOpen && resetKey === ownKeyAtOpen && _ownCloudSaveKey() === ownKeyAtOpen;
+      const reloadAniList = ownListReset && wasAniList && !!(authToken && authUser) && authUser.name === rememberedName;
+      const reloadMAL     = ownListReset && !wasAniList && wasMAL && !!(malAuthToken && malAuthUser) && malAuthUser.name === rememberedMAL;
       _resetHereThisVisit = reloadAniList || reloadMAL; // v1.0.263 — other devices' copies are offered, not applied silently
       // Re-enter the normal loading flow so the user gets a fresh session
       // with the same list they started from. Guest mode just lands on home.
@@ -7469,6 +7485,7 @@ function _doChangeUser() {
   // v1.0.256 — as logout does: a pending cloud upload must not fire after the next list's
   // saveKey/reset lands (it would upload this list's anime under the new key).
   clearTimeout(_cloudSaveTimer); _cloudSaveTimer = null;
+  dismissRealtimeSync(); // v1.0.268 — the "other device" banner's copy belongs to the list being closed (it stayed up over the start screen)
   hide('battle-screen');
   hide('results-screen');
   hide('tower-summary-screen'); // v1.0.265 — as logout: a finished Tower run's summary stayed over the next list
@@ -7698,7 +7715,6 @@ function refreshDiscover() {
 function setRecsTab(tab, fromMood = false) {
   if (!fromMood) _moodRecActive = false; // user switching tabs manually resets mood mode
   recsTab = tab;
-  _metric('discover.' + tab);  // v1.0.239 — usage metrics
   byId(IDS.recsTabForyou).classList.toggle('active', tab === 'foryou');
   byId(IDS.recsTabSeasonal).classList.toggle('active', tab === 'seasonal');
   byId(IDS.recsTabPredict).classList.toggle('active', tab === 'predict');
@@ -8338,7 +8354,6 @@ function _paintGapsRefreshBtn() {
 function refreshFranchiseGaps() {
   // v1.0.255 — a tap mid-scan used to be dropped silently and re-enable the button early
   if (_franchiseGapsLoading) { showToast('⏳ A scan is already running.', 3000); return; }
-  _metric('missing.rescan');  // v1.0.239 — usage metrics
   renderFranchiseGaps({ force: true }); // v1.0.255 — button state follows the scan (fetchFranchiseGaps)
 }
 
@@ -9210,7 +9225,6 @@ async function addToPlanningFromModal() {
     }
     _markPlanningDone();
     if (_planningIdsCache instanceof Set) _planningIdsCache.add(item.id);
-    _metric('discover.planning.add');
     showToast(`＋ Added ${item.title} to your ${target === 'mal' ? 'MAL' : 'AniList'} Planning list.`, 3000);
     // Missing tab: if "hide items on my planning list" is on, the gap should drop out
     if (recsTab === 'gaps' && byId(IDS.gapsIncludePlanning)?.checked) renderFranchiseGaps({ skipFetch: true });
@@ -9881,7 +9895,6 @@ function _tiedRanks(items, valueOf) {
 }
 
 async function runCompatibility() {
-  _metric('social.compat');  // v1.0.239 — usage metrics
   const username2 = byId(IDS.compatUsernameInput).value.trim();
   if (!username2) return;
   if (_socialPlatform === 'mal') return _runCompatibilityMal(username2);
@@ -10319,7 +10332,6 @@ function _renderSavedComparisons() {
 let _challengeState = null;
 
 async function openChallengeMode(username, platform) {
-  _metric('social.challenge');  // v1.0.239 — usage metrics
   const modal = byId(IDS.challengeModal);
   modal.style.display = 'flex';
   pushModalBack('challenge', closeChallengeModal);
@@ -11233,7 +11245,6 @@ window.addEventListener('beforeinstallprompt', (e) => {
 window.addEventListener('appinstalled', () => {
   _deferredInstallPrompt = null;
   dismissInstallBanner(true);
-  _metric('install.completed');
 });
 
 function _maybeShowInstallBanner() {
@@ -11263,11 +11274,9 @@ function _maybeShowInstallBanner() {
   banner.style.display = 'flex';
   banner.classList.add('show');
   _installBannerShown = true;
-  _metric('install.shown');
 }
 async function installBannerAction() {
   if (!_deferredInstallPrompt) { dismissInstallBanner(); return; }
-  _metric('install.clicked');
   const ev = _deferredInstallPrompt;
   _deferredInstallPrompt = null;
   try {
@@ -11285,7 +11294,6 @@ function dismissInstallBanner(installed = false) {
     // dismissed → 30 days.
     localStorage.setItem(KESSEN_KEYS.ui.installPromptDismissed, String(installed ? Date.now() + 10 * 365 * 24 * 60 * 60 * 1000 : Date.now()));
   } catch { /* ignore */ }
-  if (!installed) _metric('install.dismissed');
 }
 
 function _towerClearDeepLink() {
@@ -11379,7 +11387,6 @@ async function lcRejoinSession() {
 // ── OPEN ──────────────────────────────────────────────────────────────────────
 // Opens the modal and shows the setup panel. Auth state pre-fills username.
 function openLiveChallengeMode() {
-  _metric('social.livechallenge');  // v1.0.239 — usage metrics
   if (!_FIREBASE_READY) {
     showToast('⚠️ Live Challenge is not available right now. Please try again later.');
     return;
@@ -11468,15 +11475,16 @@ async function lcCreateSession() {
       setTimeout(() => reject(new Error('Could not reach the session server.')), 20000)
     );
     await Promise.race([
+      // v1.0.268 — createdAt is the server's time (a wrong phone clock can't skew a later clean-up by age), and is kept
+      // when the host disconnects (its onDisconnect removal is gone)
       ref.set({
-        phase: 'lobby', hostId: pid, currentPair: 0, createdAt: Date.now(),
+        phase: 'lobby', hostId: pid, currentPair: 0, createdAt: firebase.database.ServerValue.TIMESTAMP,
         players: {
           [pid]: { name: username, platform, connected: true, watchedIds, picks: {}, predictions: {} },
         },
       }),
       writeTimeout,
     ]);
-    ref.child('createdAt').onDisconnect().remove();
 
     _lc.firebaseRef = ref;
     _lcSaveSession();
@@ -12513,7 +12521,6 @@ function _collabGetStoredSession() {
 }
 
 function openCollabMode() {
-  _metric('social.collab');  // v1.0.239 — usage metrics
   if (_collab?.unsubscribe) _collab.unsubscribe();
   _collab = {
     mode: null,
@@ -12764,7 +12771,8 @@ async function collabCreateSession() {
       pairs: null, currentPair: 0,
       votes: null,
       results: null,
-      createdAt: Date.now(),
+      // v1.0.268 — the server's time, kept on disconnect (see lcCreateSession)
+      createdAt: firebase.database.ServerValue.TIMESTAMP,
     };
 
     await _ensureFirebaseAuth(); // hardened rules require auth before the create write
@@ -12777,7 +12785,6 @@ async function collabCreateSession() {
       setTimeout(() => reject(new Error('The server accepted the connection but the write never completed.\n\nThis usually means Firebase Realtime Database Security Rules are blocking writes to "collab-sessions/" for unauthenticated clients.')), 20000)
     );
     await Promise.race([ref.set(initialData), writeTimeout]);
-    ref.child('createdAt').onDisconnect().remove();
 
     _collab.firebaseRef = ref;
     _collab.players     = { [pid]: { name, nominations: [], ready: false } };
@@ -16653,7 +16660,6 @@ let activeResultsTab = 'rankings';
 
 function switchResultsTab(tab) {
   activeResultsTab = tab;
-  _metric('tab.' + tab);  // v1.0.239 — usage metrics
   document.querySelectorAll('.res-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
     // Scroll active tab into view on mobile (no-op on desktop)
@@ -16754,9 +16760,8 @@ function renderManageTab() {
   }
   // v1.0.242 — the v1.0.239 "Your Kessen stats" panel is gone. It rendered
   // the raw metric keys ("gaps", "compat", "predict · run") to users, which
-  // was developer telemetry, not a feature. The counters themselves are
-  // still collected and ride along with the cloud save (see _metrics); the
-  // privacy policy lists what is counted.
+  // was developer telemetry, not a feature.
+  // v1.0.268 — and the counters themselves are gone: nothing is counted any more (see _dropUsageCountKeys).
 }
 
 let _moodRecActive = false; // suppresses normal discover load when mood rec is running
@@ -17145,6 +17150,17 @@ function tryLoadSharedView() {
   }
   const m = location.pathname.match(_SHORT_SHARE_PATH_RE);
   if (!m) return false;
+  // v1.0.268 — a share page asks search engines not to list it (decision 5). _headers sends X-Robots-Tag: noindex for
+  // /s/*; this meta covers a host that skips header rules on the rewrite. The canonical link (to the home page) goes, so
+  // the page doesn't say both "don't list this" and "this is the home page". Only here: a #r= link is the home page's
+  // URL to a crawler (it drops the fragment), so a noindex there could reach the home page.
+  if (!document.querySelector('meta[name="robots"]')) {
+    const robots = document.createElement('meta');
+    robots.name = 'robots';
+    robots.content = 'noindex';
+    document.head.appendChild(robots);
+  }
+  document.querySelector('link[rel="canonical"]')?.remove();
   // Short link: take the screen over now, fill it in when the payload lands.
   byId(IDS.sharedTitle).textContent = 'Loading shared rankings…';
   byId(IDS.sharedSubtitle).textContent = '';
@@ -18876,7 +18892,6 @@ function _resetMoodChipUI() {
 async function applyMoodRec(moodKey) {
   const mood = _MOOD_DEFS.find(m => m.key === moodKey);
   if (!mood) return;
-  _metric('mood.' + moodKey);  // v1.0.239 — usage metrics
 
   _moodRecActive = true;
   _activeMoodKey = moodKey; // v1.0.253 — remembered so Refresh (and For You with no cached picks) re-runs it
@@ -20106,7 +20121,6 @@ function _predictorBestMatch(items, q) {
 }
 
 async function runPredictor(prefetched = null) {
-  _metric('discover.predict.run');  // v1.0.239 — usage metrics (distinct from just opening the tab)
   const q = byId(IDS.predictorInput).value.trim();
   if (!q) return;
   byId(IDS.predictorDropdown).style.display = 'none';
@@ -20576,7 +20590,6 @@ function setMode(name) {
     showToast('⚔ Only Standard and Blind work during Battle within — tap Stop on its banner first.', 4000);
     return;
   }
-  if (name !== 'normal') _metric('mode.' + name);  // v1.0.239 — usage metrics (normal is the default, not interesting)
 
   // If currently in tower, exit cleanly first. Tower is mutually exclusive
   // with the standard modes — keeping its flag set would route every battle
@@ -21507,7 +21520,6 @@ function applyTrioResult() {
   // tally like standard picks do (they were skipped before).
   _updateDailyStreak();
   for (let i = 0; i < 3; i++) _tickWeeklyStats();
-  _metric('battle');
   // v1.0.211 — Battle Within Franchise auto-completion. Records all three
   // implied pairs from the trio result. If this round filled the last
   // remaining pairs, the completion check fires inside the third call and
@@ -21772,7 +21784,6 @@ function populateTowerList(q) {
 }
 
 function startTower(championIdx) {
-  _metric('tower.start');  // v1.0.239 — usage metrics
   closeTowerModal();
   // v1.0.254 — Tower ignores Battle within (greyed out in the Mode menu). A run started from a
   // notification or finish prompt ends it, so its banner and Stop button don't sit over the run.
@@ -22401,6 +22412,8 @@ let _syncQueue = []; // [{mediaId, title, cover, apiScore, score10}]
 
 function openSyncModal() {
   if (!authToken) return;
+  // v1.0.268 — scores are synced only from a signed-in account's own list (either one: cross-sync still works)
+  if (!_openListAccount()) { showToast('Sync works only from your own list. Open your AniList or MyAnimeList list first.'); return; }
   const format = authUser?.scoreFormat || 'POINT_10';
   const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
   const total = sorted.length;
@@ -22642,6 +22655,8 @@ let _malSyncQueue = []; // [{malId, title, cover, score}]
 
 function openMALSyncModal() {
   if (!malAuthToken) return;
+  // v1.0.268 — see openSyncModal
+  if (!_openListAccount()) { showToast('Sync works only from your own list. Open your AniList or MyAnimeList list first.'); return; }
   const sorted = [...animeList].sort((a, b) => b.elo - a.elo);
   const total = sorted.length;
 
@@ -23098,6 +23113,8 @@ async function refreshMetadata() {
 // ─── NEW ANIME DETECTION ──────────────────────────────────────────────────────
 async function checkForNewAnime() {
   if (!authToken || !authUser || !animeList.length) return;
+  // v1.0.268 — only with the AniList account's own list open: another list was diffed against the account's list
+  if (_openListAccount() !== 'anilist') return;
   try {
     const { entries } = await fetchAllAnime(authUser.name, false);
     // Defensive: an empty fetch on a previously-populated account is almost
@@ -23425,11 +23442,13 @@ function _ncSave() {
 let _ncFirebasePushTimer = null;
 function _ncPushToFirebase() {
   if (!_firebaseApp || !_FIREBASE_READY) return;
+  if (!_isOwnAccountList()) return; // v1.0.268 — another list's bell stays on this device
   const base = _getUserFirebasePath();
   if (!base) return;
   // Debounce — multiple rapid _ncSave calls collapse into one write
   clearTimeout(_ncFirebasePushTimer);
   _ncFirebasePushTimer = setTimeout(async () => {
+    if (!_isOwnAccountList()) return; // v1.0.268 — the list changed inside the debounce: send nothing
     try {
       await _ensureFirebaseAuth(); // hardened rules require auth for this write
       await _firebaseApp.database().ref(`${base}/notifications`).set({
@@ -23447,12 +23466,14 @@ let _ncFirebaseRef      = null;
 let _ncFirebaseListener = null;
 function _ncStartSync() {
   if (!_firebaseApp || !_FIREBASE_READY) return;
+  if (!_isOwnAccountList()) return; // v1.0.268 — the account's bell syncs only with its own list open
   const base = _getUserFirebasePath();
   if (!base) return;
   if (_ncFirebaseRef) return; // already listening
 
   _ncFirebaseRef = _firebaseApp.database().ref(`${base}/notifications`);
   _ncFirebaseListener = _ncFirebaseRef.on('value', snap => {
+    if (!_isOwnAccountList()) return; // v1.0.268 — another list is open: its bell is not merged with the account's
     const remote = snap.val();
     if (!remote?.items || remote.updatedBy === _deviceId) return;
 
@@ -23547,15 +23568,19 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.267 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.268 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.267 — the one change people can notice: tower-retry-poll checks each Tower retry user about every 3 hours
+  // v1.0.268 — own list only in the cloud, no usage counts, Tower retry off with no device left, share pages not indexed
+  // (1.0.267's Tower retry bullet is not repeated: 1.0.267 is live)
   bullets: [
-    '🔔 If you turned on Tower retry prompts, Kessen now checks your AniList list about every 3 hours, not every 15 minutes.',
+    '☁️ Cloud sync now saves only your own list. Guest lists and lists opened by typing a name stay on this device.',
+    '📊 Kessen no longer counts which features you use, and the counts already kept are being deleted.',
+    '🔔 If none of your devices can get notifications any more, Tower retry prompts now switch off.',
+    '🔍 Shared Top 10 pages now ask search engines not to list them.',
   ],
 };
 
@@ -23846,7 +23871,6 @@ function _ncRenderList() {
 let _ncTimeRefreshTimer = null;
 
 function openNotifCentre() {
-  _metric('notif.open');  // v1.0.239 — usage metrics
   _notifCentre.forEach(n => { n.read = true; });
   _ncSave();
   _ncUpdateBell();
@@ -23992,11 +24016,11 @@ async function _pushRegisterServer(subscription, categories) {
   const res = await fetch(PUSH_API.register, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    // v1.0.268 — no browser identifier string (ua) any more: the server no longer stores one (decision 12)
     body: JSON.stringify({
       ...auth,
       subscription: subscription.toJSON(),
       categories,
-      ua: navigator.userAgent.slice(0, 200),
     }),
   });
   if (!res.ok) {
@@ -24380,6 +24404,8 @@ function ncActionReviewRemoved(id) {
 // MAL variant: fetch current list, diff against animeList by AniList ID
 async function checkForNewAnimeMAL() {
   if (!malAuthToken || !malAuthUser || !animeList.length) return;
+  // v1.0.268 — only with the MAL account's own list open (see checkForNewAnime)
+  if (_openListAccount() !== 'mal') return;
   try {
     const entries   = await _fetchMALAnimeListViaAPI();
     const malIds    = entries.map(e => e.malId);
@@ -25030,6 +25056,8 @@ async function refreshAniListNow() {
     showToast('⚠ Log in to AniList first to refresh your list.');
     return;
   }
+  // v1.0.268 — the check skips another list, which then got a false "up to date"
+  if (_openListAccount() !== 'anilist') { showToast('Open your own AniList list to check it for new anime.'); return; }
   const btn = byId(IDS.refreshListBtn);
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Checking…'; }
@@ -25051,6 +25079,8 @@ async function refreshMALNow() {
     showToast('⚠ Log in to MyAnimeList first to refresh your list.');
     return;
   }
+  // v1.0.268 — see refreshAniListNow
+  if (_openListAccount() !== 'mal') { showToast('Open your own MyAnimeList list to check it for new anime.'); return; }
   const btn = byId(IDS.refreshListMalBtn);
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Checking…'; }
@@ -25206,7 +25236,8 @@ window.addEventListener('beforeunload', () => {
   // v1.0.264 — no upload while Delete all or Reset is wiping the cloud save (both hold _suppressCloudSave, which
   // scheduleCloudSave already obeys): closing the tab then wrote the whole list over the wipe marker, unseen.
   if (_suppressCloudSave) return;
-  if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey) return;
+  // v1.0.268 — + only the account's own list (see scheduleCloudSave)
+  if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey || !_isOwnAccountList()) return;
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
 
   const session = {
