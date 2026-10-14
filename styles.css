@@ -3067,23 +3067,28 @@
 
     /* v1.0.244 — the 3,700-character link is no longer shown as a wall of
        base64; the textarea stays in the DOM (visually hidden) purely as the
-       select()+execCommand fallback for copyShareLink. */
+       select()+execCommand fallback for copyShareLink.
+       v1.0.271 — it holds only a short /s/ link, once Create link has made one. */
     #share-url {
       position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden;
       pointer-events: none; left: -9999px;
     }
-    /* v1.0.250 — readable link line above "Copy link": host + path for the
-       short link, host + caveat while the #r= link is still the long one.
-       Click copies (copyShareLink); user-select: all makes the short form a
-       one-click selection. The long-form text is a placeholder, not the url,
-       so it is not selectable. */
+    /* v1.0.250 — readable link line above "Copy link": host + path of the
+       short link. Click copies (copyShareLink); user-select: all makes it a
+       one-click selection. v1.0.271 — the long #r= placeholder style is gone. */
     .share-link-text {
       color: var(--text-muted); font-size: 0.8rem; text-align: center;
       margin: 0 0 8px; line-height: 1.4; word-break: break-word;
       cursor: pointer; -webkit-user-select: all; user-select: all;
     }
-    .share-link-text.share-link-long { -webkit-user-select: none; user-select: none; }
     .share-copy-link { width: 100%; min-height: 40px; margin-bottom: 12px; }
+    /* v1.0.271 — decision 5: Create link (the only way a link is made), the inline
+       "Couldn't create the link" note, and the agreement line under them (decision 30c). */
+    .share-create-link { width: 100%; min-height: 40px; margin-bottom: 8px; }
+    .share-link-note { color: var(--accent-red); font-size: 0.8rem; text-align: center; margin: 0 0 8px; line-height: 1.4; }
+    .agree-line { color: var(--text-secondary); font-size: 0.75rem; text-align: center; margin: 0 0 12px; line-height: 1.45; }
+    .agree-line a { color: var(--accent-blue); text-decoration: underline; text-underline-offset: 2px; }
+    .agree-line a:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: 4px; }
 
     .share-close-bottom {
       width: 100%; background: transparent; border: none; color: var(--text-muted);
@@ -3103,6 +3108,12 @@
     .shared-header { text-align: center; margin-bottom: 28px; }
     .shared-header h2 { font-size: 1.6rem; color: var(--accent-blue); margin-bottom: 6px; }
     .shared-header p { color: var(--text-secondary); }
+    /* v1.0.271 — "Couldn't get the titles from AniList…" under the subtitle */
+    .shared-header p.shared-note { margin-top: 8px; font-size: 0.85rem; }
+    /* v1.0.271 — decision 30c: "Report this page · Community rules", then the address as text, under a shared list */
+    .shared-report { text-align: center; font-size: 0.8rem; line-height: 1.6; color: var(--text-secondary); margin: 20px auto 0; }
+    .shared-report a { color: var(--accent-blue); text-decoration: underline; text-underline-offset: 2px; }
+    .shared-report a:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: 4px; }
     /* v1.0.258 — shared cards that open AniList / MAL in a new tab: no link underline or colour, a visible
        keyboard focus ring, the 'TV · 24 ep · 2019' line, and the 'AniList ↗' hint pinned to the card's foot. */
     a.shared-card { color: inherit; text-decoration: none; }

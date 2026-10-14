@@ -181,10 +181,15 @@ const IDS = Object.freeze({
   sessionSummarySubtitle: 'session-summary-subtitle',
   settleBanner:           'settle-banner',
   shareCopyImageBtn:      'share-copy-image-btn',
+  shareCreateLinkBtn:     'share-create-link-btn', // v1.0.271 — a link is made only when this is tapped (decision 5)
   // v1.0.254 — shareImageKind (the Top 10 / 3×3 toggle) removed; share-image-note is now the preview status line.
   shareImageNote:         'share-image-note', // v1.0.248
+  shareLinkNote:          'share-link-note', // v1.0.271 — "Couldn't create the link…"
   shareLinkText:          'share-link-text', // v1.0.250
   sharedList:             'shared-list',
+  sharedNote:             'shared-note', // v1.0.271 — "Couldn't get the titles from AniList…"
+  sharedReport:           'shared-report', // v1.0.271 — decision 30c: Report line under a shared list
+  sharedReportLink:       'shared-report-link',
   sharedSubtitle:         'shared-subtitle',
   sharedTitle:            'shared-title',
   shareModal:             'share-modal',
@@ -772,16 +777,21 @@ async function _anilistPace(limit, onWait) {
 // onStatus(msg): optional callback used to surface wait-time in the loading screen.
 // v1.0.251 — opt-in (Missing scan only): treatNetworkErrorAsRateLimit retries a thrown fetch
 // (AniList's 429 has no CORS headers) after a 60s window; onWait(secondsLeft) ticks each second.
-async function _anilistFetch(body, { onStatus, maxRetries = 3, treatNetworkErrorAsRateLimit = false, onWait } = {}) {
+// v1.0.271 — opt-in (shared pages only): anonymous sends no Authorization header. A shared page asks for public data,
+// and AniList answers 400 "Invalid token" to a whole query sent with a rejected token (a 401 would also log the
+// visitor out through the interceptor), so a visitor's own stale sign-in must not blank another person's list.
+async function _anilistFetch(body, { onStatus, maxRetries = 3, treatNetworkErrorAsRateLimit = false, onWait, anonymous = false } = {}) {
   let attempt = 0;
   while (true) {
     _anilistSentAt.push(Date.now()); // v1.0.251 — for _anilistPace
     if (_anilistSentAt.length > 50) _anilistSentAt.shift();
     let res = null;
+    const headers = anilistHeaders();
+    if (anonymous) delete headers['Authorization'];
     try {
       res = await fetch('https://graphql.anilist.co', {
         method: 'POST',
-        headers: anilistHeaders(),
+        headers,
         body: JSON.stringify(body),
       });
     } catch (err) {
@@ -15785,6 +15795,7 @@ async function exportTasteStoryCard() {
 // ─── SHARE LINK ───────────────────────────────────────────────────────────────
 // v1.0.256 — the name a share shows (image header, link payload u): '' for guests, else the display-cased
 // name that owns this save (saveKey is lowercased), else the name from the key. No requests.
+// v1.0.271 — the image header only: a link's name is added by share.js from the sign-in token (decision 30a).
 function _shareDisplayName() {
   if (!saveKey || _isGuestSession()) return '';
   if (authUser?.name && saveKey === KESSEN_KEYS.session.anilist(authUser.name)) return authUser.name;
@@ -15804,31 +15815,25 @@ function shareRankings() {
   }
   // v1.0.258 — the link is a Top 10 (was 20), so it matches the image, the share-sheet text and the modal.
   const top10 = ranked.slice(0, 10);
-  // v1.0.256 — guests send u:'' (the page then says "Top N Anime"); was u:'guest'.
-  const user  = _shareDisplayName();
+  // v1.0.271 — decision 30a: IDs only. Per entry the rank, ELO, AniList id (i), MAL id (m) and the tier letter Rankings
+  // shows (k); the shared page looks up titles and covers on AniList by id. No name (u), titles (t), covers (c), format,
+  // year or episodes: share.js adds the username itself, checked with AniList or MAL, when the open list is the
+  // signed-in account's own (_requestShortShareLink). undefined keys drop out of the JSON.
   const payload = {
-    u: user,
     b: battleCount,
-    // v1.0.258 — t as the sharer sees it (displayTitle, like the image); i AniList id, m MAL id, f/y/n format, year,
-    // episodes and k the tier letter Rankings shows, so the shared page can link each card. undefined keys drop out of the JSON.
     top: top10.map((a, idx) => ({
-      r: idx + 1, t: displayTitle(a), e: a.elo, c: a.cover,
-      i: a.id, m: Number.isInteger(a.idMal) && a.idMal > 0 ? a.idMal : undefined,
-      f: a.format || undefined, y: a.seasonYear || undefined, n: a.episodes || undefined,
+      r: idx + 1, e: a.elo, i: a.id,
+      m: Number.isInteger(a.idMal) && a.idMal > 0 ? a.idMal : undefined,
       k: getTier(idx, ranked.length),
     }))
   };
   if (_isMalCloudSession()) payload.p = 'mal'; // v1.0.258 — MAL sharer: the page opens MyAnimeList where an entry has a MAL id
-  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  const url = location.origin + '/#r=' + encoded;
-  byId(IDS.shareUrl).value = url;
-  _renderShareLinkText(url); // v1.0.250 — visible link line; set before _requestShortShareLink so a cached id can overwrite it synchronously
-  const copyBtn = byId(IDS.copyBtn);
-  if (copyBtn) copyBtn.textContent = '📋 Copy link';
-  // v1.0.249 — ask the share function for a short id and swap the link in
-  // when it arrives. The long link is already in place, so a slow or failed
-  // request just leaves the old behaviour.
-  _requestShortShareLink(payload);
+  // v1.0.271 — decision 5: opening Share makes no link (it used to POST here). The link line and Copy link stay hidden
+  // until Create link is tapped, unless a link was already made for this payload and list in this page load.
+  _sharePayload = payload;
+  _resetShareLinkUi();
+  const madeId = _shortShareIds.get(_shareLinkCacheKey(payload));
+  if (madeId) _showShareLink(madeId);
   _updateShareModalCapabilities();
   // v1.0.254 — build the one Top 10 image now: preview + reused by every button. (Subtitle is static HTML.)
   _prepareShareImage();
@@ -15836,56 +15841,114 @@ function shareRankings() {
   pushModalBack('share', closeShare);
 }
 
-// v1.0.249 — short share links. One short id per distinct payload for the
-// session (re-opening the modal with the same rankings reuses it), a 6 s
-// timeout, and the long #r= link stays if anything goes wrong.
-const _shortShareIds = new Map(); // payload JSON → id
-let _shortShareGen = 0;
-async function _requestShortShareLink(payload) {
-  const urlEl = byId(IDS.shareUrl);
-  if (!urlEl || typeof fetch !== 'function') return;
-  const key = JSON.stringify(payload);
-  const apply = (id) => {
-    if (!urlEl.value.startsWith(location.origin + '/#r=')) return;
-    urlEl.value = `${location.origin}/s/${id}`;
-    _renderShareLinkText(urlEl.value); // v1.0.250 — show the short link in the modal
-  };
-  if (_shortShareIds.has(key)) { apply(_shortShareIds.get(key)); return; }
-  const gen = ++_shortShareGen;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);
-  try {
-    const res = await fetch('/.netlify/functions/share', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payload }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return;
-    const { id } = await res.json();
-    if (!id || !/^[A-Za-z0-9]{6,16}$/.test(id)) return;
-    _shortShareIds.set(key, id);
-    if (gen === _shortShareGen) apply(id); // a newer share replaced this one — leave it
-  } catch { /* offline, blocked, or timed out — long link stays */ }
-  finally {
-    clearTimeout(timer);
-    // v1.0.250 — request settled; if the long link is still showing, drop the "shortening…" caveat
-    if (gen === _shortShareGen) _renderShareLinkText(urlEl.value, true);
-  }
+// v1.0.249 — short share links. One short id per distinct payload for the page load (re-opening the modal with the
+// same rankings reuses it). v1.0.271 — made only when Create link is tapped (decision 5), with a 12 s timeout (was 6 s:
+// share.js may spend up to 3 s checking the username), and no long #r= link to fall back to: a failure says so.
+const _shortShareIds = new Map(); // _shareLinkCacheKey(payload) → id
+const _shortSharePending = new Map(); // v1.0.271 — same key → the request in flight, so a second tap makes no second link
+let _sharePayload = null; // v1.0.271 — the open Share window's payload (null when closed); Create link sends it
+const _SHARE_CREATE_LABEL = '🔗 Create link';
+
+// v1.0.271 — the payload and whose list is open: a link made with the username isn't reused for a guest or typed list.
+function _shareLinkCacheKey(payload, account = _openListAccount()) {
+  return JSON.stringify(payload) + '|' + (account || '');
 }
 
-// v1.0.250 — readable form of the share link for the modal's link line. Short
-// link: host + path, no protocol. Long #r= link: host + "(long link — shortening…)"
-// while the share function may still answer, "(long link)" once it has settled.
+// v1.0.271 — POSTs the payload and returns the id, or null on any failure. The sign-in token goes with it only while
+// the open list is that account's own (_openListAccount, as the cloud save): token for AniList, malToken for MAL. A
+// guest list or a list opened by typing a name sends neither, so its link shows no name. share.js uses the token once
+// to look up the username and does not keep it.
+async function _requestShortShareLink(payload) {
+  if (typeof fetch !== 'function') return null;
+  const account = _openListAccount();
+  const key = _shareLinkCacheKey(payload, account);
+  if (_shortShareIds.has(key)) return _shortShareIds.get(key);
+  if (_shortSharePending.has(key)) return _shortSharePending.get(key);
+  const body = { payload };
+  if (account === 'anilist' && authToken) body.token = authToken;
+  else if (account === 'mal' && malAuthToken) body.malToken = malAuthToken;
+  const request = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const res = await fetch('/.netlify/functions/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const { id } = await res.json();
+      if (!id || !/^[A-Za-z0-9]{6,16}$/.test(id)) return null;
+      _shortShareIds.set(key, id);
+      return id;
+    } catch { return null; } // offline, blocked, or timed out
+    finally { clearTimeout(timer); }
+  })();
+  _shortSharePending.set(key, request);
+  try { return await request; }
+  finally { _shortSharePending.delete(key); }
+}
+
+// v1.0.271 — the Create link button's onclick. The image buttons and Copy link stay separate taps, so nothing awaits
+// before navigator.share or the clipboard.
+async function createShareLink() {
+  const payload = _sharePayload;
+  const btn = byId(IDS.shareCreateLinkBtn);
+  if (!payload || btn?.disabled) return;
+  _setShareLinkNote('');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating link…'; }
+  const id = await _requestShortShareLink(payload);
+  if (payload !== _sharePayload) return; // the window was closed or reopened meanwhile (closeShare reset the button)
+  // v1.0.271 — a made link hides Create link, so focus moves to Copy link instead of dropping to the page: only when it
+  // was still on the button, or was lost while the button was disabled (never taken from where the user moved it).
+  const focused = document.activeElement;
+  const moveFocus = !!id && (!focused || focused === btn || focused === document.body);
+  if (btn) { btn.disabled = false; btn.textContent = _SHARE_CREATE_LABEL; }
+  if (id) _showShareLink(id);
+  else _setShareLinkNote('Couldn’t create the link. Check your connection and try again.');
+  if (moveFocus) byId(IDS.copyBtn)?.focus();
+}
+
+// v1.0.271 — the link line and Copy link, shown only once a link exists; Create link until then.
+function _setShareLinkShown(hasLink) {
+  const vis = (id, on) => { const el = byId(id); if (el) el.style.display = on ? '' : 'none'; };
+  vis(IDS.shareLinkText, hasLink);
+  vis(IDS.copyBtn, hasLink);
+  vis(IDS.shareCreateLinkBtn, !hasLink);
+}
+function _showShareLink(id) {
+  const url = `${location.origin}/s/${id}`;
+  const urlEl = byId(IDS.shareUrl);
+  if (urlEl) urlEl.value = url;
+  _renderShareLinkText(url);
+  _setShareLinkNote('');
+  _setShareLinkShown(true);
+}
+function _setShareLinkNote(text) {
+  const note = byId(IDS.shareLinkNote);
+  if (note) { note.textContent = text; note.style.display = text ? '' : 'none'; }
+}
+// v1.0.271 — no link yet: #share-url cleared, the link line and Copy link hidden, Create link ready (on open and close).
+function _resetShareLinkUi() {
+  const urlEl = byId(IDS.shareUrl);
+  if (urlEl) urlEl.value = '';
+  _renderShareLinkText('');
+  const btn = byId(IDS.shareCreateLinkBtn);
+  if (btn) { btn.disabled = false; btn.textContent = _SHARE_CREATE_LABEL; }
+  const copyBtn = byId(IDS.copyBtn);
+  if (copyBtn) copyBtn.textContent = '📋 Copy link';
+  _setShareLinkNote('');
+  _setShareLinkShown(false);
+}
+
+// v1.0.250 — readable form of the share link for the modal's link line: host + path, no protocol.
+// v1.0.271 — the long #r= branch is gone: the line shows only a short /s/ link.
 // textContent only — the url never goes through innerHTML.
-function _renderShareLinkText(url, settled = false) {
+function _renderShareLinkText(url) {
   const el = byId(IDS.shareLinkText);
   if (!el) return;
-  const isLong = !!url && url.startsWith(location.origin + '/#r=');
-  el.textContent = isLong
-    ? `${location.host}/#r=… (long link${settled ? '' : ' — shortening…'})`
-    : String(url || '').replace(/^https?:\/\//, '');
-  el.classList.toggle('share-link-long', isLong);
+  el.textContent = String(url || '').replace(/^https?:\/\//, '');
 }
 
 // v1.0.250 — the label resets to a constant and one pending timer is
@@ -15894,6 +15957,7 @@ function _renderShareLinkText(url, settled = false) {
 let _copyShareLinkTimer = null;
 function copyShareLink() {
   const url = byId(IDS.shareUrl).value;
+  if (!url.startsWith(location.origin + '/s/')) return; // v1.0.271 — nothing to copy until Create link has made one
   const btn = byId(IDS.copyBtn);
   navigator.clipboard.writeText(url).then(() => {
     if (btn) {
@@ -15949,7 +16013,7 @@ async function _prepareShareImage() {
     if (gen !== _shareImageGen) return;
     if (img) img.parentElement.style.display = 'none';
     buttons.forEach(b => { if (b) b.style.display = 'none'; }); // v1.0.254 — no dead greyed-out image buttons
-    setNote('⚠️ Couldn’t make the image — the link below still works.');
+    setNote('⚠️ Couldn’t make the image — you can still share a link below.'); // v1.0.271 — was "the link below still works": a link is now made only on Create link
   }
 }
 
@@ -15977,7 +16041,7 @@ function shareImageFromModal() {
     _flashShareBtn(btn, '✓ Downloaded', native ? _SHARE_PRIMARY_LABEL.share : _SHARE_PRIMARY_LABEL.download);
     return;
   }
-  // The text never carries the ~3,700-character #r= link: the short link once it's ready, else just the site.
+  // The text carries the short link only once one exists, else just the site. (v1.0.271 — only Create link makes one.)
   const url = byId(IDS.shareUrl)?.value || '';
   const text = 'My top 10 anime — ranked battle by battle on kessen.co.uk'
     + (url.startsWith(location.origin + '/s/') ? `\n${url}` : '');
@@ -16057,6 +16121,9 @@ function closeShare() {
   _shareImageGen++;
   _shareImage = null;
   byId(IDS.sharePreview)?.removeAttribute('src');
+  // v1.0.271 — Create link starts again next time (a link already made for the same rankings is shown at once)
+  _sharePayload = null;
+  _resetShareLinkUi();
 }
 function closeShareOnOverlay(e) { if (e.target === byId(IDS.shareModal)) closeShare(); }
 // (v1.0.254 — openShareFromManage removed: no callers.)
@@ -17250,13 +17317,16 @@ function closeSessionSummary(e) {
 // into innerHTML. All user-visible strings go via textContent; the cover-image
 // URL is scheme- and host-allowlisted before it ever touches <img src>.
 // v1.0.258 — card links (AniList / MAL) are built only from validated integer ids.
+// v1.0.271 — decision 30a: the page shows only ranks, ELO, tiers and ids from the link, plus the username share.js
+// checked (a /s/ link only). Titles, covers, format, year and episodes come from AniList by id (_fetchSharedMeta);
+// a link's own text (t, c, ms, a #r= link's u) is never shown.
 const _SHORT_SHARE_PATH_RE = /^\/s\/([A-Za-z0-9]{6,16})\/?$/;
 function tryLoadSharedView() {
   const hash = location.hash;
   if (hash.startsWith('#r=')) {
     try {
       const payload = JSON.parse(decodeURIComponent(escape(atob(hash.slice(3)))));
-      return _renderSharedPayload(payload);
+      return _renderSharedPayload(payload); // v1.0.271 — never passed share.js, so no name is shown
     } catch { return false; }
   }
   const m = location.pathname.match(_SHORT_SHARE_PATH_RE);
@@ -17288,140 +17358,223 @@ function tryLoadSharedView() {
         if (attempt) await new Promise(r => setTimeout(r, retryWaits[attempt - 1]));
         const res = await fetch(`/.netlify/functions/share?id=${encodeURIComponent(m[1])}`, { cache: 'no-store' });
         if (res.status === 404) continue;
-        if (res.ok) ok = _renderSharedPayload(await res.json());
+        // v1.0.271 — share.js's 410: 'expired' (over 12 months old) or 'unavailable' (an old link with no ids). Said
+        // at once, with no retry.
+        if (res.status === 410) {
+          const why = (await res.json().catch(() => null))?.error;
+          _showSharedGone(why === 'expired' ? 'expired' : 'unavailable');
+          return;
+        }
+        if (res.ok) ok = _renderSharedPayload(await res.json(), { fromServer: true, shareId: m[1] });
         break;
       }
     } catch { ok = false; }
-    if (!ok) {
-      byId(IDS.sharedTitle).textContent = 'This share link isn\'t available';
-      byId(IDS.sharedSubtitle).textContent = 'It may have been mistyped, or it was never created. Ask for a fresh link — or make your own rankings below.';
-    }
+    if (!ok) _showSharedGone('missing');
   })();
   return true;
 }
 
-function _renderSharedPayload(payload) {
-  // Only https:// URLs on known anime-cover CDNs can populate <img src>.
-  // Anything else (javascript:, data:, an attacker's host) → blank placeholder.
-  const _ALLOWED_IMG_HOSTS = new Set([
-    's4.anilist.co',
-    'img.anili.st',
-    'cdn.myanimelist.net',
-  ]);
-  const _safeImgUrl = raw => {
-    try {
-      const u = new URL(String(raw ?? ''));
-      if (u.protocol !== 'https:') return '';
-      if (!_ALLOWED_IMG_HOSTS.has(u.hostname)) return '';
-      return u.href;
-    } catch { return ''; }
-  };
-  // v1.0.258 — optional entry details, checked with share.js sanitisePayload's rules (#r= links never pass
-  // through it): an integer in range, a known format or tier letter, otherwise the detail is left out.
-  const _intIn = (v, min, max) => (Number.isInteger(v) && v >= min && v <= max ? v : 0);
-  const _FORMAT_LABELS = new Map([['TV', 'TV'], ['TV_SHORT', 'Short'], ['MOVIE', 'Movie'], ['SPECIAL', 'Special'], ['OVA', 'OVA'], ['ONA', 'ONA'], ['MUSIC', 'Music']]);
-  const _TIERS = ['S', 'A', 'B', 'C', 'D'];
+// v1.0.271 — what a shared page says instead of a list. 'expired' and 'unavailable' are share.js's 410 answers;
+// 'unavailable' is also a #r= link with no AniList ids (made before 1.0.258). The Report line is hidden: nothing is shown.
+const _SHARED_GONE_TEXT = Object.freeze({
+  expired:     'This share link has expired. Share links last 12 months.',
+  unavailable: 'This link was made with an older version of Kessen and can\'t be shown any more. Ask for a new link.',
+  missing:     'It may have been mistyped, or it was never created. Ask for a fresh link — or make your own rankings below.',
+});
+function _showSharedGone(kind) {
+  _sharedRenderGen++; // a title lookup still running for an earlier render is dropped
+  byId(IDS.sharedTitle).textContent = 'This share link isn\'t available';
+  byId(IDS.sharedSubtitle).textContent = _SHARED_GONE_TEXT[kind] || _SHARED_GONE_TEXT.missing;
+  byId(IDS.sharedList).textContent = '';
+  _setSharedNote('');
+  _setSharedReport('');
+  show('shared-screen');
+}
 
+// Only https:// URLs on known anime-cover CDNs can populate <img src>.
+// Anything else (javascript:, data:, an attacker's host) → blank placeholder.
+// v1.0.271 — moved out of _renderSharedPayload: it now checks the cover addresses AniList returns (_fillSharedTitles).
+const _SHARED_IMG_HOSTS = new Set(['s4.anilist.co', 'img.anili.st', 'cdn.myanimelist.net']);
+function _safeImgUrl(raw) {
   try {
-    if (!payload || !Array.isArray(payload.top)) return false;
+    const u = new URL(String(raw ?? ''));
+    if (u.protocol !== 'https:') return '';
+    if (!_SHARED_IMG_HOSTS.has(u.hostname)) return '';
+    return u.href;
+  } catch { return ''; }
+}
+// v1.0.258 — optional details, checked with share.js sanitisePayload's rules (#r= links never pass through it): an
+// integer in range, a known format or tier letter, otherwise the detail is left out. v1.0.271 — moved out of
+// _renderSharedPayload; format, year and episodes now come from AniList.
+const _sharedIntIn = (v, min, max) => (Number.isInteger(v) && v >= min && v <= max ? v : 0);
+const _SHARED_FORMAT_LABELS = new Map([['TV', 'TV'], ['TV_SHORT', 'Short'], ['MOVIE', 'Movie'], ['SPECIAL', 'Special'], ['OVA', 'OVA'], ['ONA', 'ONA'], ['MUSIC', 'Music']]);
+const _SHARED_TIERS = ['S', 'A', 'B', 'C', 'D'];
+let _sharedRenderGen = 0; // v1.0.271 — bumped per render, so a late title lookup can't fill a page that was redrawn
+
+// v1.0.271 — fromServer: the payload came from share.js (/s/), so its u is the username share.js checked; a #r= link's
+// u is ignored. shareId: the /s/ id, for the Report link.
+function _renderSharedPayload(payload, { fromServer = false, shareId = '' } = {}) {
+  try {
+    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.top)) return false;
 
     // Coerce / clamp every payload field before it reaches the DOM.
-    const u  = String(payload.u  ?? '').slice(0, 80);
-    const ms = payload.ms ? String(payload.ms).slice(0, 80) : '';
-    const b  = Math.max(0, parseInt(payload.b, 10) || 0);
-    const top = payload.top.slice(0, 50); // hard cap — v1.0.258: new links are a Top 10, older ones a Top 20
+    const b = Math.max(0, parseInt(payload.b, 10) || 0);
     const isMal = payload.p === 'mal'; // v1.0.258 — MAL sharer: cards with a MAL id open MyAnimeList
+    // v1.0.271 — only entries with an AniList id: the title comes from AniList by id. None (a link made before 1.0.258)
+    // → the "older version" message. Hard cap of 50 (new links are a Top 10, older ones a Top 20).
+    const entries = [];
+    for (const a of payload.top.slice(0, 50)) {
+      if (!a || typeof a !== 'object') continue;
+      const id = _sharedIntIn(a.i, 1, 10_000_000);
+      if (!id) continue;
+      entries.push({
+        id,
+        rank:  Math.max(0, parseInt(a.r, 10) || 0),
+        elo:   Math.max(0, parseInt(a.e, 10) || 0),
+        malId: isMal ? _sharedIntIn(a.m, 1, 10_000_000) : 0,
+        tier:  _SHARED_TIERS.includes(a.k) ? a.k : '',
+      });
+    }
+    if (!entries.length) { _showSharedGone('unavailable'); return true; }
+    const gen = ++_sharedRenderGen;
 
     // v1.0.256 — no name → "Top N Anime"; links made before 1.0.256 carry 'guest' or a raw guest key as u.
+    // v1.0.271 — the name only from share.js (fromServer); ms (the old milestone line) is ignored.
+    const u = fromServer && typeof payload.u === 'string' ? payload.u.slice(0, 80) : '';
     const name = ['guest', KESSEN_KEYS.session.guest, KESSEN_KEYS.session.anilist('guest')].includes(u) ? '' : u;
-    byId(IDS.sharedTitle).textContent =
-      ms ? `${u} hit ${ms}` : (name ? `${name}'s Top ${top.length} Anime` : `Top ${top.length} Anime`);
+    byId(IDS.sharedTitle).textContent = name ? `${name}'s Top ${entries.length} Anime` : `Top ${entries.length} Anime`;
     // v1.0.242 — say where this came from; visitors arriving from a link
     // have no other context.
-    byId(IDS.sharedSubtitle).textContent =
-      ms ? `Top 5 after ${b} battles · ranked on Kessen` : `Ranked head-to-head on Kessen · ${b} ${b === 1 ? 'battle' : 'battles'}`;
+    byId(IDS.sharedSubtitle).textContent = `Ranked head-to-head on Kessen · ${b} ${b === 1 ? 'battle' : 'battles'}`;
 
     const list = byId(IDS.sharedList);
     list.textContent = ''; // clear without innerHTML
 
-    top.forEach(a => {
-      if (!a || typeof a !== 'object') return;
-      const rank  = Math.max(0, parseInt(a.r, 10) || 0);
-      const elo   = Math.max(0, parseInt(a.e, 10) || 0);
-      const title = String(a.t ?? '').slice(0, 200);
-      const cover = _safeImgUrl(a.c);
-      const numClass = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
-      // v1.0.258 — the optional details, each 0 / '' unless valid (see _intIn above).
-      const id    = _intIn(a.i, 1, 10_000_000);
-      const malId = isMal ? _intIn(a.m, 1, 10_000_000) : 0;
-      const tier  = _TIERS.includes(a.k) ? a.k : '';
-      const fmt   = _FORMAT_LABELS.get(a.f) || '';
-      const eps   = _intIn(a.n, 1, 5000);
-      const year  = _intIn(a.y, 1900, 2100);
-
-      // v1.0.258 — an entry with an AniList id is a link (MAL for a MAL sharer's entry with a MAL id), new tab, href
-      // built only from the parsed integer. Entries without one (links made before 1.0.258) stay plain cards.
-      const card = document.createElement(id ? 'a' : 'div');
-      card.className = id ? 'rank-card shared-card' : 'rank-card';
-      if (id) {
-        card.href   = malId ? `https://myanimelist.net/anime/${malId}` : `https://anilist.co/anime/${id}`;
-        card.target = '_blank';
-        card.rel    = 'noopener noreferrer';
-        card.title  = title; // full title on hover (the card clamps it to two lines)
-      }
+    const cards = [];
+    for (const e of entries) {
+      const numClass = e.rank === 1 ? 'gold' : e.rank === 2 ? 'silver' : e.rank === 3 ? 'bronze' : '';
+      // v1.0.258 — a new-tab link (MAL for a MAL sharer's entry with a MAL id), href built only from the parsed integer.
+      const card = document.createElement('a');
+      card.className = 'rank-card shared-card';
+      card.href   = e.malId ? `https://myanimelist.net/anime/${e.malId}` : `https://anilist.co/anime/${e.id}`;
+      card.target = '_blank';
+      card.rel    = 'noopener noreferrer';
 
       const rankSpan = document.createElement('span');
       rankSpan.className = 'rank-number' + (numClass ? ' ' + numClass : '');
-      rankSpan.textContent = '#' + rank;
+      rankSpan.textContent = '#' + e.rank;
       card.appendChild(rankSpan);
 
-      if (tier) { // v1.0.258 — the sharer's tier letter, same badge as their Rankings card
+      if (e.tier) { // v1.0.258 — the sharer's tier letter, same badge as their Rankings card
         const badge = document.createElement('span');
-        badge.className = 'tier-badge t-' + tier.toLowerCase();
-        badge.textContent = tier;
+        badge.className = 'tier-badge t-' + e.tier.toLowerCase();
+        badge.textContent = e.tier;
         card.appendChild(badge);
-      }
-
-      if (cover) {
-        const img = document.createElement('img');
-        if (coverCors(cover)) img.crossOrigin = 'anonymous';
-        img.src = cover;
-        img.alt = id ? '' : title; // v1.0.258 — inside a link the title below already names it (no double read-out)
-        img.loading = 'lazy';
-        card.appendChild(img);
       }
 
       const titleDiv = document.createElement('div');
       titleDiv.className = 'rank-title';
-      titleDiv.textContent = title;
+      titleDiv.textContent = 'Loading title…'; // v1.0.271 — until AniList answers (_fillSharedTitles)
       card.appendChild(titleDiv);
-
-      // v1.0.258 — 'TV · 24 ep · 2019': a movie shows no episode count (as on the Rankings card), missing parts are left out.
-      const meta = [fmt, eps && fmt !== 'Movie' ? `${eps} ep` : '', year ? String(year) : ''].filter(Boolean).join(' · ');
-      if (meta) {
-        const metaDiv = document.createElement('div');
-        metaDiv.className = 'shared-card-meta';
-        metaDiv.textContent = meta;
-        card.appendChild(metaDiv);
-      }
 
       const eloDiv = document.createElement('div');
       eloDiv.className = 'rank-elo';
-      eloDiv.textContent = 'ELO ' + elo;
+      eloDiv.textContent = 'ELO ' + e.elo;
       card.appendChild(eloDiv);
 
-      if (id) { // v1.0.258 — says where a tap goes
-        const ext = document.createElement('span');
-        ext.className = 'shared-card-ext';
-        ext.textContent = malId ? 'MAL ↗' : 'AniList ↗';
-        card.appendChild(ext);
-      }
+      const ext = document.createElement('span'); // v1.0.258 — says where a tap goes
+      ext.className = 'shared-card-ext';
+      ext.textContent = e.malId ? 'MAL ↗' : 'AniList ↗';
+      card.appendChild(ext);
 
       list.appendChild(card);
-    });
+      cards.push({ id: e.id, card, titleDiv, eloDiv });
+    }
+    _setSharedNote('');
+    _setSharedReport(fromServer ? shareId : ''); // v1.0.271 — decision 30c: Report on a /s/ page (a #r= link is stored nowhere)
     show('shared-screen');
+    _fillSharedTitles(cards, gen);
     return true;
   } catch { return false; }
+}
+
+// v1.0.271 — decision 30a: one AniList query for the ids on a shared page. Adult titles are never asked for (another
+// person's page), so an adult or unknown id comes back missing and its card says "Title unavailable". Returns a
+// Map of id → media, or null when AniList can't be reached.
+// v1.0.271 — anonymous: the visitor's own AniList token is never sent with it (a rejected one failed the whole query).
+async function _fetchSharedMeta(ids) {
+  const query = 'query($ids:[Int]){ Page(perPage:50){ media(id_in:$ids, type:ANIME, isAdult:false){ id title{english romaji} coverImage{large medium} format seasonYear episodes } } }';
+  const res = await _anilistFetch({ query, variables: { ids: ids.slice(0, 50) } }, { anonymous: true });
+  if (!res.ok) return null;
+  const media = (await res.json())?.data?.Page?.media;
+  if (!Array.isArray(media)) return null;
+  const out = new Map();
+  for (const m of media) if (m && Number.isInteger(m.id)) out.set(m.id, m);
+  return out;
+}
+
+// v1.0.271 — fills each card from AniList: the title (displayTitle, into textContent), the cover (through
+// _safeImgUrl) and the 'TV · 24 ep · 2019' line. Anything AniList returns is treated like link text: never innerHTML.
+async function _fillSharedTitles(cards, gen) {
+  let meta = null;
+  try { meta = await _fetchSharedMeta([...new Set(cards.map(c => c.id))]); } catch { meta = null; }
+  if (gen !== _sharedRenderGen) return;
+  if (!meta) {
+    for (const c of cards) c.titleDiv.textContent = 'Title unavailable';
+    _setSharedNote('Couldn\'t get the titles from AniList. Try again in a minute.');
+    return;
+  }
+  for (const c of cards) {
+    const m = meta.get(c.id);
+    const title = m ? String(displayTitle({ titleEn: m.title?.english, titleRo: m.title?.romaji }) || '').slice(0, 200) : '';
+    if (!title) { c.titleDiv.textContent = 'Title unavailable'; continue; }
+    c.titleDiv.textContent = title;
+    c.card.title = title; // full title on hover (the card clamps it to two lines)
+    const cover = _safeImgUrl(m.coverImage?.large || m.coverImage?.medium);
+    if (cover) {
+      const img = document.createElement('img');
+      if (coverCors(cover)) img.crossOrigin = 'anonymous';
+      img.src = cover;
+      img.alt = ''; // v1.0.258 — inside a link the title below already names it (no double read-out)
+      img.loading = 'lazy';
+      c.card.insertBefore(img, c.titleDiv);
+    }
+    // v1.0.258 — 'TV · 24 ep · 2019': a movie shows no episode count (as on the Rankings card), missing parts are left out.
+    const fmt  = _SHARED_FORMAT_LABELS.get(m.format) || '';
+    const eps  = _sharedIntIn(m.episodes, 1, 5000);
+    const year = _sharedIntIn(m.seasonYear, 1900, 2100);
+    const line = [fmt, eps && fmt !== 'Movie' ? `${eps} ep` : '', year ? String(year) : ''].filter(Boolean).join(' · ');
+    if (line) {
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'shared-card-meta';
+      metaDiv.textContent = line;
+      c.card.insertBefore(metaDiv, c.eloDiv);
+    }
+  }
+}
+
+function _setSharedNote(text) {
+  const note = byId(IDS.sharedNote);
+  if (note) { note.textContent = text; note.style.display = text ? '' : 'none'; }
+}
+
+// v1.0.271 — decision 30c, with question 2's default: Report is a prefilled email to feedback@kessen.co.uk (the address
+// is also shown as text beside it, for a device with no mail app). Only a checked id goes in: no diagnostics or
+// browser details. kind is 'share' (the only kind so far); anything else, or a bad id, is the bare address.
+function _reportHref(kind, ref) {
+  const id = String(ref ?? '');
+  if (kind !== 'share' || !/^[A-Za-z0-9]{6,16}$/.test(id)) return 'mailto:feedback@kessen.co.uk';
+  const subject = `Kessen report: share link ${id}`;
+  const body = `Share link: ${location.origin}/s/${id}\r\n\r\nWhat is wrong with it:\r\n`;
+  return `mailto:feedback@kessen.co.uk?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+// v1.0.271 — the Report line under a shared list: shown with a /s/ id, hidden otherwise.
+function _setSharedReport(shareId) {
+  const ok = /^[A-Za-z0-9]{6,16}$/.test(String(shareId ?? ''));
+  const link = byId(IDS.sharedReportLink);
+  if (link) link.href = _reportHref('share', ok ? shareId : '');
+  const line = byId(IDS.sharedReport);
+  if (line) line.style.display = ok ? '' : 'none';
 }
 
 // ─── FUZZY FLAG ───────────────────────────────────────────────────────────────
@@ -23679,18 +23832,21 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.270 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.271 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.270 — the live sync fix only: a ping's copy is read again until it arrives (and load-session reads strongly),
-  // Rankings repaints after a cloud copy is applied, and hiding the page sends a waiting upload (1.0.269's bullets are
-  // not repeated)
+  // v1.0.271 — share links and the community rules only (decisions 5, 30a, 30c): Create link, IDs plus a checked
+  // username, 12-month links, titles from AniList, links with no ids (before 8 Oct 2026) shown as unavailable, the rules
+  // page and Report (1.0.270's bullets are not repeated)
   bullets: [
-    '🔄 Your other device now picks up your latest battles more reliably, and Rankings refreshes to show them.',
-    '📱 Locking your phone or switching apps now sends your latest battles straight away.',
+    '🔗 Share no longer makes a link by itself. Tap Create link when you want one. Links last 12 months.',
+    '🏷️ A share link shows your AniList or MyAnimeList username only when you share your own list while signed in.',
+    '🖼️ Shared pages now get titles and covers from AniList. Older links no longer show a name.',
+    '🕰️ Share links made before 8 October 2026 can no longer be shown. Make a new one from Share.',
+    '📜 New community rules, and a Report link on shared pages.',
   ],
 };
 

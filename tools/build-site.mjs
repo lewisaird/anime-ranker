@@ -25,6 +25,7 @@ export const SITE_FILES = Object.freeze([
   'index.html', 'app.js', 'styles.css', 'sw.js', 'manifest.json',
   'icon.svg', 'icon-192.png', 'icon-512.png', 'og-image.png',
   'offline.html', 'privacy.html', 'LICENSE',
+  'terms.html', // v1.0.271 — the community rules page (decision 30c), linked from the app
   'screenshots',
   '_headers',
 ]);

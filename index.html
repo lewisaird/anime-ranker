@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.270" />
+  <meta name="version" content="1.0.271" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -778,8 +778,9 @@
     <button class="btn-secondary" onclick="startGuestMode()" style="min-width:240px;white-space:nowrap">🎲 Try it as a guest</button>
     <p class="warm-start-info" style="margin-top:4px">No account needed · 250 popular shows</p>
     <!-- v1.0.264 — readable privacy link (L9): it was #484f58 on the page background (2.28:1); colour and hover now come from .landing-privacy-link, no inline handlers -->
+    <!-- v1.0.271 — the community rules beside it (decision 30c), same tab like the privacy link -->
     <p style="margin-top:28px;font-size:0.72rem">
-      <a href="/privacy.html" class="landing-privacy-link">Privacy Policy</a>
+      <a href="/privacy.html" class="landing-privacy-link">Privacy Policy</a> · <a href="/terms.html" class="landing-privacy-link">Community rules</a>
     </p>
   </div>
 
@@ -1857,7 +1858,9 @@
           <h4>🔗 Share</h4>
           <!-- v1.0.254 — 3×3 dropped; one Top 10 image with a preview, one Share/Download button, link underneath -->
           <!-- v1.0.258 — the link is a Top 10 now (was 20) and its cards open AniList / MyAnimeList -->
-          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) and shows you a preview, plus a short link that opens the same top 10 in a browser — tap an anime there to open its AniList page (MyAnimeList if you signed in with MAL). Where your device has a share sheet the image goes straight to it; otherwise it downloads, and on desktop you can also copy it to the clipboard. Long-press or right-click the preview to save it.</p>
+          <!-- v1.0.271 — the link is made only on Create link, lasts 12 months, and shows a username only for your own list -->
+          <p>The Share button on the results page makes an image of your <strong>Top 10</strong> (rank, title and ELO) and shows you a preview. Where your device has a share sheet the image goes straight to it; otherwise it downloads, and on desktop you can also copy it to the clipboard. Long-press or right-click the preview to save it.</p>
+          <p style="margin-top:6px">Tap <strong>Create link</strong> for a short link that opens the same top 10 in a browser — tap an anime there to open its AniList page (MyAnimeList if you signed in with MAL). A link lasts 12 months and shows your AniList or MyAnimeList username only when you share your own list while signed in.</p>
         </div>
 
         <div class="help-section">
@@ -1875,9 +1878,11 @@
         <div class="help-section">
           <h4>🔒 Your data</h4>
           <p>Your rankings are saved on this device and, when you're signed in, your own list is backed up to the cloud so it syncs between your devices. <strong>Manage → Delete all my data</strong> deletes them from both, along with your push notification sign-up and synced notifications, and logs you out. Log out on your other devices first, or they can upload their copy again. If you're not signed in, it clears this device only.</p>
+          <!-- v1.0.271 — + the community rules (decision 30c), in a new tab like the other two -->
           <div class="privacy-links">
             <a href="/privacy.html" target="_blank" rel="noopener">Privacy policy ↗</a>
             <a href="/privacy.html#deleting-your-data" target="_blank" rel="noopener">How deletion works ↗</a>
+            <a href="/terms.html" target="_blank" rel="noopener">Community rules ↗</a>
           </div>
         </div>
 
@@ -1912,8 +1917,16 @@
     <div class="shared-header">
       <h2 id="shared-title">Shared Rankings</h2>
       <p id="shared-subtitle"></p>
+      <!-- v1.0.271 — titles come from AniList by id; this says when AniList couldn't be reached -->
+      <p class="shared-note" id="shared-note" role="status" style="display:none"></p>
     </div>
     <div class="ranking-list" id="shared-list"></div>
+    <!-- v1.0.271 — decision 30c: Report (a prefilled email, _reportHref) and the rules, under a /s/ list; the address is
+         shown as text too, for a device with no mail app. Hidden until a list from a short link is shown. -->
+    <p class="shared-report" id="shared-report" style="display:none">
+      <a id="shared-report-link" href="mailto:feedback@kessen.co.uk">Report this page</a> · <a href="/terms.html" target="_blank" rel="noopener">Community rules</a><br>
+      or email feedback@kessen.co.uk
+    </p>
     <!-- v1.0.242 — Every shared link used to dead-end on the grid. This is the
          one place a new person meets Kessen, so say what it is and offer the
          way in. Plain href so it works with no JS state at all. -->
@@ -1994,7 +2007,8 @@
     <button class="share-close" onclick="closeShare()" aria-label="Close">✕</button>
     <h3 id="share-modal-title">📤 Share Your Rankings</h3>
     <!-- v1.0.258 — the link is a Top 10 too (was 20) -->
-    <p class="share-subtitle">Share an image of your top 10, or copy a link to it.</p>
+    <!-- v1.0.271 — "create" (was "copy"): opening Share no longer makes a link (decision 5) -->
+    <p class="share-subtitle">Share an image of your top 10, or create a link to it.</p>
 
     <!-- v1.0.254 — one Top 10 image (3×3 and its toggle dropped). Live preview of the exact
          image the buttons send, as a data: URL (live CSP img-src has no blob:); the line under
@@ -2015,9 +2029,14 @@
 
     <!-- Share link -->
     <textarea id="share-url" readonly aria-label="Share link"></textarea>
+    <!-- v1.0.271 — decision 5: a link is made only when Create link is tapped (createShareLink); decision 30c: the
+         agreement line, with the rules opening in a new tab. The link line and Copy link stay hidden until a link exists. -->
+    <button class="btn-secondary share-create-link" id="share-create-link-btn" onclick="createShareLink()">🔗 Create link</button>
+    <p class="share-link-note" id="share-link-note" role="status" style="display:none"></p>
     <!-- v1.0.250 — readable link line (host + path once the short id lands); clicking it copies via copyShareLink -->
-    <p class="share-link-text" id="share-link-text" onclick="copyShareLink()" title="Click to copy the link"></p>
-    <button class="btn-secondary share-copy-link" onclick="copyShareLink()" id="copy-btn">📋 Copy link</button>
+    <p class="share-link-text" id="share-link-text" onclick="copyShareLink()" title="Click to copy the link" style="display:none"></p>
+    <button class="btn-secondary share-copy-link" onclick="copyShareLink()" id="copy-btn" style="display:none">📋 Copy link</button>
+    <p class="agree-line">By creating a link you agree to the <a href="/terms.html" target="_blank" rel="noopener">community rules</a>. Links last 12 months.</p>
 
     <button class="share-close-bottom" onclick="closeShare()">Close</button>
   </div>
