@@ -2396,6 +2396,7 @@ let _cloudSaveTimer    = null;  // debounce handle
 let _cloudChanges      = 0;     // v1.0.269 — changes made on this device that need a cloud save (a battle, or an upload asked for)
 let _cloudChangesSaved = 0;     // v1.0.269 — how many of them a confirmed cloud save carries (the tab-close upload sends only when fewer)
 let _cloudSaveFailStreak = 0;   // consecutive save failures
+let _cloudSaveInFlight = false; // v1.0.270 — an upload has gone and save-session has not answered (the hide flush sends nothing beside it)
 let _cloudSyncEnabled  = false; // true when AniList or MAL authenticated
 let _suppressCloudSave = false; // true while applying a cloud save to avoid an immediate re-save
 
@@ -2405,8 +2406,14 @@ let _suppressCloudSave = false; // true while applying a cloud save to avoid an 
 const _deviceId = 'dev-' + Math.random().toString(36).slice(2, 10);
 let _firebaseSyncRef      = null; // Firebase DatabaseReference for the user's sync path
 let _firebaseSyncListener = null; // 'value' listener handle (needed to detach cleanly)
-let _lastFirebaseSyncTs   = 0;    // ms timestamp of the last snapshot we applied or pushed
 let _pendingSyncData      = null; // remote snapshot queued for user confirmation (banner)
+// v1.0.270 — live sync no longer compares the two devices' clocks. A ping is known by who sent it and its savedAt
+// string (the same string as the copy's savedAt), and it counts as handled only once load-session has returned its
+// copy (or a newer one), or this device was already level with it. Until then _livePull reads again on a schedule.
+let _lastHandledPingId    = null; // 'savedBy|savedAt' of the last ping handled
+let _livePull             = null; // { ping, id, step, gen, offeredBc, timer } — the newest ping whose copy is still awaited
+let _livePullGen          = 0;
+const LIVE_PULL_RETRY_MS  = [1500, 3000, 5000, 8000, 12000, 15000, 15000]; // ~60 s in all: Netlify's stated bound for an eventual read
 // v1.0.263 — true after a signed-in Reset on this device, until the list is closed (logout, Delete all) or the
 // page reloads. Another device's newer copy is then offered in the banner, never applied silently: a device
 // that was closed during the Reset still holds the old rankings and its next battle uploads them.
@@ -2511,8 +2518,117 @@ function _stopFirebaseSync() {
   _firebaseSyncRef      = null;
   _firebaseSyncListener = null;
   _pendingSyncData      = null;
+  _livePullStop(); // v1.0.270 — a copy still being fetched belongs to the list being closed
   byId(IDS.realtimeSyncBanner)?.classList.remove('active');
   _ncStopSync();
+}
+
+// v1.0.270 — stop waiting for a ping's copy (list closed, listener stopped, or a newer ping takes over)
+function _livePullStop() {
+  if (_livePull?.timer) clearTimeout(_livePull.timer);
+  _livePull = null;
+  _livePullGen++;
+}
+
+// v1.0.270 — another device's ping. load-session can return the previous copy for a while after a save (Netlify Blobs
+// reads were eventually consistent), and the ping was then dropped with no retry: that round never arrived, and the next
+// round brought this one's copy. Now the copy is read again on a schedule until the one the ping announced (or a newer
+// one) comes back; any copy newer than this device is offered or applied as soon as it is read.
+function _onSyncPing(ping) {
+  // v1.0.270 — not while Reset / Delete all wipe the cloud save: an apply would release their hold on uploads. The ping
+  // is not marked handled: Firebase sends it again to the listener attached after a Reset (_stopFirebaseSync drops this one).
+  if (_suppressCloudSave) return;
+  const id = `${ping.savedBy}|${ping.savedAt}`;
+  if (id === _lastHandledPingId || id === _livePull?.id) return; // handled, or already being fetched
+  if ((ping.battleCount || 0) <= battleCount) { _lastHandledPingId = id; return; } // this device is level or ahead
+  const step = _livePull ? _livePull.step : 0; // a newer ping keeps the schedule it interrupts (it does not start it again)
+  const offeredBc = _livePull ? _livePull.offeredBc : null;
+  _livePullStop();
+  _livePull = { ping, id, step, offeredBc, gen: _livePullGen, timer: null };
+  return _livePullTry(_livePull.gen); // (the first read's promise: tests await it)
+}
+
+async function _livePullTry(gen) {
+  if (!_livePull || _livePull.gen !== gen || _livePull.busy) return;
+  const p = _livePull;
+  p.busy = true; p.timer = null;
+  const data = await _loadCloudSave();
+  p.busy = false;
+  if (!_livePull || _livePull.gen !== gen) return; // a newer ping, or the list closed, while it was read
+  // v1.0.270 — + Reset / Delete all started: their hold on uploads must stay on (both also stop the pull as they start)
+  if (_suppressCloudSave || !_isOwnAccountList()) { _livePullStop(); return; }
+  // v1.0.268/269 kept — only the own list's copy (marked ownList, or under the own key)
+  const own = !!(data && data.animeList && _cloudCopyFrom(data.saveKey, data.ownList) === 'own');
+  const bc = own ? (data.battleCount || 0) : -1;
+  if (!own || bc < (p.ping.battleCount || 0)) console.warn(`[live sync] the other device saved ${p.ping.battleCount} battles; the cloud read returned ${own ? bc : "no usable copy"}; reading again`); // field check: a stale or failed read
+  if (own && bc > battleCount && bc > (p.offeredBc ?? -1)) { p.offeredBc = bc; _takeLiveCopy(data); }
+  const reached = own && (data.savedAt === p.ping.savedAt || bc >= (p.ping.battleCount || 0));
+  if (reached || (p.ping.battleCount || 0) <= battleCount) { _lastHandledPingId = p.id; _livePull = null; return; }
+  if (p.step >= LIVE_PULL_RETRY_MS.length) { _livePull = null; return; } // ~60 s: left to the next ping or Manage → Load from cloud
+  p.timer = setTimeout(() => _livePullTry(gen), LIVE_PULL_RETRY_MS[p.step++]);
+}
+
+// v1.0.270 — a copy newer than this device: the banner on the battle screen (or after a Reset here), otherwise applied
+// silently, and the Rankings list repainted when it is showing (it kept the old list until it was opened again)
+function _takeLiveCopy(data) {
+  const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
+  // v1.0.263 — after a Reset on this device (this visit), ask even off the battle screen (see _resetHereThisVisit).
+  if ((!onBattle && !_resetHereThisVisit) || !animeList.length) {
+    _pendingSyncData = null; byId(IDS.realtimeSyncBanner)?.classList.remove('active'); // v1.0.269 — an older banner copy is now stale (Apply used to bring it back)
+    if (animeList.length) {
+      _applyCloudSaveToMemory(data, _ownCloudSaveKey()); // v1.0.269 — kept under this device's own key (the copy may carry another stored name)
+      showToast('✨ Picked up where you left off');
+      syncFormatButtons(); syncEpRangeButtons();
+      _paintBattleAfterCloudApply(); // v1.0.263 — the hidden battle cards still showed the old pair
+      _repaintRankingsAfterCloudApply(); // v1.0.270
+    }
+  } else {
+    // Mid-battle — show banner so they can choose when to apply
+    _pendingSyncData = data;
+    const count = (data.battleCount || 0) - battleCount;
+    const msg = byId(IDS.realtimeSyncMsg);
+    // v1.0.241 — say what ✕ means: this device's next save replaces the
+    // other device's progress (last-write-wins, no merge).
+    // v1.0.263 — after a Reset here the copy may be the old rankings, not "more anime": say so.
+    if (msg) msg.textContent = _resetHereThisVisit
+      ? `📱 Another device saved ${_nBattles(data.battleCount || 0)} — it may be your rankings from before the Reset. Apply them, or your next battle here replaces them.`
+      : `📱 Your other device ranked ${count} more anime. Apply them, or your next battle here replaces them.`;
+    byId(IDS.realtimeSyncBanner)?.classList.add('active');
+  }
+}
+
+// v1.0.270 — the Rankings header and list after a cloud copy was applied while Rankings is open (live sync, Manage →
+// Load from cloud). The same lines showResults writes; the page's scroll position is kept (the list view's table starts
+// at its top again, as on every redraw).
+function _repaintRankingsAfterCloudApply() {
+  if (byId(IDS.resultsScreen)?.style.display !== 'block') return;
+  const sub = byId(IDS.resultsSubtitle);
+  if (sub) sub.textContent = battleCount === 0
+    ? 'No battles yet · Rankings take shape as you battle'
+    : `After ${battleCount} ${battleCount === 1 ? 'battle' : 'battles'} · Rankings update as you keep going`;
+  const keepBtn = byId(IDS.keepRankingBtn);
+  if (keepBtn) keepBtn.textContent = battleCount === 0 ? '▶ Start Ranking' : '▶ Keep Ranking';
+  // v1.0.270 — the apply took the copy's grid/list view and turned Franchise off. Put back this device's own view, and
+  // show the copy's sort, as showResults does: the list was drawn in one view while the buttons showed another.
+  _loadViewPrefs();
+  _syncSortUI();
+  byId(IDS.viewGridBtn)?.classList.toggle('active', rankingView === 'grid');
+  byId(IDS.viewListBtn)?.classList.toggle('active', rankingView === 'list');
+  const franchiseBtn = byId(IDS.franchiseBtn);
+  if (franchiseBtn) {
+    franchiseBtn.classList.toggle('active', franchiseMode);
+    franchiseBtn.setAttribute('aria-pressed', franchiseMode ? 'true' : 'false');
+  }
+  _applyRankingViewState();
+  // v1.0.270 — the grid keeps its height until its last batch of cards is in (renderRankingList clears it): the page
+  // was cut short at the first batch, and a list longer than ~60 titles lost its scroll position. Its rows stay at the
+  // top meanwhile (align-content): stretched to the held height, each batch shrank them and Chrome's scroll anchoring
+  // followed the card in view back up.
+  const list = byId(IDS.rankingList);
+  if (list) { list.style.minHeight = list.offsetHeight + 'px'; list.style.alignContent = 'start'; }
+  const y = window.scrollY;
+  renderRankingList();
+  requestAnimationFrame(() => window.scrollTo(0, y));
 }
 
 // Attach a Firebase 'value' listener for this user's state path.
@@ -2552,57 +2668,12 @@ function _startFirebaseSyncAttach() {
   // The full session data lives in Netlify Blob — we fetch it from there when
   // we detect a newer ping from another device. This keeps Firebase writes tiny
   // so they never contend with collab-session traffic on the same WebSocket.
-  _firebaseSyncListener = _firebaseSyncRef.on('value', async snap => {
+  _firebaseSyncListener = _firebaseSyncRef.on('value', snap => {
     if (!_isOwnAccountList()) return; // v1.0.268 — another list is open: the account's copy is not applied to it
     const ping = snap.val();
     if (!ping || !ping.savedBy || !ping.savedAt) return;
     if (ping.savedBy === _deviceId) return; // our own write — skip
-
-    const remoteTs      = new Date(ping.savedAt).getTime();
-    const remoteBattles = ping.battleCount || 0;
-
-    // Ignore if we've already seen this ping or if our local state is ahead
-    if (remoteTs <= _lastFirebaseSyncTs) return;
-    if (remoteBattles <= battleCount) {
-      _lastFirebaseSyncTs = remoteTs; // mark seen so we don't re-prompt
-      return;
-    }
-
-    // Fetch the actual session from Netlify Blob (the full data source)
-    const data = await _loadCloudSave();
-    // v1.0.268 — + the copy must be the own list's, still open after the fetch: a device still on 1.0.267 can upload
-    // a guest list, and it was applied here silently
-    if (!data || !data.animeList || _cloudCopyFrom(data.saveKey, data.ownList) !== 'own' || !_isOwnAccountList()) return; // v1.0.269 — + a copy marked as the own list's, under any stored name
-
-    // Re-check after the async fetch — another battle may have happened locally
-    if ((data.battleCount || 0) <= battleCount) return;
-
-    const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
-    // v1.0.263 — after a Reset on this device (this visit), ask even off the battle screen (see _resetHereThisVisit).
-    if ((!onBattle && !_resetHereThisVisit) || !animeList.length) {
-      // Not actively battling — apply silently
-      _lastFirebaseSyncTs = remoteTs;
-      _pendingSyncData = null; byId(IDS.realtimeSyncBanner)?.classList.remove('active'); // v1.0.269 — an older banner copy is now stale (Apply used to bring it back)
-      if (animeList.length) {
-        _applyCloudSaveToMemory(data, _ownCloudSaveKey()); // v1.0.269 — kept under this device's own key (the copy may carry another stored name)
-        showToast('✨ Picked up where you left off');
-        syncFormatButtons(); syncEpRangeButtons();
-        _paintBattleAfterCloudApply(); // v1.0.263 — the hidden battle cards still showed the old pair
-      }
-    } else {
-      // Mid-battle — show banner so they can choose when to apply
-      _pendingSyncData = data;
-      _lastFirebaseSyncTs = remoteTs; // mark ping as seen regardless of decision
-      const count = (data.battleCount || 0) - battleCount;
-      const msg = byId(IDS.realtimeSyncMsg);
-      // v1.0.241 — say what ✕ means: this device's next save replaces the
-      // other device's progress (last-write-wins, no merge).
-      // v1.0.263 — after a Reset here the copy may be the old rankings, not "more anime": say so.
-      if (msg) msg.textContent = _resetHereThisVisit
-        ? `📱 Another device saved ${_nBattles(data.battleCount || 0)} — it may be your rankings from before the Reset. Apply them, or your next battle here replaces them.`
-        : `📱 Your other device ranked ${count} more anime. Apply them, or your next battle here replaces them.`;
-      byId(IDS.realtimeSyncBanner)?.classList.add('active');
-    }
+    return _onSyncPing(ping); // v1.0.270 — fetched until its copy comes back (see _onSyncPing)
   }, err => {
     // Stop the listener immediately on any error (permission denied, etc.)
     // so the SDK's internal retry loop doesn't block other Firebase operations
@@ -2641,12 +2712,12 @@ function applyRealtimeSync() {
   // switched saveKey to the own key, and that load then saved the guest list over the own list and its cloud save)
   if (!_isOwnAccountList() || _cloudCopyFrom(data.saveKey, data.ownList) !== 'own') return; // v1.0.269 — + a copy marked as the own list's
   if ((data.battleCount || 0) <= battleCount) return; // v1.0.269 — never roll back to an older copy (a banner left up from earlier)
-  _lastFirebaseSyncTs = new Date(data.savedAt).getTime();
   _applyCloudSaveToMemory(data, _ownCloudSaveKey()); // v1.0.269 — kept under this device's own key
   showToast('✨ Picked up where you left off');
   const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
   if (onBattle) { syncFormatButtons(); syncEpRangeButtons(); }
   _paintBattleAfterCloudApply(); // v1.0.263 — any screen: the banner stays up on Rankings too
+  _repaintRankingsAfterCloudApply(); // v1.0.270 — Rankings showed the old list
 }
 
 // Called by the "✕" button in the realtime-sync-banner.
@@ -2705,13 +2776,16 @@ function scheduleCloudSave() {
   _cloudChanges++; // v1.0.269 — a change to send (the tab-close upload checks it)
   clearTimeout(_cloudSaveTimer);
   _setSyncIndicator('saving');
-  _cloudSaveTimer = setTimeout(_doCloudSave, 5000);
+  _cloudSaveTimer = setTimeout(_cloudSaveTimerFired, 5000);
 }
+// v1.0.270 — the handle is cleared when the timer fires, so a set handle means an upload is still waiting (the hide flush)
+function _cloudSaveTimerFired() { _cloudSaveTimer = null; return _doCloudSave(); }
 
 async function _doCloudSave() {
   // v1.0.268 — + only the account's own list (Manage → Save to cloud, the first upload after a load and the Firebase ping go through here)
   if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !_isOwnAccountList()) return;
   const upTo = ++_cloudChanges; // v1.0.269 — everything up to here goes in this upload
+  _cloudSaveInFlight = true; // v1.0.270
   try {
     const session = {
       saveKey,
@@ -2771,7 +2845,6 @@ async function _doCloudSave() {
             savedBy:      _deviceId,
             battleCount:  session.battleCount,
           });
-          _lastFirebaseSyncTs = new Date(session.savedAt).getTime();
         }
       } catch (fbErr) {
         console.warn('Firebase real-time sync write failed:', fbErr.message);
@@ -2784,6 +2857,8 @@ async function _doCloudSave() {
     if (_cloudSaveFailStreak === 3) {
       showToast('⚠️ Cloud sync has failed 3 times in a row — check your connection.', 6000);
     }
+  } finally {
+    _cloudSaveInFlight = false; // v1.0.270
   }
 }
 
@@ -3027,7 +3102,7 @@ async function manualCloudPush() {
   if (!_isOwnAccountList()) { showToast(_notSyncedText('Only your own list is saved to the cloud. This list stays on this device.')); return; }
   if (!animeList.length) { showToast('Nothing to save yet — start ranking first.'); return; }
   _setSyncIndicator('saving');
-  clearTimeout(_cloudSaveTimer);
+  clearTimeout(_cloudSaveTimer); _cloudSaveTimer = null; // v1.0.270 — + null: nothing waits any more
   await _doCloudSave();
 }
 
@@ -3067,10 +3142,9 @@ async function manualCloudPull() {
       _showChangeUserBtn();
     } else if (onBattle) {
       syncFormatButtons(); syncEpRangeButtons();
-    } else {
-      renderRankingList();
     }
     _paintBattleAfterCloudApply(); // v1.0.263 — on Rankings too (the Manage tab): Keep Ranking doesn't repaint
+    _repaintRankingsAfterCloudApply(); // v1.0.270 — was renderRankingList() alone: + the "After N battles" line, which kept the old count
     showToast('☁️ Your rankings are back');
   } catch (err) {
     showToast('Failed to load cloud save: ' + (err.message || 'unknown error'));
@@ -6406,6 +6480,7 @@ function renderRankingList() {
       list.appendChild(frag);
     }
     _filterFranchise(); // apply any active search term
+    list.style.minHeight = ''; list.style.alignContent = ''; // v1.0.270 — the hold _repaintRankingsAfterCloudApply set: the cards are in
     return;
   }
 
@@ -6435,6 +6510,7 @@ function renderRankingList() {
       // to re-apply filters. At 6500 entries with chunk=60 that was ~108
       // calls × growing cardinality = millions of style writes.
       filterRankings();
+      list.style.minHeight = ''; list.style.alignContent = ''; // v1.0.270 — the hold _repaintRankingsAfterCloudApply set: the last batch is in
     }
   }
   renderChunk(0);
@@ -7147,6 +7223,9 @@ function resetAll() {
       clearTimeout(_cloudSaveTimer);
       _cloudSaveTimer = null;
       _suppressCloudSave = true;
+      // v1.0.270 — and stop a live-sync read still waiting: applying another device's copy during the wipe released
+      // the hold above, so a later save could upload over the wipe
+      _livePullStop();
       const wasAniList     = !!(authToken && authUser);
       const wasMAL         = !!(malAuthToken && malAuthUser);
       const rememberedName = authUser?.name || '';
@@ -7398,6 +7477,7 @@ async function deleteAllData() {
   clearTimeout(_cloudSaveTimer);
   _cloudSaveTimer = null;
   _suppressCloudSave = true;
+  _livePullStop(); // v1.0.270 — a live-sync read still waiting would apply a copy mid-wipe and release the hold (see resetAll)
 
   // 1. Tear down the cloud save with verification:
   //    (a) HARD-DELETE the blob via /delete-session
@@ -23599,17 +23679,18 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.269 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.270 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.269 — the cloud sync fix only: the tab-close upload sends only unsent changes, and the "other device" banner
-  // never applies a copy that is not newer than the list (1.0.268's bullets are not repeated: 1.0.268 is live)
+  // v1.0.270 — the live sync fix only: a ping's copy is read again until it arrives (and load-session reads strongly),
+  // Rankings repaints after a cloud copy is applied, and hiding the page sends a waiting upload (1.0.269's bullets are
+  // not repeated)
   bullets: [
-    '☁️ Fixed: with Kessen open on two devices, closing or reloading one could replace the other\'s newer progress.',
-    '📱 The "your other device ranked more" banner can no longer bring back an older copy.',
+    '🔄 Your other device now picks up your latest battles more reliably, and Rankings refreshes to show them.',
+    '📱 Locking your phone or switching apps now sends your latest battles straight away.',
   ],
 };
 
@@ -25257,6 +25338,25 @@ function _flushSessionOnUnload(payload) {
   }
 }
 
+// v1.0.270 — a phone put away (screen locked, app switched) within 5 s of its last battle froze the waiting upload
+// until it was opened again, so the other device never heard of those battles. Hidden: the waiting upload goes now
+// (the same upload and Firebase ping the timer sends; nothing goes when nothing waits). Shown again: a copy this device
+// is still waiting for is read now (its retry timer was held while hidden).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (_suppressCloudSave) return; // Reset / Delete all is wiping the cloud save (see beforeunload)
+    try { flushSaveState(); } catch (e) { console.error('[saveState] flush on hide failed:', e); }
+    // only the upload the 5 s timer would send: one is waiting, and (the tab-close test, v1.0.269) a change is unsent.
+    // An applied copy cancels the wait and leaves nothing unsent, so it is never sent back from here.
+    if (!_cloudSaveTimer || _cloudSaveInFlight || _cloudChangesSaved >= _cloudChanges) return;
+    clearTimeout(_cloudSaveTimer);
+    _cloudSaveTimerFired(); // _doCloudSave checks the own list, the sign-in and that a list is open
+  } else if (_livePull) {
+    if (_livePull.timer) clearTimeout(_livePull.timer);
+    _livePullTry(_livePull.gen);
+  }
+});
+
 window.addEventListener('beforeunload', () => {
   // v1.0.148 — flush any pending local saveState debounce before navigation;
   // this is the safety valve that keeps a fast-clicker from losing the last
@@ -25269,6 +25369,8 @@ window.addEventListener('beforeunload', () => {
   if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey || !_isOwnAccountList()) return;
   if (_cloudChangesSaved >= _cloudChanges) return; // v1.0.269 — nothing unsent: sending this device's (maybe older) copy used to replace a newer cloud save, with no ping
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
+  // v1.0.270 — + nothing waits now: the hide flush (visibilitychange, which follows) sent the same upload a second time
+  _cloudSaveTimer = null;
 
   const session = {
     saveKey, animeList, battleCount, currentA, currentB, battleHistory,
