@@ -1885,7 +1885,7 @@ async function _startMALOAuthSession({ autoResume = false, skipCloudCheck = fals
       _showChangeUserBtn();
       snapshotSessionStart();
       maybeShowKbTip();
-      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      _paintBattleAfterCloudApply(); // v1.0.269 — not renderBattle itself: its save of the pair it picks (a copy with no pair) sent the copy back ~5.4 s later
       _migrateMalIds(); // background — populate idMal on old saves so links go to MAL
       return;
     }
@@ -2393,6 +2393,8 @@ function _saveStateNow() {
 // The Netlify Function verifies the AniList token server-side.
 
 let _cloudSaveTimer    = null;  // debounce handle
+let _cloudChanges      = 0;     // v1.0.269 — changes made on this device that need a cloud save (a battle, or an upload asked for)
+let _cloudChangesSaved = 0;     // v1.0.269 — how many of them a confirmed cloud save carries (the tab-close upload sends only when fewer)
 let _cloudSaveFailStreak = 0;   // consecutive save failures
 let _cloudSyncEnabled  = false; // true when AniList or MAL authenticated
 let _suppressCloudSave = false; // true while applying a cloud save to avoid an immediate re-save
@@ -2570,7 +2572,7 @@ function _startFirebaseSyncAttach() {
     const data = await _loadCloudSave();
     // v1.0.268 — + the copy must be the own list's, still open after the fetch: a device still on 1.0.267 can upload
     // a guest list, and it was applied here silently
-    if (!data || !data.animeList || data.saveKey !== _ownCloudSaveKey() || !_isOwnAccountList()) return;
+    if (!data || !data.animeList || _cloudCopyFrom(data.saveKey, data.ownList) !== 'own' || !_isOwnAccountList()) return; // v1.0.269 — + a copy marked as the own list's, under any stored name
 
     // Re-check after the async fetch — another battle may have happened locally
     if ((data.battleCount || 0) <= battleCount) return;
@@ -2580,8 +2582,9 @@ function _startFirebaseSyncAttach() {
     if ((!onBattle && !_resetHereThisVisit) || !animeList.length) {
       // Not actively battling — apply silently
       _lastFirebaseSyncTs = remoteTs;
+      _pendingSyncData = null; byId(IDS.realtimeSyncBanner)?.classList.remove('active'); // v1.0.269 — an older banner copy is now stale (Apply used to bring it back)
       if (animeList.length) {
-        _applyCloudSaveToMemory(data);
+        _applyCloudSaveToMemory(data, _ownCloudSaveKey()); // v1.0.269 — kept under this device's own key (the copy may carry another stored name)
         showToast('✨ Picked up where you left off');
         syncFormatButtons(); syncEpRangeButtons();
         _paintBattleAfterCloudApply(); // v1.0.263 — the hidden battle cards still showed the old pair
@@ -2615,10 +2618,17 @@ function _startFirebaseSyncAttach() {
 // v1.0.263 — after a live-sync or Manage → Load from cloud apply, paint the applied list's pair (a fresh trio
 // in Trio mode) whichever screen is showing. Only the battle screen was repainted, and Keep Ranking doesn't
 // repaint, so the old cards (or a Tower run the apply ended) stayed up while a tap credited other anime.
+// v1.0.269 — the start-up loaders' "Load cloud save" branches paint through it too (startLoading, _startMALOAuthSession).
 function _paintBattleAfterCloudApply() {
   if (trioMode) renderTrio();
   else if (currentA !== null && currentB !== null) renderCurrentPair();
   else renderBattle();
+  // v1.0.269 — renderTrio and renderBattle save the trio or pair they pick for the applied copy: written now, while
+  // cloud saves are held, so it isn't counted as a change and the copy doesn't go up again ~5.4 s later (see the apply)
+  _suppressCloudSave = true;
+  try { flushSaveState(); }
+  catch (e) { console.error('[saveState] local save after a cloud apply failed:', e); }
+  finally { _suppressCloudSave = false; }
 }
 
 // Called by the "Apply" button in the realtime-sync-banner.
@@ -2629,9 +2639,10 @@ function applyRealtimeSync() {
   _pendingSyncData = null;
   // v1.0.268 — only onto the own list it was offered for: the banner can outlive the list (Apply during a guest load
   // switched saveKey to the own key, and that load then saved the guest list over the own list and its cloud save)
-  if (!_isOwnAccountList() || data.saveKey !== _ownCloudSaveKey()) return;
+  if (!_isOwnAccountList() || _cloudCopyFrom(data.saveKey, data.ownList) !== 'own') return; // v1.0.269 — + a copy marked as the own list's
+  if ((data.battleCount || 0) <= battleCount) return; // v1.0.269 — never roll back to an older copy (a banner left up from earlier)
   _lastFirebaseSyncTs = new Date(data.savedAt).getTime();
-  _applyCloudSaveToMemory(data);
+  _applyCloudSaveToMemory(data, _ownCloudSaveKey()); // v1.0.269 — kept under this device's own key
   showToast('✨ Picked up where you left off');
   const onBattle = byId(IDS.battleScreen)?.style.display !== 'none';
   if (onBattle) { syncFormatButtons(); syncEpRangeButtons(); }
@@ -2673,10 +2684,10 @@ function _isOwnAccountList() {
 }
 // v1.0.268 — whose list a cloud copy holds: 'own'; 'renamed' (same site, another name: a renamed account, or a
 // typed-name list an older copy of the app uploaded); 'other' (a guest list, the other site's list, or no key).
-function _cloudCopyFrom(cloudKey) {
+function _cloudCopyFrom(cloudKey, ownList = false) {
   const own = _ownCloudSaveKey();
   if (!own || !cloudKey || typeof cloudKey !== 'string') return 'other';
-  if (cloudKey === own) return 'own';
+  if (cloudKey === own || ownList === true) return 'own'; // v1.0.269 — + a copy marked ownList (only the own list uploads), whatever name it was saved under
   const prefix = _isMalCloudSession() ? 'kessen.session.mal.' : 'kessen.session.anilist.';
   return cloudKey.startsWith(prefix) && !_guestSaveKeys().includes(cloudKey) ? 'renamed' : 'other';
 }
@@ -2691,6 +2702,7 @@ function _notSyncedText(otherListText) {
 function scheduleCloudSave() {
   // v1.0.268 — + only the account's own list: a guest or typed-name list used to upload over the account's cloud save
   if (_suppressCloudSave || !_cloudSyncEnabled || !_activeCloudUser() || !_isOwnAccountList()) return;
+  _cloudChanges++; // v1.0.269 — a change to send (the tab-close upload checks it)
   clearTimeout(_cloudSaveTimer);
   _setSyncIndicator('saving');
   _cloudSaveTimer = setTimeout(_doCloudSave, 5000);
@@ -2699,6 +2711,7 @@ function scheduleCloudSave() {
 async function _doCloudSave() {
   // v1.0.268 — + only the account's own list (Manage → Save to cloud, the first upload after a load and the Firebase ping go through here)
   if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !_isOwnAccountList()) return;
+  const upTo = ++_cloudChanges; // v1.0.269 — everything up to here goes in this upload
   try {
     const session = {
       saveKey,
@@ -2722,6 +2735,7 @@ async function _doCloudSave() {
       weeklyStats: { ..._weeklyStats,     // v1.0.238 — cross-device weekly stats
         lastCompletedWeek: _weeklyStats.lastCompletedWeek ? { ..._weeklyStats.lastCompletedWeek } : null },
       // (v1.0.268 — the usage counters no longer ride along; save-session drops any an older copy of the app sends)
+      ownList: true, // v1.0.269 — marks the own list's copy (only the own list uploads), whatever name this device stores
       savedAt: new Date().toISOString(),
     };
     const body = _isMalCloudSession()
@@ -2733,6 +2747,7 @@ async function _doCloudSave() {
       body:    JSON.stringify(body),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    _cloudChangesSaved = Math.max(_cloudChangesSaved, upTo); // v1.0.269 — confirmed; a battle during the upload stays unsent
     _cloudSaveFailStreak = 0;
     _setSyncIndicator('saved');
     setTimeout(() => _setSyncIndicator('hidden'), 3000);
@@ -2799,7 +2814,8 @@ async function _loadCloudSave() {
 // Applies a cloud save object directly into memory and navigates to battle screen.
 // Avoids a full page reload so _cloudSyncEnabled stays true and auto-save keeps working.
 // v1.0.268 — ownKey: a list load (checkAndApplyCloudSave, Manage → Load from cloud) passes the own list's key, so a
-// renamed copy is kept under the account's current name; live sync passes none (its copy already has the own key).
+// renamed copy is kept under the account's current name. v1.0.269 — live sync (the listener, the banner's Apply) passes
+// it too, as a copy marked ownList can carry another stored name (it passed none, keeping the copy's key).
 function _applyCloudSaveToMemory(cloud, ownKey = null) {
   const prevList = animeList; // v1.0.263 — this device's positions, for _onListPositionsChanged below
   animeList      = cloud.animeList;
@@ -2892,9 +2908,24 @@ function _applyCloudSaveToMemory(cloud, ownKey = null) {
   _seedTasteFromLocalSave();
   _mergeTasteStorySeen(cloud.tasteStorySeen);
   _mergeTasteSnapshots(cloud.tasteSnapshots);
+  // v1.0.269 — written now, while cloud saves are held. saveState() waits 400 ms, past the hold, so the copy just
+  // applied counted as this device's change and went up again ~5.4 s later; a device locked, reloaded or asleep in that
+  // window sent it later, over the other device's newer progress.
   _suppressCloudSave = true;
-  saveState(); // persist to localStorage — suppress cloud save since we just loaded from cloud
-  _suppressCloudSave = false;
+  try {
+    saveState(); // persist to localStorage — suppress cloud save since we just loaded from cloud
+    flushSaveState();
+  } catch (e) {
+    console.error('[saveState] local save after a cloud apply failed:', e); // v1.0.269 — storage blocked: the apply still completes (this write used to fail later, in its timer)
+  } finally {
+    _suppressCloudSave = false; // v1.0.269 — never left on: it stops every cloud save and the tab-close upload
+  }
+  clearTimeout(_cloudSaveTimer); _cloudSaveTimer = null; // v1.0.269 — a waiting upload would only send the cloud's copy back
+  _cloudChangesSaved = _cloudChanges; // v1.0.269 — the list is the cloud copy: nothing from before the apply is unsent
+  // v1.0.269 — and in sync with the cloud: "Synced just now", as the re-upload used to show, and no "Saving…" left over
+  _setSyncIndicator('hidden');
+  try { localStorage.setItem(KESSEN_KEYS.ui.lastCloudSaveTs, String(Date.now())); } catch {}
+  _updateCloudSyncTimestamp();
 }
 
 async function checkAndApplyCloudSave(localSaveKey) {
@@ -2934,7 +2965,7 @@ async function checkAndApplyCloudSave(localSaveKey) {
   if (!cloud || !cloud.animeList || !cloud.saveKey) return false;
   // v1.0.268 — a copy of a guest list or the other site's list (uploaded by a copy of the app before 1.0.268) is
   // never offered; one saved under another name on the same site (a renamed account) is, and says which list it was.
-  const from = _cloudCopyFrom(cloud.saveKey);
+  const from = _cloudCopyFrom(cloud.saveKey, cloud.ownList); // v1.0.269 — + the copy's own-list mark
   if (from === 'other') return false;
 
   const cloudDate = cloud.savedAt ? new Date(cloud.savedAt) : null;
@@ -3009,7 +3040,7 @@ async function manualCloudPull() {
   const cloud = await _loadCloudSave();
   if (!cloud || !cloud.animeList) { showToast('No cloud save found yet.'); return; }
   // v1.0.268 — a guest or other-site copy (uploaded by a copy of the app before 1.0.268) is not loaded; a renamed one says its list
-  const from = _cloudCopyFrom(cloud.saveKey);
+  const from = _cloudCopyFrom(cloud.saveKey, cloud.ownList); // v1.0.269 — + the copy's own-list mark
   if (from === 'other') { showToast('The cloud copy is from another list, so it was not loaded.'); return; }
   const renamedLine = from === 'renamed' ? `\nThe cloud copy was saved from the list "${cloud.saveKey.slice(cloud.saveKey.lastIndexOf('.') + 1)}".` : '';
 
@@ -14439,7 +14470,7 @@ async function startLoading({ skipCloudCheck = false } = {}) {
       snapshotSessionStart();
       maybeShowKbTip();
       syncFormatButtons(); syncEpRangeButtons();
-      if (currentA !== null && currentB !== null) renderCurrentPair(); else renderBattle();
+      _paintBattleAfterCloudApply(); // v1.0.269 — not renderBattle itself: its save of the pair it picks (a copy with no pair) sent the copy back ~5.4 s later
       return;
     }
   }
@@ -23568,19 +23599,17 @@ const APP_VERSION = (() => {
   catch { return ''; }
 })();
 
-// v1.0.268 — These bullets describe THIS RELEASE only. When the next release
+// v1.0.269 — These bullets describe THIS RELEASE only. When the next release
 // ships, REPLACE this list with that release's notable changes — don't append.
 // Previous releases were accumulating bullets here, making "What's new" read
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.268 — own list only in the cloud, no usage counts, Tower retry off with no device left, share pages not indexed
-  // (1.0.267's Tower retry bullet is not repeated: 1.0.267 is live)
+  // v1.0.269 — the cloud sync fix only: the tab-close upload sends only unsent changes, and the "other device" banner
+  // never applies a copy that is not newer than the list (1.0.268's bullets are not repeated: 1.0.268 is live)
   bullets: [
-    '☁️ Cloud sync now saves only your own list. Guest lists and lists opened by typing a name stay on this device.',
-    '📊 Kessen no longer counts which features you use, and the counts already kept are being deleted.',
-    '🔔 If none of your devices can get notifications any more, Tower retry prompts now switch off.',
-    '🔍 Shared Top 10 pages now ask search engines not to list them.',
+    '☁️ Fixed: with Kessen open on two devices, closing or reloading one could replace the other\'s newer progress.',
+    '📱 The "your other device ranked more" banner can no longer bring back an older copy.',
   ],
 };
 
@@ -25238,6 +25267,7 @@ window.addEventListener('beforeunload', () => {
   if (_suppressCloudSave) return;
   // v1.0.268 — + only the account's own list (see scheduleCloudSave)
   if (!_cloudSyncEnabled || !_activeCloudUser() || !animeList.length || !saveKey || !_isOwnAccountList()) return;
+  if (_cloudChangesSaved >= _cloudChanges) return; // v1.0.269 — nothing unsent: sending this device's (maybe older) copy used to replace a newer cloud save, with no ping
   clearTimeout(_cloudSaveTimer); // cancel any pending debounce — we're saving now
 
   const session = {
@@ -25251,6 +25281,7 @@ window.addEventListener('beforeunload', () => {
     achievements,
     comparedFriends: [...comparedFriends],
     matchupStats,
+    ownList: true, // v1.0.269 — see _doCloudSave
     savedAt: new Date().toISOString(),
   };
   const body = _isMalCloudSession()
