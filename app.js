@@ -190,6 +190,11 @@ const IDS = Object.freeze({
   sharedNote:             'shared-note', // v1.0.271 — "Couldn't get the titles from AniList…"
   sharedReport:           'shared-report', // v1.0.271 — decision 30c: Report line under a shared list
   sharedReportLink:       'shared-report-link',
+  // v1.0.272 — the Report lines in Live Challenge and Watch Together (decision 30c)
+  lcReport:               'lc-report',
+  lcReportLink:           'lc-report-link',
+  collabReport:           'collab-report',
+  collabReportLink:       'collab-report-link',
   sharedSubtitle:         'shared-subtitle',
   sharedTitle:            'shared-title',
   shareModal:             'share-modal',
@@ -280,8 +285,7 @@ const IDS = Object.freeze({
   ncPushMaster:           'nc-push-master',
   ncPushCategories:       'nc-push-categories',
   ncPushCatTower:         'nc-push-cat-tower',
-  ncPushCatWt:            'nc-push-cat-wt',
-  ncPushCatLc:            'nc-push-cat-lc',
+  // v1.0.272 — ncPushCatWt / ncPushCatLc (the invite boxes) removed with invites (decision 30b)
   // v1.0.210 — "What's new" modal opened from the app_update bell entry.
   whatsNewModal:          'whats-new-modal',
   whatsNewTitle:          'whats-new-title',
@@ -325,9 +329,9 @@ const IDS = Object.freeze({
   collabVoteRevealText:     'collab-vote-reveal-text',
   collabVoteNextBtn:        'collab-vote-next-btn',
   collabResultsList:        'collab-results-list',
-  collabMultiName:          'collab-multi-name',
   collabJoinInput:          'collab-join-input',
   collabLobbyCode:          'collab-lobby-code',
+  collabShareBtn:           'collab-share-btn', // v1.0.272 — Copy join link (decision 30b)
   challengeModal:           'challenge-modal',
   challengeLoading:       'challenge-loading',
   challengeGame:          'challenge-game',
@@ -349,6 +353,12 @@ const IDS = Object.freeze({
   lcSetupPlatform:      'lc-setup-platform',
   lcSetupUsername:      'lc-setup-username',
   lcSetupJoinCode:      'lc-setup-join-code',
+  // v1.0.272 — decision 22: the setup panel's login block, identity row, hint and buttons (Create / Join by id)
+  lcLoginNeeded:        'lc-login-needed',
+  lcIdentity:           'lc-identity',
+  lcSetupHint:          'lc-setup-hint',
+  lcCreateBtn:          'lc-create-btn',
+  lcJoinBtn:            'lc-join-btn',
   lcPanelLobby:         'lc-panel-lobby',
   lcPanelBuilding:      'lc-panel-building',
   lcPanelGame:          'lc-panel-game',
@@ -865,10 +875,12 @@ const KESSEN_KEYS = {
     // for the legacy underscore form).
     tasteNewBadgeMilestone: 'kessen_taste_badge_milestone', // v1.0.260 — legacy device-wide entry, removed at boot
     // v1.0.168 — Push notification config cached per-device.
-    // Stored shape: { enabled: bool, categories: { towerRetry, watchTogether,
-    // liveChallenge }, endpoint: string, syncedAt: number }. Mirror of what
+    // Stored shape: { enabled: bool, categories: { towerRetry },
+    // endpoint: string, syncedAt: number }. Mirror of what
     // the server has so the toggle reflects state synchronously without an
     // API round-trip on modal open.
+    // v1.0.272 — categories is { towerRetry } only now (was also watchTogether, liveChallenge); invite choices an older
+    // version saved are not read back
     push:                   'kessen.ui.push',
   },
   settings: {
@@ -1116,6 +1128,8 @@ function _clearRankingState() {
   // Clear any stored Live Challenge session so a stale rejoin banner
   // from a previous auth provider can't appear for the new user.
   try { sessionStorage.removeItem('kessen-lc'); } catch {}
+  // v1.0.272 — and a code kept for a login (decision 22): the dialogs are hidden below without closeLiveChallengeModal
+  try { sessionStorage.removeItem('kessen-lc-pending'); } catch {}
 
   // Hide the bell — it's only valid during an active logged-in session
   const bell = byId(IDS.notifBell);
@@ -1293,6 +1307,7 @@ function _updateAuthUI() {
   if (cloudBtns) cloudBtns.style.display = (loggedIn || malLoggedIn) ? '' : 'none';
 
   _updateScoreLabel();
+  _lcAuthChanged(); // v1.0.272 — Live Challenge's login block / identity row, if it is open (decision 22)
 }
 
 const ANILIST_CLIENT_ID = '37947';
@@ -1436,6 +1451,7 @@ async function _handleOAuthCode(code) {
       // v1.0.251 — reset the now-hidden button; an in-page logout used to reveal a stuck, disabled '⏳ Logging in…'
       if (btn) { btn.textContent = '🔐 Log in with AniList'; btn.disabled = false; }
       startLoading();
+      _lcCheckDeepLink(); // v1.0.272 — a Live Challenge code kept for this login reopens with it (decision 22)
     } else {
       authToken = null;
       if (btn) { btn.textContent = '🔐 Log in with AniList'; btn.disabled = false; } // v1.0.251 — "Log in" (verb), same as the index.html label
@@ -1640,6 +1656,7 @@ function _updateMALAuthUI() {
   // runs before _restoreMALAuth completes and incorrectly hides the MAL toggle.
   const socialPane = byId(IDS.tabPanelSocial);
   if (socialPane && socialPane.style.display !== 'none') renderSocialTab();
+  _lcAuthChanged(); // v1.0.272 — Live Challenge's login block / identity row, if it is open (decision 22)
 }
 
 let _malOAuthPopup     = null;
@@ -1753,6 +1770,7 @@ async function _handleMALOAuthCode(code) {
 
     // 3. Load the anime list and start the session
     await _startMALOAuthSession();
+    _lcCheckDeepLink(); // v1.0.272 — a Live Challenge code kept for this login reopens with it (decision 22)
 
   } catch (err) {
     console.error('MAL OAuth failed:', err);
@@ -10886,6 +10904,51 @@ function _mpIndex(v) {
   return Number.isInteger(v) && v >= 0 ? v : 0;
 }
 
+// v1.0.272 — decisions 30a, 34 and 22: an online session shows a name only from a login. This is the signed-in account
+// a session uses, AniList first (as cloud sync does), else MyAnimeList; null when neither is signed in. Live Challenge
+// needs one; Watch Together uses its name, or "Guest N" without one (_mpLoginName).
+function _lcLoginIdentity() {
+  if (authToken && authUser?.name) return { name: String(authUser.name), platform: 'anilist' };
+  if (malAuthToken && malAuthUser?.name) return { name: String(malAuthUser.name), platform: 'mal' };
+  return null;
+}
+function _mpLoginName() {
+  return _lcLoginIdentity()?.name || '';
+}
+
+// v1.0.272 — decision 30a: a player name read back from a session is shown only when it has the shape of an AniList or
+// MyAnimeList username, or is a "Guest N" label; any other text (a sentence, a link, markup) shows as "Player". No name
+// at all stays '' so each caller keeps its own fallback. Not checked by the server: the session rules only need a
+// Firebase sign-in, so a modified app can still write any username-shaped name.
+function _mpName(v) {
+  const s = _mpText(v);
+  if (!s) return '';
+  return /^[A-Za-z0-9_-]{2,20}$/.test(s) || /^Guest \d{1,3}$/.test(s) ? s : 'Player';
+}
+
+// v1.0.272 — decision 30a: a cover read back from a session is used only from AniList's or MyAnimeList's anime image
+// paths, over https with no login or port in the address; anything else gives the no-cover placeholder (was: any
+// http(s) address). The path matters because the same hosts serve user avatars. The address is parsed first, so a
+// "../" (or %2e%2e) can't step out of an allowed path.
+function _mpCover(v) {
+  if (typeof v !== 'string' || !v) return '';
+  let u;
+  try { u = new URL(v); } catch { return ''; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return '';
+  // v1.0.272 — and no escaped character in the path: the parser keeps an escaped "/" or "\" (%2f, %5c) as written, so
+  // ".../media/anime/..%2f..%2fuser/avatar/x.png" passed the path check and could reach an avatar on a host that decodes
+  // it. AniList's and MyAnimeList's anime images never have one.
+  if (u.pathname.includes('%')) return '';
+  const where = u.origin + u.pathname;
+  const allowed = [
+    'https://s4.anilist.co/file/anilistcdn/media/anime/',
+    'https://img.anili.st/media/',
+    'https://cdn.myanimelist.net/images/anime/',
+    'https://api-cdn.myanimelist.net/images/anime/',
+  ];
+  return allowed.some(p => where.startsWith(p)) ? u.href : '';
+}
+
 // v1.0.262 — Live Challenge pairs from the session. A pair without both titles
 // is skipped; every other field is forced to the type the cards expect.
 function _lcCleanPairs(v) {
@@ -10896,7 +10959,7 @@ function _lcCleanPairs(v) {
     return {
       aId:       _mpIndex(p.aId),       bId:       _mpIndex(p.bId),
       aTitle,                           bTitle,
-      aCover:    _mpText(p.aCover),     bCover:    _mpText(p.bCover),
+      aCover:    _mpCover(p.aCover),    bCover:    _mpCover(p.bCover), // v1.0.272 — AniList / MAL anime images only
       aFormat:   _mpText(p.aFormat),    bFormat:   _mpText(p.bFormat),
       aEpisodes: _mpCount(p.aEpisodes), bEpisodes: _mpCount(p.bEpisodes),
     };
@@ -10908,7 +10971,8 @@ function _lcCleanPairs(v) {
 function _collabCleanShow(s) {
   const title = _mpText(s?.title);
   if (!title) return null;
-  return { title, cover: _mpText(s.cover), format: _mpText(s.format), episodes: _mpCount(s.episodes) };
+  // v1.0.272 — cover: AniList / MAL anime images only (_mpCover; was any text, then any http(s) address via safeUrl)
+  return { title, cover: _mpCover(s.cover), format: _mpText(s.format), episodes: _mpCount(s.episodes) };
 }
 function _collabCleanShows(v) {
   return Array.isArray(v) ? v.map(_collabCleanShow).filter(Boolean) : [];
@@ -10920,7 +10984,7 @@ function _collabCleanPlayers(v) {
     if (!p || typeof p !== 'object') continue;
     out[pid] = {
       ...p,
-      name:        _mpText(p.name),
+      name:        _mpName(p.name), // v1.0.272 — a username or "Guest N"; other text shows as "Player"
       nominations: _collabCleanShows(p.nominations),
       rankedIds:   Array.isArray(p.rankedIds) ? p.rankedIds : [],
     };
@@ -11000,9 +11064,18 @@ function _lcCheckRejoinBanner() {
   if (!_FIREBASE_READY) return;
   const stored = _lcGetStoredSession();
   const banner = byId(IDS.lcRejoinBanner);
-  if (!stored || !banner) return;
+  if (!banner) return;
+  // v1.0.272 — decision 22: offered only to the login the session was played as (it rejoins under that name), and
+  // hidden again after a sign-out or a switch to another account while Live Challenge is open (_lcAuthChanged)
+  if (!stored || !_lcIsStoredLogin(stored)) { banner.style.display = 'none'; return; }
   byId(IDS.lcRejoinDesc).textContent = `Session ${stored.code} · playing as ${stored.username}`;
   banner.style.display = '';
+}
+
+// v1.0.272 — whether the signed-in account (_lcLoginIdentity) is the one a stored Live Challenge session was played as
+function _lcIsStoredLogin(stored) {
+  const me = _lcLoginIdentity();
+  return !!me && typeof stored?.username === 'string' && stored.username.toLowerCase() === me.name.toLowerCase();
 }
 
 // ── SHAREABLE LINK ─────────────────────────────────────────────────────────────
@@ -11036,36 +11109,64 @@ function _lcBuildShareUrl() {
 
 // Copy the shareable link to clipboard; fall back to the Web Share API on mobile.
 // If clipboard is unavailable, show a prompt so the user can copy manually.
-async function lcShareLink() {
-  const shareUrl = _lcBuildShareUrl();
-  if (!shareUrl) return;
+// v1.0.272 — shared with Watch Together's Copy join link (_shareJoinLink)
+function lcShareLink() {
+  return _shareJoinLink(_lcBuildShareUrl(), 'Join my Kessen Live Challenge!', byId(IDS.lcShareBtn));
+}
 
-  const btn = byId(IDS.lcShareBtn);
-  const reset = () => { if (btn) btn.textContent = 'Copy link'; };
+// v1.0.272 — decision 30b: Watch Together's join link (/?wt=CODE), the way to invite someone now that invites by
+// username are gone. Opening it fills in the code and waits for a tap on Join (_wtCheckDeepLink).
+function collabShareLink() {
+  const code = _collab?.sessionCode;
+  if (!_isValidSessionCode(code)) return;
+  return _shareJoinLink(`${window.location.origin}/?wt=${code}`, 'Join my Kessen Watch Together!', byId(IDS.collabShareBtn));
+}
+
+// v1.0.272 — the share-or-copy step lcShareLink had, for both join links. The share sheet opens before anything is
+// awaited (it needs the tap's user activation). Closing the share sheet (AbortError) is not a failure, so it no longer
+// shows "Could not copy". The button shows "✓ Copied!" for 2.5 s, then its own label again.
+async function _shareJoinLink(url, title, btn) {
+  if (!url) return;
+  if (btn && !btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+  const reset = () => { if (btn) btn.textContent = btn.dataset.idleLabel; };
 
   try {
     if (navigator.share) {
-      await navigator.share({ title: 'Join my Kessen Live Challenge!', url: shareUrl });
+      await navigator.share({ title, url });
       return;
     }
-    await navigator.clipboard.writeText(shareUrl);
+    await navigator.clipboard.writeText(url);
     if (btn) btn.textContent = '✓ Copied!';
     setTimeout(reset, 2500);
-  } catch {
+  } catch (e) {
+    if (e?.name === 'AbortError') return; // the share sheet was closed: nothing to report
     // Clipboard API unavailable or denied — show toast with the link
-    showToast('Could not copy automatically — long-press the link to copy: ' + shareUrl, 6000);
+    showToast('Could not copy automatically — long-press the link to copy: ' + url, 6000);
     reset();
   }
 }
 
-// Called on startup: if ?lc=CODE is in the URL, auto-open the join flow.
+// Called on startup: if ?lc=CODE is in the URL, open the join flow with the code filled in.
 // The _FIREBASE_READY guard is intentionally absent — we just need to show
 // the modal and pre-fill the code. Firebase readiness is checked when the
 // user actually clicks Join.
+// v1.0.272 — the join waits for a tap on Join (review B1; was: joined by itself 300 ms after opening when signed in),
+// so the agreement line is always shown first and a stale code is harmless. Live Challenge needs a login (decision
+// 22): signed out, the code is kept as a pending code (sessionStorage kessen-lc-pending, {code, at}) and the login
+// block shows; after the login (_handleOAuthCode / _handleMALOAuthCode call this again, including after Android's
+// redirect out of the app and back) a pending code under 10 minutes old reopens the modal with it. Called with no
+// ?lc= in the URL, only that pending code is looked at.
 function _lcCheckDeepLink(retriesLeft = 10) {
-  const params = new URLSearchParams(window.location.search);
-  const code   = params.get('lc');
-  if (!code || !_isValidSessionCode(code.toUpperCase())) return;
+  const params  = new URLSearchParams(window.location.search);
+  const urlCode = (params.get('lc') || '').toUpperCase();
+  const fromUrl = _isValidSessionCode(urlCode);
+  const signedIn = !!_lcLoginIdentity();
+  let code = fromUrl ? urlCode : '';
+  if (!code) {
+    if (!signedIn) return;          // a pending code waits for the login
+    code = _lcPendingCode();        // '' when there is none, or it is 10 minutes old or more
+    if (!code) return;
+  }
 
   if (!_FIREBASE_READY) {
     // v1.0.108 — Firebase SDK loads asynchronously; if the deep-link fires
@@ -11073,7 +11174,7 @@ function _lcCheckDeepLink(retriesLeft = 10) {
     // before giving up. Without this, opening a shared link on a slow network
     // silently failed and the user saw nothing happen.
     if (retriesLeft > 0) {
-      showToast('Joining session…', 1000);
+      showToast('Opening Live Challenge…', 1000); // v1.0.272 — was "Joining session…": nothing joins until Join is tapped
       setTimeout(() => _lcCheckDeepLink(retriesLeft - 1), 500);
       return;
     }
@@ -11083,28 +11184,67 @@ function _lcCheckDeepLink(retriesLeft = 10) {
   }
 
   // Clean the URL immediately — we've consumed the param
-  _lcClearDeepLink();
+  if (fromUrl) _lcClearDeepLink();
+  // v1.0.272 — signed out: keep the code for after the login. Signed in: any pending code is used up (this one or it).
+  if (fromUrl && !signedIn) _lcSetPending(code);
+  else _lcClearPending();
+  _lcOpenWithCode(code);
+}
 
-  // Open the setup modal and pre-fill the join code
-  openLiveChallengeMode();
-  const codeEl = byId(IDS.lcSetupJoinCode);
-  if (codeEl) codeEl.value = code.toUpperCase();
+// v1.0.272 — the pending Live Challenge code (decision 22): a join code kept while the player logs in. sessionStorage
+// survives the login's redirect in the same tab (the login's own state check relies on it too) and goes when the tab
+// closes; the code is also cleared when Live Challenge is closed, and ignored once it is 10 minutes old.
+function _lcSetPending(code) {
+  try { sessionStorage.setItem('kessen-lc-pending', JSON.stringify({ code, at: Date.now() })); } catch { /* storage blocked */ }
+}
+function _lcClearPending() {
+  try { sessionStorage.removeItem('kessen-lc-pending'); } catch { /* storage blocked */ }
+}
+function _lcPendingCode() {
+  let raw = null, p = null;
+  try { raw = sessionStorage.getItem('kessen-lc-pending'); } catch { /* storage blocked */ }
+  if (raw === null) return '';
+  try { p = JSON.parse(raw); } catch { /* bad JSON: dropped below */ }
+  const code = typeof p?.code === 'string' ? p.code : '';
+  const age  = Date.now() - (typeof p?.at === 'number' ? p.at : NaN);
+  if (_isValidSessionCode(code) && age >= 0 && age < 10 * 60 * 1000) return code;
+  _lcClearPending();   // stale or broken: dropped
+  return '';
+}
 
-  // If the user is already authenticated, auto-trigger the join so opening
-  // the link feels seamless — they don't need to click anything extra.
-  const alreadyAuthed = !!(authUser?.name || malAuthUser?.name);
-  if (alreadyAuthed) {
-    // Small delay so the modal renders first and the button feedback is visible
-    setTimeout(() => lcJoinSession(), 300);
+// v1.0.272 — opens Live Challenge on its setup panel with `code` in the join box (never joins: Join is the player's
+// tap). Already open on the setup panel (a login made from inside it), only the code is filled in, so no second Back
+// step is added; with a session running in it nothing changes.
+function _lcOpenWithCode(code) {
+  const modal = byId(IDS.lcModal);
+  if (modal?.style.display === 'flex') {
+    if (_lc) return;
+    _lcPanel(IDS.lcPanelSetup);
+    _lcPrefillSetup();
+  } else {
+    openLiveChallengeMode();
   }
+  const codeEl = byId(IDS.lcSetupJoinCode);
+  if (codeEl) codeEl.value = code;
+}
+
+// v1.0.272 — the login buttons in Live Challenge's setup panel (decision 22). A valid code typed in the join box is kept
+// as the pending code first, so it comes back after the login (the redirect on Android leaves the page).
+function lcLogin(provider) {
+  const code = (byId(IDS.lcSetupJoinCode)?.value || '').trim().toUpperCase();
+  if (_isValidSessionCode(code)) _lcSetPending(code);
+  else _lcClearPending(); // v1.0.272 — a link's code the player cleared from the box doesn't come back after the login
+  if (provider === 'mal') startMALOAuthFlow();
+  else startOAuthFlow();
 }
 
 // v1.0.173 — Watch Together deep-link handler. Mirrors _lcCheckDeepLink:
 // opens the Watch Together modal, switches to the multi-device guest panel,
-// pre-fills the join code, and auto-triggers the join if the user is
-// already authenticated. Used by the push notification flow — tapping a
-// "Lewis invited you to Watch Together" notification opens Kessen at
-// /?wt=TM5Y5G8 and this function handles the rest.
+// pre-fills the join code. Originally used by the push notification flow
+// (tapping a "Lewis invited you to Watch Together" notification opened Kessen at /?wt=TM5Y5G8).
+// v1.0.272 — the link now comes from Copy join link (collabShareLink): invites are gone (decision 30b).
+// v1.0.272 — the join waits for a tap on Join (review B1; was: joined by itself 300 ms after opening when signed in),
+// so the agreement line is shown first; and no name is filled in (the name field is gone, decision 30a).
 function _wtCheckDeepLink(retriesLeft = 10) {
   const params = new URLSearchParams(window.location.search);
   const code   = params.get('wt');
@@ -11114,7 +11254,7 @@ function _wtCheckDeepLink(retriesLeft = 10) {
 
   if (!_FIREBASE_READY) {
     if (retriesLeft > 0) {
-      showToast('Joining Watch Together…', 1000);
+      showToast('Opening Watch Together…', 1000); // v1.0.272 — was "Joining Watch Together…": nothing joins until Join is tapped
       setTimeout(() => _wtCheckDeepLink(retriesLeft - 1), 500);
       return;
     }
@@ -11139,17 +11279,6 @@ function _wtCheckDeepLink(retriesLeft = 10) {
   }
   const codeEl = byId(IDS.collabJoinInput);
   if (codeEl) codeEl.value = upperCode;
-
-  // Pre-fill the multi-device name field from the user's AniList / MAL handle
-  // so they're not blocked by an empty "Your name" requirement on auto-join.
-  const myName = authUser?.name || malAuthUser?.name || '';
-  const nameEl = byId(IDS.collabMultiName);
-  if (nameEl && !nameEl.value && myName) nameEl.value = myName;
-
-  const alreadyAuthed = !!(authUser?.name || malAuthUser?.name);
-  if (alreadyAuthed) {
-    setTimeout(() => collabJoinSession(), 300);
-  }
 }
 
 function _wtClearDeepLink() {
@@ -11436,6 +11565,7 @@ async function lcRejoinSession() {
   const stored = _lcGetStoredSession();
   if (!stored) return;
   if (!_isValidSessionCode(stored.code)) { _lcClearSession(); return; }
+  if (!_lcIsStoredLogin(stored)) return; // v1.0.272 — decision 22: only as the login it was played as (see the banner)
   _initFirebase();
   if (!_firebaseApp) return;
   await _ensureFirebaseAuth();
@@ -11457,7 +11587,10 @@ async function lcRejoinSession() {
     const data     = snap.val();
     const players  = data.players || {};
     const oppPid   = Object.keys(players).find(id => id !== stored.playerId);
-    const oppName  = oppPid ? (_mpText(players[oppPid]?.name) || 'Opponent') : ''; // v1.0.262 — text only
+    // v1.0.272 — the name as read (a username, "Guest N" or "Player"; '' with none) goes in the Report email; the
+    // 'Opponent' fallback is for the screen only, so a missing name is not reported as a player called "Opponent"
+    const oppRead  = oppPid ? _mpName(players[oppPid]?.name) : '';
+    const oppName  = oppPid ? (oppRead || 'Opponent') : ''; // v1.0.262 — text only; v1.0.272 — username shape (_mpName)
     const myPicks  = players[stored.playerId]?.picks || {};
     const myPreds  = players[stored.playerId]?.predictions || {};
 
@@ -11497,6 +11630,7 @@ async function lcRejoinSession() {
 
     // Show lobby code in case we land back in lobby
     byId(IDS.lcLobbyCode).textContent = stored.code;
+    _setSessionReport('lc', stored.code, oppRead); // v1.0.272 — Report this session (decision 30c)
 
     // _lcSync will fire immediately via the listener and drive us to the right panel
   } catch (err) {
@@ -11512,7 +11646,10 @@ function openLiveChallengeMode() {
     showToast('⚠️ Live Challenge is not available right now. Please try again later.');
     return;
   }
-  _initFirebase();
+  // v1.0.272 — decision 22: signed out, Live Challenge can't be played, so opening it (or a ?lc= link) no longer starts
+  // Firebase or its anonymous sign-in (plan section 7, step 3). lcCreateSession / lcJoinSession start it themselves
+  // after a login made from inside the dialog; lcRejoinSession already did.
+  if (_lcLoginIdentity()) _initFirebase();
   byId(IDS.lcModal).style.display = 'flex';
   pushModalBack('lc', closeLiveChallengeModal);
   _lcPanel(IDS.lcPanelSetup);
@@ -11525,14 +11662,25 @@ function _lcPrefillSetup() {
   const usernameEl  = byId(IDS.lcSetupUsername);
   if (!platformEl || !usernameEl) return;
 
-  const loggedIn = !!(authUser || malAuthUser);
+  // v1.0.272 — decision 22: Live Challenge is played only as the signed-in account (AniList first, else MAL). Signed in,
+  // the identity row (#lc-identity) shows it read-only, as before; signed out, the login block (#lc-login-needed) shows
+  // instead and Create and Join are disabled (was: any typed username could be played, its list read and stored).
+  const me       = _lcLoginIdentity();
+  const loggedIn = !!me;
+  const identity  = byId(IDS.lcIdentity);
+  const loginNeed = byId(IDS.lcLoginNeeded);
+  if (identity)  identity.style.display  = loggedIn ? '' : 'none';
+  if (loginNeed) loginNeed.style.display = loggedIn ? 'none' : '';
+  const createBtn = byId(IDS.lcCreateBtn);
+  const joinBtn   = byId(IDS.lcJoinBtn);
+  if (createBtn) createBtn.disabled = !loggedIn;
+  if (joinBtn)   joinBtn.disabled   = !loggedIn;
 
-  if (authUser?.name) {
-    platformEl.value = 'anilist';
-    usernameEl.value = authUser.name;
-  } else if (malAuthUser?.name) {
-    platformEl.value = 'mal';
-    usernameEl.value = malAuthUser.name;
+  if (me) {
+    platformEl.value = me.platform;
+    usernameEl.value = me.name;
+  } else {
+    usernameEl.value = ''; // v1.0.272 — never a name from an earlier sign-in
   }
 
   // Lock the identity fields when logged in — Live Challenge must be played
@@ -11551,26 +11699,37 @@ function _lcPrefillSetup() {
   platformEl.style.opacity            = loggedIn ? '0.65' : '';
   platformEl.style.fontWeight         = loggedIn ? '600' : '';
 
-  // Update the helper text to guide users who aren't logged in
-  const hint = document.querySelector('#lc-panel-setup > p');
-  if (hint) {
-    hint.textContent = loggedIn
-      ? "We'll fetch your watch history and find anime you've both seen."
-      : "Log in with AniList or MAL, then come back to start a Live Challenge.";
-  }
+  // v1.0.272 — the hint shows only when signed in: signed out, the login block says what is needed
+  // (was: "Log in with AniList or MAL, then come back to start a Live Challenge.")
+  const hint = byId(IDS.lcSetupHint);
+  if (hint) hint.style.display = loggedIn ? '' : 'none';
+}
+
+// v1.0.272 — a sign-in or sign-out while Live Challenge's setup panel is open (a login from its own buttons, say)
+// swaps the login block and the identity row, and re-checks the rejoin banner (decision 22). Called at the end of
+// _updateAuthUI and _updateMALAuthUI; does nothing while the modal is closed or a session is running in it.
+function _lcAuthChanged() {
+  const modal = byId(IDS.lcModal);
+  // (closed during app.js's first run, when _updateAuthUI is called before `let _lc` is reached: _lc is not read then)
+  if (modal?.style.display !== 'flex' || _lc) return;
+  _lcPrefillSetup();
+  _lcCheckRejoinBanner();
 }
 
 // ── CREATE ────────────────────────────────────────────────────────────────────
 async function lcCreateSession() {
-  const platformEl = byId(IDS.lcSetupPlatform);
-  const usernameEl = byId(IDS.lcSetupUsername);
-  const platform   = platformEl?.value || 'anilist';
+  // v1.0.272 — decision 22: the name and platform come from the login (was: the typed username and platform menu).
+  // Signed out, nothing is fetched or written.
+  const me = _lcLoginIdentity();
+  if (!me) { showToast('Live Challenge needs an AniList or MyAnimeList login.'); return; }
+  _initFirebase(); // v1.0.272 — signed in now, maybe after the dialog opened signed out (openLiveChallengeMode)
+  const platform   = me.platform;
   // 40-char cap: stops unbounded user input from getting written to Firebase
   // (which broadcasts it to every other connected player on the session).
-  const username   = (usernameEl?.value || '').trim().slice(0, 40);
-  if (!username) { usernameEl?.focus(); return; }
+  const username   = me.name.trim().slice(0, 40);
 
-  const btn = document.querySelector('#lc-panel-setup .btn-primary');
+  // v1.0.272 — by id: '#lc-panel-setup .btn-primary' found the hidden Rejoin button first
+  const btn = byId(IDS.lcCreateBtn);
   if (btn) { btn.disabled = true; btn.textContent = 'Fetching your watch list…'; }
 
   try {
@@ -11610,6 +11769,7 @@ async function lcCreateSession() {
     _lc.firebaseRef = ref;
     _lcSaveSession();
     _lcSetDeepLink(code);
+    _setSessionReport('lc', code); // v1.0.272 — Report this session (decision 30c); the opponent is added as they join
     byId(IDS.lcLobbyCode).textContent = code;
     _lcRenderLobby({ players: { [pid]: { name: username, connected: true } }, hostId: pid });
     _lcPanel(IDS.lcPanelLobby);
@@ -11624,21 +11784,24 @@ async function lcCreateSession() {
 
 // ── JOIN ──────────────────────────────────────────────────────────────────────
 async function lcJoinSession() {
-  const platformEl = byId(IDS.lcSetupPlatform);
-  const usernameEl = byId(IDS.lcSetupUsername);
+  // v1.0.272 — decision 22: as lcCreateSession, the name and platform come from the login; signed out, nothing is
+  // fetched, read or written
+  const me = _lcLoginIdentity();
+  if (!me) { showToast('Live Challenge needs an AniList or MyAnimeList login.'); return; }
+  _initFirebase(); // v1.0.272 — signed in now, maybe after the dialog opened signed out (openLiveChallengeMode)
   const codeEl     = byId(IDS.lcSetupJoinCode);
-  const platform   = platformEl?.value || 'anilist';
+  const platform   = me.platform;
   // 40-char cap (see lcCreateSession for rationale).
-  const username   = (usernameEl?.value || '').trim().slice(0, 40);
+  const username   = me.name.trim().slice(0, 40);
   const code       = (codeEl?.value || '').trim().toUpperCase();
 
-  if (!username) { usernameEl?.focus(); return; }
   // Charset + length validation — rejects path-traversal attempts before the
   // code is concatenated into the Firebase path below.
   if (!_isValidSessionCode(code)) { codeEl?.focus(); return; }
   // Note: username is sliced at the start of lcJoinSession (40-char cap).
 
-  const btn = document.querySelector('#lc-panel-setup .btn-secondary');
+  // v1.0.272 — by id: the login buttons above it would match '#lc-panel-setup .btn-secondary' first
+  const btn = byId(IDS.lcJoinBtn);
   if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
 
   try {
@@ -11662,7 +11825,9 @@ async function lcJoinSession() {
 
     const pid      = 'p_' + Math.random().toString(36).slice(2, 10);
     const hostId   = data.hostId;
-    const hostName = _mpText(data.players?.[hostId]?.name) || 'Host'; // v1.0.262 — text only
+    // v1.0.272 — as in lcRejoinSession: the name as read goes in the Report email, the 'Host' fallback on screen only
+    const hostRead = _mpName(data.players?.[hostId]?.name);
+    const hostName = hostRead || 'Host'; // v1.0.262 — text only; v1.0.272 — username shape (_mpName)
 
     _lc = {
       mode: 'guest', isP1: false,
@@ -11685,6 +11850,7 @@ async function lcJoinSession() {
 
     _lcSaveSession();
     _lcSetDeepLink(code);
+    _setSessionReport('lc', code, hostRead); // v1.0.272 — Report this session (decision 30c)
     byId(IDS.lcLobbyCode).textContent = code;
     _lcPanel(IDS.lcPanelLobby);
     _lcSetupPresence(ref, pid);
@@ -11743,7 +11909,10 @@ function _lcSync(data) {
   const oppPid = Object.keys(data.players || {}).find(id => id !== myPid);
   if (oppPid && !_lc.opponentId) _lc.opponentId = oppPid;
   if (oppPid) {
-    _lc.opponentName        = _mpText(data.players[oppPid]?.name) || _lc.opponentName; // v1.0.262 — text only
+    const oppRead           = _mpName(data.players[oppPid]?.name);
+    _lc.opponentName        = oppRead || _lc.opponentName; // v1.0.262 — text only; v1.0.272 — username shape
+    // v1.0.272 — the Report email names the opponent as read, never the 'Host' / 'Opponent' screen fallback
+    _setSessionReport('lc', _lc.sessionCode, oppRead);
     _lc.opponentPicks       = data.players[oppPid]?.picks       || {};
     _lc.opponentPredictions = data.players[oppPid]?.predictions || {};
   }
@@ -11831,12 +12000,13 @@ function _lcRenderLobby(data) {
   const isHost      = _lc?.mode === 'host';
 
   // v1.0.262 — player names are read as text only (_mpText) and escaped: another player writes them
+  // v1.0.272 — and shown only in a username's shape, or as "Player" (_mpName)
   byId(IDS.lcPlayerList).innerHTML = playerArr.map(([pid, p]) => {
     const isMe   = pid === myPid;
     const offline = p.connected === false;
     return `<div class="collab-player-chip ${offline ? 'collab-chip-offline' : ''}">
       <span class="collab-chip-dot ${offline ? 'dot-offline' : 'dot-online'}"></span>
-      <span>${esc(_mpText(p.name) || 'Player')}${isMe ? ' (you)' : ''}</span>
+      <span>${esc(_mpName(p.name) || 'Player')}${isMe ? ' (you)' : ''}</span>
     </div>`;
   }).join('');
 
@@ -12373,6 +12543,8 @@ async function liveChallengeRematch() {
 // Call closeLiveChallengeModalFinal() when the game is genuinely over.
 function closeLiveChallengeModal() {
   _lcClearDeepLink();
+  _lcClearPending(); // v1.0.272 — a code kept for a login is dropped with the modal (decision 22)
+  _setSessionReport('lc', ''); // v1.0.272 — the session's Report line goes with it
   byId(IDS.lcModal).style.display = 'none';
   if (_lc?._autoNextTimer) { clearTimeout(_lc._autoNextTimer); _lc._autoNextTimer = null; }
   if (_lc?.presenceUnsub) _lc.presenceUnsub();
@@ -12523,106 +12695,9 @@ function _collabGeneratePlayerId() {
 }
 
 // ── SESSION STORAGE (for rejoin) ──────────────────────────────────────────────
-// v1.0.173 — Watch Together push invite by AniList username.
-// UI lives inside the create-session lobby panel. POSTs to
-// /api/push-send-invite; the server resolves the username, looks up the
-// invitee's push subscription, and fires a VAPID-signed push with deep-link
-// payload. All outcomes that aren't a confirmed delivery surface as soft
-// hints — we deliberately don't tell the inviter "this user exists but
-// hasn't enabled push" so the form can't be used as a username probe.
-const _INVITE_STATUS_LABELS = {
-  'sent':            { cls: 'ok',    msg: 'Invite sent.' },
-  'cooldown':        { cls: 'warn',  msg: 'You just sent them this invite — wait a minute before resending.' },
-  'self':            { cls: 'warn',  msg: 'That’s you — share the code with someone else.' },
-  // Soft fail (don't leak existence). All three resolve to the same user-facing
-  // message — we deliberately don't reveal whether the username exists, whether
-  // they've enabled push, or whether they've opted out of this category.
-  'unknown-user':    { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
-  'no-subscription': { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
-  'opted-out':       { cls: 'warn',  msg: 'Couldn’t notify them — share the code instead.' },
-};
-
-// v1.0.175 — Shared invite-by-AniList-username sender. Both Watch Together
-// and Live Challenge invite flows route through this — only the input/status
-// element ids and the source for the session code + display name differ.
-async function _sendInviteByName({ kind, inputId, statusId, getCode, getMyName }) {
-  const input    = byId(inputId);
-  const statusEl = byId(statusId);
-  if (!input || !statusEl) return;
-
-  const targetName = input.value.trim();
-  if (!targetName) {
-    statusEl.className = 'invite-status error';
-    statusEl.textContent = 'Enter an AniList username.';
-    return;
-  }
-  const code = typeof getCode === 'function' ? getCode() : null;
-  if (!code) {
-    statusEl.className = 'invite-status error';
-    statusEl.textContent = 'No active session — create or rejoin first.';
-    return;
-  }
-
-  // Reuse the same auth-token parsing as the push module.
-  const auth = (typeof _pushAuthTokens === 'function')
-    ? _pushAuthTokens()
-    : { token: null, malToken: null };
-  if (!auth.token && !auth.malToken) {
-    statusEl.className = 'invite-status error';
-    statusEl.textContent = 'Sign in to AniList or MAL first.';
-    return;
-  }
-
-  statusEl.className = 'invite-status';
-  statusEl.textContent = 'Sending…';
-
-  try {
-    const res = await fetch('/.netlify/functions/push-send-invite', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        ...auth,
-        targetName,
-        sessionCode: code,
-        kind,
-        fromName:    (typeof getMyName === 'function' && getMyName()) || null,
-      }),
-    });
-    const data = await res.json().catch(() => ({ error: 'Bad response' }));
-    if (!res.ok || data.error) {
-      throw new Error(data.error || `Request failed (${res.status})`);
-    }
-    const label = _INVITE_STATUS_LABELS[data.status]
-      || { cls: 'warn', msg: 'Couldn’t notify them — share the code instead.' };
-    statusEl.className = `invite-status ${label.cls}`;
-    statusEl.textContent = label.msg;
-    if (data.status === 'sent') input.value = '';
-  } catch (e) {
-    statusEl.className = 'invite-status error';
-    statusEl.textContent = e.message || 'Send failed.';
-  }
-}
-
-function sendWtInvite() {
-  return _sendInviteByName({
-    kind:      'wt',
-    inputId:   'invite-username',
-    statusId:  'invite-status',
-    getCode:   () => _collab?.sessionCode,
-    getMyName: () => _collab?.myName,
-  });
-}
-
-function sendLcInvite() {
-  return _sendInviteByName({
-    kind:      'lc',
-    inputId:   'lc-invite-username',
-    statusId:  'lc-invite-status',
-    getCode:   () => _lc?.sessionCode,
-    getMyName: () => _lc?.myUsername,
-  });
-}
-
+// v1.0.272 — decision 30b: invites by username are gone. _INVITE_STATUS_LABELS, _sendInviteByName, sendWtInvite and
+// sendLcInvite (v1.0.173 / v1.0.175: a push to an AniList username through push-send-invite, which now answers 410)
+// are removed with their boxes; players send the join link instead (lcShareLink, collabShareLink).
 function _collabSaveSession() {
   try {
     sessionStorage.setItem('kessen-collab', JSON.stringify({
@@ -12643,6 +12718,7 @@ function _collabGetStoredSession() {
 
 function openCollabMode() {
   if (_collab?.unsubscribe) _collab.unsubscribe();
+  _setSessionReport('wt', ''); // v1.0.272 — no session yet in a fresh Watch Together
   _collab = {
     mode: null,
     // Single-device fields
@@ -12672,14 +12748,8 @@ function openCollabMode() {
   if (multiBtn)  multiBtn.style.display  = _FIREBASE_READY ? '' : 'none';
   if (multiNote) multiNote.style.display = _FIREBASE_READY ? 'none' : '';
 
-  // Pre-fill the name field from the logged-in AniList or MAL account.
-  // Only set it if the field is currently empty so we don't clobber a name
-  // the user already typed during this session.
-  const nameInput = byId(IDS.collabMultiName);
-  if (nameInput && !nameInput.value.trim()) {
-    const loggedInName = (authUser && authUser.name) || (malAuthUser && malAuthUser.name) || '';
-    if (loggedInName) nameInput.value = loggedInName;
-  }
+  // v1.0.272 — the multi-device "Your name" field and its prefill are gone (decision 30a): collabCreateSession and
+  // collabJoinSession take the login's username, or "Guest N"
 
   // Show rejoin banner if there's a saved session
   _collabCheckRejoinBanner();
@@ -12706,6 +12776,7 @@ function closeCollabModal() {
   if (_collab?.presenceUnsub) _collab.presenceUnsub();
   if (_collab?.unsubscribe)   _collab.unsubscribe();
   byId(IDS.collabModal).style.display = 'none';
+  _setSessionReport('wt', ''); // v1.0.272 — the session's Report line goes with it
   _collab = null;
   popModalBack('collab');
   // Re-attach the autosync listener that collabCreateSession/collabJoinSession
@@ -12785,6 +12856,7 @@ async function collabRejoinSession() {
 
     _collabSetupPresence(ref, stored.playerId);
     _collabSaveSession();
+    _setSessionReport('wt', stored.code); // v1.0.272 — Report this session (decision 30c)
     _collabListenToSession(ref);
 
     // Sync to whatever phase the session is currently in
@@ -12878,7 +12950,8 @@ async function collabCreateSession() {
   if (btn) btn.textContent = 'Creating…';
 
   try {
-    const name = byId(IDS.collabMultiName).value.trim().slice(0, 40) || 'Host';
+    // v1.0.272 — decision 30a: the login's username, or "Guest 1" (was: the typed "Your name", or "Host")
+    const name = _mpLoginName().slice(0, 40) || 'Guest 1';
     const code = _collabGenerateCode();
     _collab.isHost      = true;
     _collab.myName      = name;
@@ -12918,6 +12991,7 @@ async function collabCreateSession() {
     // Set up presence and save session for rejoin
     _collabSetupPresence(ref, pid);
     _collabSaveSession();
+    _setSessionReport('wt', code); // v1.0.272 — Report this session (decision 30c)
 
     // Then start listening for other players
     _collabListenToSession(ref);
@@ -12951,7 +13025,6 @@ async function collabCreateSession() {
 async function collabJoinSession() {
   if (!_FIREBASE_READY) return;
   const code = (byId(IDS.collabJoinInput).value || '').trim().toUpperCase();
-  const name = byId(IDS.collabMultiName).value.trim().slice(0, 40) || 'Guest';
   if (!_isValidSessionCode(code)) return;
 
   _stopFirebaseSync();
@@ -12989,6 +13062,9 @@ async function collabJoinSession() {
     return;
   }
 
+  // v1.0.272 — decision 30a: the login's username, or "Guest N" numbered from the players already in the lobby (was: the
+  // typed "Your name", or "Guest"). Two guests joining at once can get the same number: it is a display label only.
+  const name = _mpLoginName().slice(0, 40) || 'Guest ' + (Object.keys(data.players || {}).length + 1);
   const pid = _collab.myPlayerId;
   _collab.isHost  = false;
   _collab.myName  = name;
@@ -13004,6 +13080,7 @@ async function collabJoinSession() {
 
   _collabSetupPresence(ref, pid);
   _collabSaveSession();
+  _setSessionReport('wt', code); // v1.0.272 — Report this session (decision 30c)
 
   _collabPanel(IDS.collabPanelMultiLobby);
   byId(IDS.collabLobbyCode).textContent = code;
@@ -13224,7 +13301,8 @@ function _collabRenderLobby(data) {
       const isH       = pid === data.hostId;
       const isOffline = p.connected === false;
       // v1.0.262 — initial escaped and taken from text only: a name sent as ["<img …>"] made [0] the whole tag
-      const name      = _mpText(p.name);
+      // v1.0.272 — a username, "Guest N", or "Player" for any other text (_mpName)
+      const name      = _mpName(p.name);
       return `<div class="collab-lobby-player ${isOffline ? 'collab-lobby-disconnected' : ''}">
         <span class="collab-lobby-avatar">${esc((name || '?')[0].toUpperCase())}</span>
         <span class="collab-lobby-name">
@@ -13511,10 +13589,12 @@ function _collabRenderSearchRows(res, raw, already, takenBy, anilistLoading) {
   }
 
   // Manual add — only if not already in pool by anyone
+  // v1.0.272 — decision 30a: and only on one device (Lewis's question 7: it never leaves the phone). Online, a show is
+  // nominated from the anime search only, so no typed text is sent to the other players as a title.
   const rawLower = raw.toLowerCase();
   const inCache  = _collabSearchCache.some(c => c.title.toLowerCase() === rawLower);
   const blocked  = already.has(rawLower) || takenBy?.has(rawLower);
-  if (!inCache && !blocked) {
+  if (!inCache && !blocked && _collab?.mode !== 'multi') {
     const manualIdx = _collabSearchCache.length;
     _collabSearchCache.push({ title: raw, cover: '', id: null, local: true });
     rows.push(`<div class="collab-search-item collab-search-manual"
@@ -17561,13 +17641,33 @@ function _setSharedNote(text) {
 // v1.0.271 — decision 30c, with question 2's default: Report is a prefilled email to feedback@kessen.co.uk (the address
 // is also shown as text beside it, for a device with no mail app). Only a checked id goes in: no diagnostics or
 // browser details. kind is 'share' (the only kind so far); anything else, or a bad id, is the bare address.
-function _reportHref(kind, ref) {
+// v1.0.272 — and 'session' (decision 30c): a Watch Together or Live Challenge code (_isValidSessionCode) goes in the
+// subject, with `who`, the Live Challenge opponent, when it is a username (_mpName; any other text is left out).
+function _reportHref(kind, ref, who) {
   const id = String(ref ?? '');
+  if (kind === 'session' && _isValidSessionCode(id)) {
+    const name = _mpName(who);
+    const player = name && name !== 'Player' ? name : '';
+    const subject = `Kessen report: session ${id}` + (player ? ` (${player})` : '');
+    const body = `Session code: ${id}\r\n` + (player ? `Player: ${player}\r\n` : '') + `\r\nWhat happened:\r\n`;
+    return `mailto:feedback@kessen.co.uk?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
   if (kind !== 'share' || !/^[A-Za-z0-9]{6,16}$/.test(id)) return 'mailto:feedback@kessen.co.uk';
   const subject = `Kessen report: share link ${id}`;
   const body = `Share link: ${location.origin}/s/${id}\r\n\r\nWhat is wrong with it:\r\n`;
   return `mailto:feedback@kessen.co.uk?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
+// v1.0.272 — the Report line in an online session (decision 30c): `which` is 'lc' (Live Challenge) or 'wt' (Watch
+// Together). Shown with a session code (on create, join and rejoin; Live Challenge again as the opponent's name comes
+// in), hidden without one (on close). `who` is the Live Challenge opponent.
+function _setSessionReport(which, code, who) {
+  const ok = _isValidSessionCode(String(code ?? ''));
+  const link = byId(which === 'lc' ? IDS.lcReportLink : IDS.collabReportLink);
+  if (link) link.href = _reportHref('session', ok ? code : '', who);
+  const line = byId(which === 'lc' ? IDS.lcReport : IDS.collabReport);
+  if (line) line.style.display = ok ? '' : 'none';
+}
+
 // v1.0.271 — the Report line under a shared list: shown with a /s/ id, hidden otherwise.
 function _setSharedReport(shareId) {
   const ok = /^[A-Za-z0-9]{6,16}$/.test(String(shareId ?? ''));
@@ -23838,15 +23938,16 @@ const APP_VERSION = (() => {
 // as a growing change log instead of "what changed since you last looked".
 const WHATS_NEW = {
   title: '✨ What\'s new in Kessen',
-  // v1.0.271 — share links and the community rules only (decisions 5, 30a, 30c): Create link, IDs plus a checked
-  // username, 12-month links, titles from AniList, links with no ids (before 8 Oct 2026) shown as unavailable, the rules
-  // page and Report (1.0.270's bullets are not repeated)
+  // v1.0.272 — online sessions only (decisions 30a, 30b, 30c, 22): names from logins or "Guest N", Live Challenge login,
+  // invites gone, join links wait for Join, no custom shows online, Report in sessions (1.0.271's bullets are not
+  // repeated). "Online" on the first bullet: one-device Watch Together keeps typed names (question 7).
   bullets: [
-    '🔗 Share no longer makes a link by itself. Tap Create link when you want one. Links last 12 months.',
-    '🏷️ A share link shows your AniList or MyAnimeList username only when you share your own list while signed in.',
-    '🖼️ Shared pages now get titles and covers from AniList. Older links no longer show a name.',
-    '🕰️ Share links made before 8 October 2026 can no longer be shown. Make a new one from Share.',
-    '📜 New community rules, and a Report link on shared pages.',
+    '👥 Online Watch Together and Live Challenge show AniList or MyAnimeList usernames. Watch Together guests show as Guest 1, 2…',
+    '🔐 Live Challenge now needs an AniList or MyAnimeList login.',
+    '✉️ Invites by username are gone. Copy the join link and send it instead.',
+    '🚪 Opening a join link fills in the code. Tap Join to go in.',
+    '🔎 Online Watch Together nominations now come from the anime search only.',
+    '🚩 Sessions now have a Report link, and the community rules apply to them.',
   ],
 };
 
@@ -24177,6 +24278,7 @@ function closeNotifCentre() {
 // with the user's AniList / MAL auth token. The server stores it in the
 // "kessen-push" blob keyed by the verified userId. Used later by Watch
 // Together invite / Live Challenge invite / Tower retry triggers.
+// v1.0.272 — Tower retry only: invites by username are gone (decision 30b).
 //
 // Push is OFF by default. Browser permission isn't asked until the user
 // explicitly flips the master toggle — single-shot prompts are punishing
@@ -24189,10 +24291,9 @@ const PUSH_API = {
 
 // v1.0.264 — Tower retry starts off (critical pass M9): it keeps the AniList sign-in on the server, so it only turns
 // on after its own Confirm (setPushCategory). A choice already saved on this device is kept (_pushLoadLocal).
+// v1.0.272 — Tower retry only: the watchTogether / liveChallenge invite categories went with invites (decision 30b)
 const PUSH_DEFAULT_CATEGORIES = Object.freeze({
   towerRetry:    false,
-  watchTogether: true,
-  liveChallenge: true,
 });
 
 function _pushIsSupported() {
@@ -24212,9 +24313,12 @@ function _pushLoadLocal() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
+    // v1.0.272 — only Tower retry is read back: invite choices saved by an older version are left out, so they are
+    // never sent to push-register again (it ignores them anyway)
+    const towerRetry = parsed.categories?.towerRetry;
     return {
       enabled:    !!parsed.enabled,
-      categories: { ...PUSH_DEFAULT_CATEGORIES, ...(parsed.categories || {}) },
+      categories: { ...PUSH_DEFAULT_CATEGORIES, ...(typeof towerRetry === 'boolean' ? { towerRetry } : {}) },
       endpoint:   parsed.endpoint || null,
       syncedAt:   parsed.syncedAt || 0,
     };
@@ -24399,6 +24503,7 @@ async function togglePushMaster(checked) {
       // succeeded (subscription saved, WT/LC categories on) but Tower-retry
       // was forced off in the saved record. Tell the user so they can
       // retry the toggle instead of silently sitting in a broken state.
+      // v1.0.272 — there are no WT/LC (invite) categories now: the registration saves the subscription only.
       if (result.towerRetryError) {
         toast(`Notifications enabled. Tower-retry couldn’t set up (${result.towerRetryError}) — toggle it again to retry.`, 'warn');
       } else {
@@ -24527,6 +24632,7 @@ function _pushRefreshUI() {
 
   // v1.0.244 — nothing to push for a guest (no list to poll, no account to
   // invite), so the whole section stays hidden.
+  // v1.0.272 — (invites are gone; Tower retry needs the AniList account's list)
   section.style.display = _isGuestSession() ? 'none' : '';
   if (_isGuestSession()) return;
 
@@ -24546,6 +24652,11 @@ function _pushRefreshUI() {
   const disabledByBrowser = !supported || !vapid || perm === 'denied';
   const enabled = !disabledByBrowser && !!local?.enabled;
 
+  // v1.0.272 — notifications are only for Tower retry prompts now (decision 30b), which need an AniList login: with only
+  // MyAnimeList signed in the section is hidden, unless push is already on here, so it can still be turned off
+  const malOnly = !(authToken && authUser) && !!(malAuthToken && malAuthUser);
+  if (malOnly && !enabled) { section.style.display = 'none'; return; }
+
   // Section availability state
   section.classList.toggle('is-unavailable', disabledByBrowser);
 
@@ -24561,16 +24672,18 @@ function _pushRefreshUI() {
   cats.classList.toggle('show', enabled);
   if (enabled && local?.categories) {
     byId(IDS.ncPushCatTower).checked = !!local.categories.towerRetry;
-    byId(IDS.ncPushCatWt   ).checked = !!local.categories.watchTogether;
-    byId(IDS.ncPushCatLc   ).checked = !!local.categories.liveChallenge;
+    // v1.0.272 — the Watch Together / Live Challenge invite boxes are gone (decision 30b)
   }
 
   // Blurb explains current state
   if      (!supported)         blurb.textContent = 'Your browser doesn’t support push notifications.';
   else if (!vapid)             blurb.textContent = 'Push notifications aren’t configured on the server yet — coming soon.';
   else if (perm === 'denied')  blurb.textContent = 'Notifications are blocked in your browser. Unblock them in your browser settings to enable.';
-  else if (enabled)            blurb.textContent = 'You’ll get pushed to this device for the categories below.';
-  else                         blurb.textContent = 'Get pushed to your phone when shows are ready for the Tower or someone invites you to Watch Together.';
+  // v1.0.272 — Tower retry is the only notification type left (decision 30b): say so, and what keeping push on means
+  else if (enabled && malOnly) blurb.textContent = 'Notifications are only used for Tower retry prompts, which need an AniList login. Turn notifications off to remove this device’s sign-up.';
+  else if (enabled && !local?.categories?.towerRetry) blurb.textContent = 'Notifications are only used for Tower retry prompts. Tick it below, or turn notifications off.';
+  else if (enabled)            blurb.textContent = 'You’ll get Tower retry prompts on this device.';
+  else                         blurb.textContent = 'Get a notification when anime you finish on AniList are ready for the Tower.';
 }
 
 function ncDismiss(id) {
@@ -25408,8 +25521,10 @@ window.addEventListener('load', () => {
   const hasName = !!(input && input.value.trim());
   if (hasName) startLoading();
   // Auto-open Live Challenge join if a ?lc= deep link is present
+  // v1.0.272 — opens with the code filled in and waits for Join (no auto-join); also a code kept for a login
   _lcCheckDeepLink();
   // v1.0.173 — same for Watch Together via ?wt= (used by push invites)
+  // v1.0.272 — now the Copy join link links: invites are gone (decision 30b)
   _wtCheckDeepLink();
   // v1.0.228 — Tower-retry deep link. This is the FIX for the fundamental
   // hook-site bug. `_towerCheckDeepLink` was previously only called at the

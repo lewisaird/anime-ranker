@@ -10,7 +10,7 @@
 // Must stay in lockstep with `package.json > version` and the `<meta name="version">`
 // tag in index.html. Bumping this value invalidates all prior app-shell caches
 // (old `kessen-v*` entries are purged in the `activate` handler below).
-const APP_VERSION  = '1.0.271';
+const APP_VERSION  = '1.0.272';
 const CACHE_NAME   = `kessen-v${APP_VERSION}`;
 // v1.0.149 — Cover image cache. Unversioned so it survives app-shell bumps
 // (covers never change for a given AniList ID, so re-downloading on every
@@ -247,6 +247,10 @@ self.addEventListener('fetch', event => {
 //     tag?:    'wt-TM5Y5G8',             // collapse multiple of same kind
 //     data?:   { ... }                   // round-trips to notificationclick
 //   }
+//
+// v1.0.272 — only 'tower-retry' is sent now (tower-retry-poll): invites by username are gone (decision 30b), so the
+// 'wt-invite' / 'lc-invite' examples above describe pushes sent before 1.0.272. The handler reads no kind, so an old
+// invite still on a phone opens its join link, which now waits for a tap on Join.
 //
 // Missing / malformed payload still shows a generic fallback so we never
 // suppress a notification the user expected — push delivery itself is a

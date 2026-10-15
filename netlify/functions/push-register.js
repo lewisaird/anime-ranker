@@ -1,13 +1,15 @@
 // netlify/functions/push-register.js
 //
 // POST /api/push/register
-// Body: { token? , malToken? , subscription, categories?, ua? }
+// Body: { token? , malToken? , subscription, categories? }
 //
 // - token / malToken: standard auth pattern — server verifies, derives userId
 // - subscription: the PushSubscription.toJSON() output from the client
 //                 { endpoint, expirationTime, keys: { p256dh, auth } }
-// - categories: optional partial category prefs to merge
-// - ua: User-Agent string for debugging (which device is this?)
+// - categories: optional partial category prefs to merge; only towerRetry is kept
+// v1.0.272 — invites by username are gone (decision 30b), so the watchTogether / liveChallenge choices an older app
+// copy sends are ignored and removed from the record, and the browser string (ua) an older copy sends is not read
+// (1.0.268 stopped storing it; upsertSubscription removes any stored before).
 //
 // On success: { ok: true, userId, deviceCount, categories }
 //
@@ -31,7 +33,8 @@ import {
   fetchCompletedAnime,
 } from './_push-shared.js';
 
-const SAFE_CATEGORIES = new Set(['towerRetry', 'watchTogether', 'liveChallenge']);
+// v1.0.272 — Tower retry only: the invite categories (watchTogether, liveChallenge) went with push invites (decision 30b)
+const SAFE_CATEGORIES = new Set(['towerRetry']);
 
 function sanitizeCategories(input, current) {
   if (!input || typeof input !== 'object') return current;
@@ -106,7 +109,7 @@ export default async (request, context) => {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { token, malToken, subscription, categories, ua } = body;
+  const { token, malToken, subscription, categories } = body;   // v1.0.272 — no `ua`: an older app copy's browser string is ignored
   if (!isValidSubscription(subscription)) {
     return Response.json({ error: 'Invalid subscription' }, { status: 400 });
   }
@@ -118,9 +121,13 @@ export default async (request, context) => {
 
   try {
     const record = await loadPushRecord(userId, context);
-    upsertSubscription(record, subscription, ua);
+    upsertSubscription(record, subscription);
     const prevTowerRetry = !!record.categories?.towerRetry && !!record.aniListToken;
     record.categories = sanitizeCategories(categories, record.categories);
+    // v1.0.272 — and drop the invite choices a record kept from before (a new record's defaults in _push-shared.js list
+    // them too): nothing sends invites any more, so the record keeps Tower retry only
+    delete record.categories.watchTogether;
+    delete record.categories.liveChallenge;
     // v1.0.264 — the app sends towerRetry only when the user ticks or unticks it (critical pass M9). Without it, keep
     // the account's choice only while its token is still stored: a new record starts off, and a token the poll dropped
     // (revoked or expired) needs a new tick and Confirm, not a silent re-store by turning push on or another change
@@ -134,10 +141,11 @@ export default async (request, context) => {
       if (wantsTowerRetry && !prevTowerRetry) {
         // OFF → ON: take initial snapshot, store token.
         // v1.0.218 — snapshot now throws on failure. We catch here so the
-        // rest of the registration (subscription, WT/LC categories) still
+        // rest of the registration (the subscription) still
         // succeeds. Tower-retry gets forced off in the saved record and we
         // report the failure to the client. The user can retry the toggle
         // once the underlying issue (usually AniList transient) clears.
+        // v1.0.272 — "the subscription" was "subscription, WT/LC categories": the invite categories are gone.
         try {
           await takeInitialSnapshot(record, token);
         } catch (e) {

@@ -12,7 +12,7 @@
   <link rel="canonical" href="https://kessen.co.uk/" />
 
   <!-- App version — kept in lockstep with package.json > version and sw.js > APP_VERSION. -->
-  <meta name="version" content="1.0.271" />
+  <meta name="version" content="1.0.272" />
   <!-- v1.0.168 — VAPID public key for Web Push registration. Public is fine to expose;
        the matching private key lives in the Netlify env var VAPID_PRIVATE_KEY and never
        leaves the server. If empty, the in-app Settings → Notifications toggle stays
@@ -283,10 +283,8 @@
     <!-- Multi device: create or join -->
     <div id="collab-panel-multi-setup" style="display:none">
       <h3 style="margin:0 0 16px">Multi-device</h3>
-      <div class="collab-name-row" style="margin-bottom:16px">
-        <label>Your name</label>
-        <input id="collab-multi-name" class="collab-name-input" placeholder="Your name" />
-      </div>
+      <!-- v1.0.272 — decision 30a: no "Your name" field. Others see your AniList or MyAnimeList username if you are signed
+           in, otherwise "Guest 1", "Guest 2"… (collabCreateSession / collabJoinSession). -->
       <div class="collab-mode-btns">
         <button class="collab-mode-btn" onclick="collabMultiShowRole('host')">
           <span style="font-size:1.6rem">🏠</span>
@@ -299,6 +297,8 @@
           <span>Enter a friend's code</span>
         </button>
       </div>
+      <!-- v1.0.272 — decision 30c: the agreement line, above Create and Join (new tab, like the Share window's) -->
+      <p class="agree-line" style="margin:14px 0 0">By creating or joining a session you agree to the <a href="/terms.html" target="_blank" rel="noopener">community rules</a>.</p>
       <div id="collab-multi-create" style="display:none;margin-top:16px">
         <button class="btn-primary" style="width:100%" onclick="collabCreateSession()">Create session →</button>
       </div>
@@ -312,22 +312,13 @@
 
     <!-- Multi device: lobby (waiting for friends) -->
     <div id="collab-panel-multi-lobby" style="display:none">
-      <h3 style="margin:0 0 4px">Share this code</h3>
+      <!-- v1.0.272 — decision 30b: invites by username are gone (the "Or invite by AniList username" box and its push);
+           the code or a join link (/?wt=CODE, collabShareLink) is how others join. The link fills in the code and waits
+           for a tap on Join. -->
+      <h3 style="margin:0 0 4px">Share this code or link</h3>
       <p style="font-size:0.78rem;color:#8b949e;margin:0 0 10px;text-align:center">Others enter this on the Join screen</p>
       <div id="collab-lobby-code" class="collab-session-code"></div>
-      <!-- v1.0.173 — Invite by AniList username. Sends a phone push to the
-           invitee (if they're signed in to Kessen AND have phone push enabled).
-           Doesn't reveal whether the invitee exists or has push — every
-           outcome that isn't "actually delivered" surfaces as a neutral hint
-           so people don't use the form as a username scraper. -->
-      <div class="invite-by-name">
-        <label for="invite-username">Or invite by AniList username</label>
-        <div class="invite-row">
-          <input id="invite-username" type="text" placeholder="e.g. lewis-aird" maxlength="50" autocomplete="off" />
-          <button class="btn-secondary" onclick="sendWtInvite()">Send</button>
-        </div>
-        <p id="invite-status" class="invite-status"></p>
-      </div>
+      <button id="collab-share-btn" class="btn-secondary" style="width:100%" onclick="collabShareLink()">Copy join link</button>
       <div id="collab-player-list" class="collab-player-list" style="margin-top:14px"></div>
       <!-- Host only -->
       <div id="collab-host-actions" style="display:none;margin-top:16px">
@@ -444,6 +435,12 @@
       <div id="collab-results-list" class="collab-results-list"></div>
       <button class="btn-secondary" style="width:100%;margin-top:16px" onclick="closeCollabModalFinal()">Done</button>
     </div>
+
+    <!-- v1.0.272 — decision 30c: Report (a prefilled email with the session code, _reportHref) while an online session is
+         on (create, join, rejoin; hidden on close); the address is shown as text too, as on share pages. -->
+    <p class="shared-report" id="collab-report" style="display:none">
+      <a id="collab-report-link" href="mailto:feedback@kessen.co.uk">Report this session</a> · or email feedback@kessen.co.uk
+    </p>
   </div>
 </div>
 
@@ -495,7 +492,8 @@
     <button class="share-close" onclick="closeLiveChallengeModal()" aria-label="Close">✕</button>
     <h3 id="lc-modal-title" style="margin:0 0 4px">🌐 Live Challenge</h3>
 
-    <!-- Setup: enter your username before creating or joining -->
+    <!-- Setup: the account to play as (or the login block) before creating or joining -->
+    <!-- v1.0.272 — no typed username any more: the signed-in account, or the login block (decision 22) -->
     <div id="lc-panel-setup" style="display:none">
       <!-- Rejoin banner — shown only when sessionStorage has an active LC session -->
       <div id="lc-rejoin-banner" style="display:none;margin-bottom:14px">
@@ -509,10 +507,19 @@
         </div>
         <button class="collab-rejoin-dismiss" onclick="lcDismissRejoin()">Start fresh instead</button>
       </div>
-      <p style="font-size:0.78rem;color:#8b949e;margin:0 0 14px">
+      <p id="lc-setup-hint" style="font-size:0.78rem;color:#8b949e;margin:0 0 14px">
         We'll fetch your watch history and find anime you've both seen.
       </p>
-      <div style="margin-bottom:16px">
+      <!-- v1.0.272 — decision 22: Live Challenge needs an AniList or MyAnimeList login. Shown instead of the username row
+           while signed out (_lcPrefillSetup), with Create and Join disabled; a code in the join box is kept across the
+           login (lcLogin). -->
+      <div id="lc-login-needed" style="display:none;margin-bottom:16px;text-align:center">
+        <p style="font-size:0.85rem;color:var(--text-primary);margin:0 0 10px">Live Challenge needs an AniList or MyAnimeList login.</p>
+        <button class="btn-anilist-login" style="width:100%;margin-bottom:8px" onclick="lcLogin('anilist')">🔐 Log in with AniList</button>
+        <button class="btn-mal-login" style="width:100%" onclick="lcLogin('mal')">🔐 Log in with MyAnimeList</button>
+      </div>
+      <!-- v1.0.272 — the signed-in account, read-only (as before); hidden while signed out -->
+      <div id="lc-identity" style="margin-bottom:16px">
         <div style="font-size:0.78rem;color:#8b949e;margin-bottom:6px;font-weight:600">Your username</div>
         <div style="display:flex;gap:8px">
           <select id="lc-setup-platform" style="padding:8px;border-radius:8px;border:1px solid var(--border-default);background:var(--bg-tertiary);color:var(--text-primary);font-size:0.85rem;cursor:pointer">
@@ -524,7 +531,9 @@
                  onkeydown="if(event.key==='Enter')lcCreateSession()" />
         </div>
       </div>
-      <button class="btn-primary" style="width:100%;margin-bottom:14px" onclick="lcCreateSession()">
+      <!-- v1.0.272 — decision 30c: the agreement line, above Create and the join box (new tab, like the Share window's) -->
+      <p class="agree-line">By creating or joining a session you agree to the <a href="/terms.html" target="_blank" rel="noopener">community rules</a>.</p>
+      <button id="lc-create-btn" class="btn-primary" style="width:100%;margin-bottom:14px" onclick="lcCreateSession()">
         Create session →
       </button>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
@@ -537,7 +546,7 @@
                placeholder="7-character code"
                style="flex:1;text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:1rem"
                maxlength="7" onkeydown="if(event.key==='Enter')lcJoinSession()" />
-        <button class="btn-secondary" onclick="lcJoinSession()">Join →</button>
+        <button id="lc-join-btn" class="btn-secondary" onclick="lcJoinSession()">Join →</button>
       </div>
     </div>
 
@@ -550,16 +559,7 @@
         <div id="lc-lobby-code" class="collab-session-code" style="flex:1;margin:0"></div>
         <button id="lc-share-btn" class="btn-secondary" style="flex-shrink:0;padding:8px 14px;font-size:0.82rem" onclick="lcShareLink()">Copy link</button>
       </div>
-      <!-- v1.0.175 — Invite by AniList username. Same pattern as Watch
-           Together — POSTs to /api/push-send-invite with kind:'lc'. -->
-      <div class="invite-by-name">
-        <label for="lc-invite-username">Or invite by AniList username</label>
-        <div class="invite-row">
-          <input id="lc-invite-username" type="text" placeholder="e.g. lewis-aird" maxlength="50" autocomplete="off" />
-          <button class="btn-secondary" onclick="sendLcInvite()">Send</button>
-        </div>
-        <p id="lc-invite-status" class="invite-status"></p>
-      </div>
+      <!-- v1.0.272 — decision 30b: the "Or invite by AniList username" box is gone; Copy link above shares the join link -->
       <div id="lc-player-list" style="margin-bottom:14px;min-height:40px"></div>
       <!-- Host only -->
       <button id="lc-start-btn" class="btn-primary" style="display:none;width:100%;margin-bottom:10px"
@@ -643,6 +643,11 @@
       </div>
     </div>
 
+    <!-- v1.0.272 — decision 30c: Report (a prefilled email with the session code and the opponent's username,
+         _reportHref) while a session is on (create, join, rejoin; hidden on close); the address is shown as text too. -->
+    <p class="shared-report" id="lc-report" style="display:none">
+      <a id="lc-report-link" href="mailto:feedback@kessen.co.uk">Report this session</a> · or email feedback@kessen.co.uk
+    </p>
   </div>
 </div>
 
@@ -2186,6 +2191,7 @@
          Master toggle fires the browser's permission prompt + registers a
          PushSubscription with the server. Category toggles control which
          events generate a push (Tower retry / Watch Together / Live Challenge).
+         v1.0.272 — Tower retry only: the Watch Together and Live Challenge invite boxes went with invites (decision 30b).
          When the master toggle is off OR the browser blocked permissions, the
          category checkboxes are hidden. The blurb auto-updates based on
          current state: "off", "blocked by browser", "Notifications not
@@ -2199,8 +2205,6 @@
       </label>
       <div id="nc-push-categories" class="nc-push-categories">
         <label><input type="checkbox" id="nc-push-cat-tower" onchange="setPushCategory('towerRetry', this.checked)" /> <span>Tower retry prompts</span></label>
-        <label><input type="checkbox" id="nc-push-cat-wt"    onchange="setPushCategory('watchTogether', this.checked)" /> <span>Watch Together invites</span></label>
-        <label><input type="checkbox" id="nc-push-cat-lc"    onchange="setPushCategory('liveChallenge', this.checked)" /> <span>Live Challenge invites</span></label>
       </div>
     </div>
   </div>
